@@ -1,7 +1,689 @@
-# ACP Package Manifest
-# Tracks installed packages and their versions
-
 packages:
+  core-sdk:
+    source: https://github.com/prmichaelsen/acp-core-sdk.git
+    package_version: 1.22.0
+    commit: 731b8335479bef927e5f40539538ba6d46fcf5c8
+    installed_at: 2026-03-25T03:53:16Z
+    updated_at: 2026-03-25T03:53:16Z
+    files:
+      patterns:
+        - name: core-sdk.types-shared.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:99b7fed7acbdcaf64bd077a608c7371b4707766d0843ae6e0dc766dd6460e290
+        - name: core-sdk.types-result.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:8f7c7da654446597060861fb24fcc3ceee2de5bb00459a906d368f19a089a895
+        - name: core-sdk.types-generic.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:489c36931b33a1f8a336abf58e0921382dba060ac629bcbb805ece4f3d0546f5
+        - name: core-sdk.types-error.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:31913371e55327dcef66a61b5ecfe95146bf60824ab30087d76cdfb26a827d14
+        - name: core-sdk.types-config.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:c3bec232be582c39afed8e01c8fa09fca42d1cc203e6639021ea6bfb2154c17e
+        - name: core-sdk.testing-unit.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:64e625db8657415319cbfb10096be38e75a14fbbe37c121db0eb2849de93be19
+        - name: core-sdk.testing-mocks.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:dd5aed995c5f286fb9786cd1715cd1304b202dfee8f8cc66fe9f23dd537103f6
+        - name: core-sdk.testing-integration.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:1005a5b53ff8d40ad2736ae45e0836081bb899dd12d8a490d09709b41c5ad39e
+        - name: core-sdk.testing-fixtures.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:de8e201afca3db124e47061a4ad797e5b068be37a524753713af09ee65502690
+        - name: core-sdk.testing-coverage.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:9ab09ba6bd8995c350c21a2f8e0aa4d4bc7660375232b4ad7120847e6e8b9515
+        - name: core-sdk.service-logging.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:33f3658b9df4b37a4eda901b2144136afb7bef0b5ea19837fc082eb87d79c71a
+        - name: core-sdk.service-interface.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:7eef8897acbe391faf0de61d20a8759a6f6f6317a0a28af3b6d5050ba4156e2b
+        - name: core-sdk.service-error-handling.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:6abfe6ee744aff20c919e922dbdfc016b637e39afca1ea42ae44ed3927a1f8a6
+        - name: core-sdk.service-container.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:675fed1c6333dac38155e2be61affc0aaa512e3325334a53e25d070ca1294573
+        - name: core-sdk.service-base.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:453404620d6631dff05acc28edad0bd4821063f6ab5f253d637844a8c2073529
+        - name: core-sdk.rest-client-sdk.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:c1c90c18da522b9152e0c70e53162912f6a5b568915d2ba678895dab4e8fc35a
+        - name: core-sdk.config-secrets.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:ff19dab3b5257f0380089a9190ec420a0cf1fb0910ba8efa544e44fe6a4f91a1
+        - name: core-sdk.config-schema.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:0f35d340f8f1b2f25b0ac03562e666f4ca844e45c3539706a98ac938b362bedf
+        - name: core-sdk.config-multi-env.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:15004525079aa7cb0489e105ece54d6bc1093bf0f89256ac282037bcd938ef40
+        - name: core-sdk.config-loading.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:71918c51c5e44a373d7ba508c0c6b9f668679b77332f065f83414724d8b9dc4c
+        - name: core-sdk.config-environment.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:b7fae8b4aa7f70c3cd8b4495fafdc13a3fd0ece0cd992cd760b01c13ca1442d3
+        - name: core-sdk.client-type-generation.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:d5b7d6af4a88aef0ba6af2c5587aba0fee917f42592350b45123ce246d092926
+        - name: core-sdk.client-svc.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:191bfdee9669d1d1d67840ff15a0d451508fa1abad50fd18f0854175787cfc48
+        - name: core-sdk.client-response.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:5a485b252dcb1813a37692db5b17d8979c71adde207be32e62b62d543574ce51
+        - name: core-sdk.client-http-transport.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:e2b3322c9734b6b28360dad90cecf67e3f06d691b50b3799128e8f17ca8301d6
+        - name: core-sdk.client-app.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:a818831881cadf82e8c5ac0a7ac126786ae70eca2e1fa3dbe23994abc47f273a
+        - name: core-sdk.adapter-rest.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:cfb55f4be7bfbb66c5e827131ff62d551eac0401514e16e66f8a43a7708c09f9
+        - name: core-sdk.adapter-mcp.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:42e70cccba26d1f8ddd1712f375ca3dfc45cf6f146b79caeb7b768435970e4cb
+        - name: core-sdk.adapter-client.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:895aae85bfeab5c03f703e03ca433072a05fa3f2f97027fd1257f46e4dfebe19
+        - name: core-sdk.adapter-cli.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:b3d94aaea86225be616f80bdcaabe3020c72a67d9605a2af698f4439634dd35b
+        - name: core-sdk.adapter-base.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:53:43Z
+          modified: false
+          checksum: sha256:5b9484105c36ac3fa11ca07d009500ab093279465c87634a2b447e09f0818f3f
+      commands:
+      designs:
+      scripts:
+      files:
+      indices:
+  tanstack-cloudflare:
+    source: https://github.com/prmichaelsen/acp-tanstack-cloudflare.git
+    package_version: 2.0.0
+    commit: 791f3b526e01709dd11603d7b97817d5b8f5ece9
+    installed_at: 2026-03-25T03:49:31Z
+    updated_at: 2026-03-25T03:49:31Z
+    files:
+      patterns:
+        - name: tanstack-cloudflare.zod-schema-validation.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:adb86721ba843d6aa0732d27bf2d67492e5771e3830f219303ea1b9172191ca6
+        - name: tanstack-cloudflare.wrangler-configuration.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:11bdd08fe4a069979d82eca9b6914e424bcf7de2cbdac87308aca15ec33f0e64
+        - name: tanstack-cloudflare.wizard-system.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:c31258978b7b77edf932e43706fd241ca1335a2752288c6a97e2e5511fd55d60
+        - name: tanstack-cloudflare.websocket-manager.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:3d02635ac5d36acc9a210a16349c52f86fb029c97bc3c708c970655b5e298583
+        - name: tanstack-cloudflare.user-scoped-collections.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:6469b71782f1e313d9d1042fe165e7976976537a43a259810f7a4089b60a8fe3
+        - name: tanstack-cloudflare.unified-header.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:766223cd53a8ec7706b924709d924351e1717c57b0ced19c15815472d8742549
+        - name: tanstack-cloudflare.typeahead.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:a84bdac473df2927a00ee7dd4c4a82c5f2a67c5c3989df708f722e90092bb349
+        - name: tanstack-cloudflare.tos-consent.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:a3b9f353df8c01566169386c7d37d1dc86734f814c7fe0511c4b522cdd7c4fe8
+        - name: tanstack-cloudflare.toast-system.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:8ac5edd2b69b656775fdba1ac484b1c10218b97afde1547b6d1fb3ba5297e3a5
+        - name: tanstack-cloudflare.third-party-api-integration.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:c083463330b2fabb154349a7ab9c68791fd0a436e91b4b859cc1a8f9451385e3
+        - name: tanstack-cloudflare.ssr-preload.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:24758145fe8f65ff6cf1d44121157b7ccafbab4935631439b3a173162d964b2f
+        - name: tanstack-cloudflare.sortable-filterable-tables.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:a7c69718f7e4e85ed7af12b5972d7f6a870e70dd262cfa58eb9894c287516933
+        - name: tanstack-cloudflare.slide-over.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:093c6fd89cfaf999b0f3a742654ab11459fdfc341bbc8f0e27bf2e154cad505e
+        - name: tanstack-cloudflare.signed-url-upload.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:756c40e08b66f842834d4ccf2f5593e48b8eb88337ac2738e6751c5297db567e
+        - name: tanstack-cloudflare.searchable-settings.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:e7dde5140043f1d22e719c62ed6f57d854b76bad826108c98667c81a46e75515
+        - name: tanstack-cloudflare.scheduled-tasks.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:0b82838b6f2c6e7f070786f8cc013ed06c25453c0ba5a7e3769f940724adef48
+        - name: tanstack-cloudflare.rate-limiting.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:6d1226c8316850cc35bad1e155e9a80d8b9866e227ca6cd0d49b7bc400ccc63a
+        - name: tanstack-cloudflare.provider-adapter.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:2d220ec327ca9b8b6cc4ec22c79554f64afce275639ad4c209bdb7f62bc9c7e9
+        - name: tanstack-cloudflare.pill-input.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:77cbb33bef218673ca48711c05a3f82cc0f2a426e33f77ac0031c5119ec15eb8
+        - name: tanstack-cloudflare.pagination.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:e82186a7e63e404b304294b8a4bf2009a7936149ca0229e81b7d62f6601485a2
+        - name: tanstack-cloudflare.og-metadata.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:77a215b9921b225580fbd2111d10b8a68b44ad942ad3ff4a31b65ea35137b236
+        - name: tanstack-cloudflare.oauth-token-refresh.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:5aa2142e895feb14632bca0adbea10cef65b886f993ba512a9b55d7901531d1f
+        - name: tanstack-cloudflare.notifications-engine.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:27f99c12451aec7dd41844560c2eaadf2aafb3d02300fed0a8db0e5e892f20fe
+        - name: tanstack-cloudflare.nextjs-to-tanstack-routing.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:c07222752febcd9841a8257d830ab45a28812805f223432798e2a362878e9af5
+        - name: tanstack-cloudflare.modal.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:7b3bb372452a0f6f7a6402af9dc68b1d88271f799640a031540d237080a3df5d
+        - name: tanstack-cloudflare.mobile-bottom-nav.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:ba3542a216acd38c5c1230376bddee749ef28cbd6d2e464b6eddefb23ea13c0f
+        - name: tanstack-cloudflare.mention-suggestions.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:ddac4f68f056a0109b58dc684454c6a17811d9008fcb71e8f6e105ca4b49ca40
+        - name: tanstack-cloudflare.markdown-content.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:53d6f1da3683bd103f15206b9590a27c4d6203dbab96500ce3d308456db12a66
+        - name: tanstack-cloudflare.lightbox.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:4ffb50d603be7634f64fb40493eb645600f61d0126548b329286f6503aaedbfc
+        - name: tanstack-cloudflare.library-services.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:add205df35786610db4f30eeae5c22e8fef522d5e6da260cf7201a2e10d93995
+        - name: tanstack-cloudflare.image-carousel.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:418d2754d500e4f26b6e806ab1dd2fe5a88f21c9d3e84ebe386a6f3b8611bee2
+        - name: tanstack-cloudflare.global-search-context.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:e4639607f5a03fecf96cc56a441de680055ceac88140997ed9eb90b28216f8e8
+        - name: tanstack-cloudflare.form-controls.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:f8c617ae392a39d83c9a24cb88d22bcdf88648285f0fffee5bd82ea176b5e2d1
+        - name: tanstack-cloudflare.firebase-storage.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:af119009a4acf318a87478626234a4fc61d76787ff60f800105e04e89f88bab7
+        - name: tanstack-cloudflare.firebase-firestore.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:671ec50be46027dabb0c2498d85e2b5aa30f443534206f0252adb6b910478ee5
+        - name: tanstack-cloudflare.firebase-auth.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:b2b1701e5e1b34597e68fce18079288cf5a94440f0963e38f2ac723c4b860a14
+        - name: tanstack-cloudflare.firebase-anonymous-sessions.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:b0a3334caef04ddbb8bb8266e8e6c4a834f067447a8ed953530362e3f4975d08
+        - name: tanstack-cloudflare.fcm-push.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:31a1f4fa755cca2ddc9fb7df460d101fdfdaf3f618940a0151f9c4d962e28750
+        - name: tanstack-cloudflare.expander.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:1cca83093335dec65c70e4940f0cab42f139244d784dd27493b2509f21a19072
+        - name: tanstack-cloudflare.email-service.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:89191ee26f1151706cac35f31545d76f153199922e404d73352fa8f59bd05828
+        - name: tanstack-cloudflare.durable-objects-websocket.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:03f55b506bd0535c1f3aae769223becd9fc1ed436eb2d7f120d2c26bda061c23
+        - name: tanstack-cloudflare.confirmation-tokens.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:2886bee926fff0c0395a7c159257b1b741f933165126fdf44774b850db037108
+        - name: tanstack-cloudflare.chat-engine.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:f5fffc5f7c973b6b9e69d857b585afea7aa8e22f33c7275aa39eb4b5e48c0a99
+        - name: tanstack-cloudflare.card-and-list.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:97061ed34876e499559bca7af5c04bb0003328fb706a55ec014077ac600474f2
+        - name: tanstack-cloudflare.auth-session-management.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:bc4d32b53bbb6651daeb2fe532c0f43dd972fa939dea45bd7fc73f0eba95a512
+        - name: tanstack-cloudflare.api-route-handlers.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:d4ac07bb7453edd4493ca313c56a641c58fd8760a16741610d1ad0fc0da2b366
+        - name: tanstack-cloudflare.action-bar-item.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:d91fd67507ebfa7a304359124fc59c17f2906f6e70441863a491e54b1fc18bec
+        - name: tanstack-cloudflare.acl-permissions.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:769dae3dfc5dab520d5df259039a32db1e5d17082eef4a1060790d9f2e82ca46
+      commands:
+        - name: tanstack-cloudflare.tail.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:643d50910f50c3e7912488f4165cd0db92db53e12356efa15bac0161d100999e
+        - name: tanstack-cloudflare.deploy.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:66e1ab357c44cd26d356bc3e6ffe0b50d62bd36e9180f633a97b6b02d3de3e24
+        - name: git.init.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:2cd8bef13ba0278c3c3389631835aa4663a82c324bbb894aabd4299bb2370d53
+        - name: git.commit.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:96249dee1a09f941f8ca2f072b53c90fa21fc34505fca4999d7c0c02982b3d02
+      designs:
+        - name: starter-templates-design.md
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:f6beb2f42f7a70e01ee9cb37f5f9e5922c5a75f8682380005cb38196de926fe7
+      scripts:
+      files:
+        - name: src/components/ui/Modal.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:de9f6d82f66c3e904dbd64a88704f03064647151d8b47a46646bbacf3555058d
+          target: src/components/ui/Modal.tsx
+        - name: src/components/ui/SlideOverPanel.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:94ed35eed0675f9b172127a703c920b29de4b6ad3640e6838577168f3918d976
+          target: src/components/ui/SlideOverPanel.tsx
+        - name: src/components/ui/PillInput.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:e330676ef0ac28759bb1a33cbcf7e6a22cd02bc335fe9465bdd965fdb3b29cb9
+          target: src/components/ui/PillInput.tsx
+        - name: src/components/ui/Typeahead.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:bc359784f29457ce0e0c6e8aaaff5911f638ecb5502512bb9b53643904b944dd
+          target: src/components/ui/Typeahead.tsx
+        - name: src/components/ui/SearchBar.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:a598e3a7df5dcd9a007b7089349dc09cdee2d9ffe74aa21f6138f054a516cf64
+          target: src/components/ui/SearchBar.tsx
+        - name: src/components/data/SortableTable.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:7b57cd57b37e8ce2702c09b11576703e70fd29bca519072332b83e797a897cd1
+          target: src/components/data/SortableTable.tsx
+        - name: src/components/data/MobileCardList.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:beedb7db215c003b070fe4b9940bd50a1a2c4bed203c191c1e37049c2bc68e76
+          target: src/components/data/MobileCardList.tsx
+        - name: src/components/data/useSortableData.ts
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:2aab260b178f57952e7fbd07cd673618053d06f107554b21399cacb9bf6c67c1
+          target: src/components/data/useSortableData.ts
+        - name: src/components/data/ColumnFilter.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:38fa7a59b5f093846b7bdd6e484af1c560e2475ca846c755de81efa82e67ba05
+          target: src/components/data/ColumnFilter.tsx
+        - name: src/components/data/SortIndicator.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:2bc1bb56e7ccdcd925ac696743574cc4156716bd3ac1fda63eea56f16e1aedea
+          target: src/components/data/SortIndicator.tsx
+        - name: src/components/data/EntityTable.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:bb4540b0b97c7448602e09f4fe6babedc2bb48568638b6f148037510719c25db
+          target: src/components/data/EntityTable.tsx
+        - name: src/components/data/Paginator.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:4f3985f9654cc3392ab6e567d891b21506c792ebcdf06b20ea6dd2b77c961793
+          target: src/components/data/Paginator.tsx
+        - name: src/components/data/PaginationToggle.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:4c578fdfc627ddf2ae7391166f27f332a38787ef4567c809c49a97770fb2b1d9
+          target: src/components/data/PaginationToggle.tsx
+        - name: src/components/data/PaginationSlideOver.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:3addfc8ab380378677c1f776373d92c92ef22062f7a5401d47528f03e4e615e0
+          target: src/components/data/PaginationSlideOver.tsx
+        - name: src/components/layout/UnifiedHeader.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:ce7940c4a5d9cb78935aac70af412656a78cd649b5ced9a27a2d126fcd6cc72a
+          target: src/components/layout/UnifiedHeader.tsx
+          variables:
+        - name: src/components/layout/UnifiedFooter.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:cbd9d4a04ebcd24e9849d5811ccafd645737fabd355dbd8d19bb12276cbbfa4a
+          target: src/components/layout/UnifiedFooter.tsx
+        - name: src/components/layout/Sidebar.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:9e8588c0ba60968a1ae8b4247169c3a260247529dd17c44dd7d34c890da1139d
+          target: src/components/layout/Sidebar.tsx
+        - name: src/components/layout/MobileBottomNav.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:b68739c1067ea4efe82cc4a478c7940e91ae5f45045be8435172f0b2594813d9
+          target: src/components/layout/MobileBottomNav.tsx
+        - name: src/components/layout/MenuDropdown.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:52bf282a374d082468bcefb94c4a64776a243dd16e2bd59c91b877fce15a0966
+          target: src/components/layout/MenuDropdown.tsx
+        - name: src/components/wizard/WizardShell.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:a06488c7095c5f22725902d858e8a05e5f5ccf8afb7515cd87d53e0d0d31e2b6
+          target: src/components/wizard/WizardShell.tsx
+          variables:
+        - name: src/hooks/useWizardState.ts
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:77e832aab61285e8c355e21c85b67ea78031e9294ef3b8fea7a16067f77735bf
+          target: src/hooks/useWizardState.ts
+        - name: src/components/auth/AuthContext.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:86486b5b27b0ae568b5293657ace481a53013fb209e268feb19fdf427fe92cc8
+          target: src/components/auth/AuthContext.tsx
+        - name: src/components/auth/AuthForm.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:ae768ed422fd36ed56f9e52315b8062c185debc74e33df9a417dcd8ddeb7e2eb
+          target: src/components/auth/AuthForm.tsx
+          variables:
+        - name: src/routes/api/auth/login.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:7f3bd3c76611df0903852849fcee602e59ed154c81778290239e7df0bdeb5017
+          target: src/routes/api/auth/login.tsx
+        - name: src/routes/api/auth/logout.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:ea336184be60dc6f8ad381eb1ef28b7fe5f9d9a8fe9f7a500c05a7a5b8abb305
+          target: src/routes/api/auth/logout.tsx
+        - name: src/routes/api/auth/session.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:70fc3ae7dee2c5bf319e10ca95d58f196b20e33a99f9d17e45475654ac0de355
+          target: src/routes/api/auth/session.tsx
+        - name: src/components/notifications/NotificationBell.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:e63f6cb81014c16516f7a0dd55d09adb56684e7a01e6ea1a49d87034a060dfdf
+          target: src/components/notifications/NotificationBell.tsx
+        - name: src/components/notifications/NotificationPanel.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:a5666f1a8b6eee5bd4c5fca5358fd36d73a034e3125b0e54f7ec60ffa4bc2902
+          target: src/components/notifications/NotificationPanel.tsx
+        - name: src/hooks/useNotifications.ts
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:2237b212f9b61d8e9245a4a5505251de7fc99628dc0c46570e10bf8d329d1951
+          target: src/hooks/useNotifications.ts
+        - name: src/durable-objects/notification-hub.ts
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:256162a1f598ceca2b04f93c75b656ad323a78eea541433843e248cd913e134b
+          target: src/durable-objects/notification-hub.ts
+        - name: src/routes/api/notifications-ws.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:b781645cfec96ad1f6e0fc81dd87801b90dec57ef087745feda324d6ce733c91
+          target: src/routes/api/notifications-ws.tsx
+        - name: src/components/media/PhotoGallery.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:60c513fee4ae9f71f6d97825761d44410b46f53588a665738869a127ba899d2c
+          target: src/components/media/PhotoGallery.tsx
+        - name: src/components/media/PhotoUpload.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:ff0d1413b1a200abf48bf6c2a67f8cef6e3fad1a3d04721a475db72a5724182f
+          target: src/components/media/PhotoUpload.tsx
+        - name: src/durable-objects/upload-manager.ts
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:373a3df81d92abd1280104241145eb6530f764d06999126ed694f2fdf87abaa5
+          target: src/durable-objects/upload-manager.ts
+        - name: src/contexts/GlobalSearchContext.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:4e5b861546e2803c73e7cc777b234f65bb746f787d1e243dea19f02899f014bc
+          target: src/contexts/GlobalSearchContext.tsx
+        - name: src/hooks/useActionToast.ts
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:40dd436301f972efaee0c09063003da199cad097cd5c8dbdbc395cbe4b015e01
+          target: src/hooks/useActionToast.ts
+        - name: src/routes/api/consent/tos.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:0e11480394fdcb6542b6f3d2129ea8b52664992ee9ff05bf36502f266f2e33a6
+          target: src/routes/api/consent/tos.tsx
+          variables:
+        - name: src/routes/settings.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:d06b6bacd3d32cbef865f4799b94903c3c67d2af344aad5b39069f1762ecdc06
+          target: src/routes/settings.tsx
+          variables:
+        - name: src/routes/router.tsx
+          version: 0.0.0
+          installed_at: 2026-03-25T03:49:38Z
+          modified: false
+          checksum: sha256:52b8eaa9590f84ca7567297d5aad994892bf99cbc15868e4aebce1e38b51f2dd
+          target: src/routes/router.tsx
+      indices:
   acp-core:
     source: https://github.com/prmichaelsen/agent-context-protocol.git
     package_version: 5.30.0
@@ -61,6 +743,5 @@ packages:
       designs:
         - name: design.template.md
         - name: requirements.template.md
-
 manifest_version: 1.0.0
-last_updated: 2026-03-25T03:31:16Z
+last_updated: 2026-03-25T03:53:16Z
