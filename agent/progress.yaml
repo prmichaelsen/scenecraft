@@ -1,0 +1,33 @@
+project:
+  name: beatlab-synthesizer
+  version: 0.1.0
+  started: 2026-03-25
+  status: in_progress
+  description: |
+    Feature-rich web frontend for the beatlab pipeline — waveform editing, hit markers,
+    AI effect direction, candidate selection, image generation, and DaVinci Resolve
+    integration via headless backend
+
+milestones: []
+
+documentation:
+  design_documents: 0
+  milestone_documents: 0
+  pattern_documents: 0
+  task_documents: 0
+
+progress:
+  planning: 0
+  implementation: 0
+  overall: 0
+
+recent_work: []
+
+next_steps:
+  - Define project requirements in agent/design/requirements.md
+  - Plan milestones and tasks with @acp.plan
+  - Start development with @acp.proceed
+
+notes: []
+
+current_blockers: []
