@@ -261,37 +261,34 @@ New tab in the KeyframePanel side panel (alongside the existing metadata view):
 - On blur or Ctrl+Enter, calls `update-prompt` endpoint
 - A "Generate with this prompt" button next to the prompt triggers generation with the updated text
 
-### Component 6: Future D1 Schema
+### Component 6: Deployment Architecture — Provisioned Cloud Desktop
 
-For reference when migrating from YAML to D1. Not implemented now, but the YAML schema is designed to map cleanly:
+The production deployment model is a **provisioned cloud desktop instance per customer** with a mounted volume, not a multi-tenant server or ephemeral containers.
 
-```sql
-CREATE TABLE keyframes (
-  id TEXT PRIMARY KEY,           -- 'kf_001'
-  project_id TEXT NOT NULL,
-  timestamp REAL NOT NULL,       -- seconds
-  section TEXT,
-  prompt TEXT,
-  source TEXT,
-  context TEXT,                  -- JSON
-  selected_variant INTEGER,
-  deleted_at TEXT,               -- NULL = active, ISO timestamp = binned
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE candidates (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  keyframe_id TEXT NOT NULL REFERENCES keyframes(id),
-  variant INTEGER NOT NULL,
-  path TEXT NOT NULL,
-  prompt TEXT NOT NULL,          -- prompt at generation time
-  generated_at TEXT NOT NULL,
-  UNIQUE(keyframe_id, variant)
-);
+```
+Customer's Cloud Desktop (lightweight instance)
+├── Mounted Volume (/data or similar)
+│   └── .beatlab_work/
+│       ├── project_a/
+│       │   ├── narrative_keyframes.yaml   ← the "document"
+│       │   ├── audio.wav
+│       │   ├── selected_keyframes/
+│       │   ├── keyframe_candidates/
+│       │   └── ...
+│       └── project_b/
+├── beatlab server (Python, port 8888)
+└── beatlab-synthesizer (Node.js, port 3400)
 ```
 
-`beatlab dump` would export D1 → YAML. `beatlab load` would import YAML → D1.
+**Why this matters for the keyframe editor:**
+
+- **YAML stays as the primary storage format** — no D1 or SQL database needed. A `narrative_keyframes.yaml` file is the project document, like a `.docx` file. It's concrete, human-readable, diffable, and the beatlab CLI already speaks it natively.
+- **No GCS sync layer** — files live on the mounted volume. No upload/download latency, no eventual consistency. The beatlab server reads/writes to disk exactly like local dev.
+- **Scale separation** — the desktop instance handles I/O, editing, serving. GPU-heavy operations (candidate generation, video rendering) shell out to beefy machines (Vast.ai) as beatlab already does. Avoids irreversible scale-up traps (e.g., DigitalOcean droplet upgrades that can't be reversed).
+- **Customer isolation** — each customer gets their own instance + volume. No multi-tenant data concerns.
+- **Backup via snapshots** — mounted volume snapshots provide disaster recovery. A `beatlab archive` command could also tar the `.beatlab_work/` directory to object storage periodically.
+
+**YAML-as-document philosophy:** The project file *is* the YAML + the media files on the volume. There's no separate database to keep in sync. The YAML schema evolves in place (with backward-compat loading), and the beatlab server is the only writer, preventing corruption from concurrent access.
 
 ---
 
@@ -301,7 +298,8 @@ CREATE TABLE candidates (
 - **Non-destructive**: Soft delete preserves expensive GPU-generated images
 - **Prompt lineage**: Per-variant prompt tracking means you always know what generated what
 - **Backward compatible**: Old YAML files load without modification
-- **Migration-ready**: Schema maps directly to relational tables for future D1 migration
+- **YAML-as-document**: No database layer to keep in sync — the YAML file *is* the project, stored on a mounted volume alongside the media files. Concrete, portable, diffable.
+- **Simple deployment**: Provisioned desktop + mounted volume per customer. No multi-tenant complexity, no GCS sync layer, no SQL migrations.
 
 ---
 
@@ -339,7 +337,7 @@ CREATE TABLE candidates (
 2. **Phase 2 — Candidates tab**: Build the candidates tab in the side panel with selection and prompt editing.
 3. **Phase 3 — Drag to reorder**: Add full-keyframe drag (distinct from boundary drag) to the video track.
 4. **Phase 4 — Generate from UI**: Wire up "Generate More" button to the generation endpoint with async job tracking.
-5. **Phase 5 — D1 migration** (future): Create D1 schema, implement `beatlab dump` / `beatlab load`, migrate synthesizer to query D1 via beatlab server.
+5. **Phase 5 — Provisioned desktop deployment**: Package beatlab server + synthesizer for cloud desktop instances with mounted volumes. Add `beatlab archive` for backup to object storage.
 
 ---
 
@@ -368,8 +366,9 @@ CREATE TABLE candidates (
 | Decision | Choice | Rationale |
 |---|---|---|
 | All mutations through beatlab server | Yes, including reorder and add | Single source of truth; no direct YAML editing from Node.js |
-| YAML on disk for now | Yes, D1 migration later | Working system first; YAML schema designed to map to D1 cleanly |
-| Bin purge | Not in scope | Bin grows are manageable for local dev; add purge command later |
+| Storage | YAML on mounted volume, no database | YAML-as-document philosophy — the file is the project. Provisioned desktop + volume per customer. No GCS, no D1, no sync layer. |
+| Deployment | Provisioned cloud desktop per customer | Lightweight instance for I/O + serving, GPU ops shell out to Vast.ai. Avoids irreversible scale-up. Customer isolation by design. |
+| Bin purge | Not in scope | Bin growth is manageable per-volume; add purge command later |
 
 ---
 
@@ -378,8 +377,9 @@ CREATE TABLE candidates (
 - **Undo/redo stack**: Track mutations for Ctrl+Z/Ctrl+Y across all operations
 - **Batch operations**: Select multiple keyframes for bulk delete, move, or regenerate
 - **Keyframe interpolation preview**: Show estimated visual transition between adjacent keyframes
-- **Collaborative editing**: If the server is ever multi-user, need conflict resolution on concurrent YAML edits
-- **Bin purge**: `beatlab narrative purge-bin` command to delete binned keyframes and their files
+- **Bin purge**: `beatlab narrative purge-bin` command to delete binned keyframes and their files from the volume
+- **`beatlab archive`**: Tar/compress `.beatlab_work/` project to object storage for backup. Mounted volumes can fail — periodic snapshots + archive provide disaster recovery.
+- **Multi-user on shared desktop**: If a team shares a desktop instance, need file locking or conflict resolution on concurrent YAML edits. Single-user for now.
 
 ---
 

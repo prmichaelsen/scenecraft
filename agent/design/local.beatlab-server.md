@@ -39,6 +39,8 @@ beatlab-synthesizer (React)  ──HTTP──►  beatlab server (Python, port 8
 
 The synthesizer's TanStack server functions proxy requests to the beatlab server, so the browser never talks to it directly (avoids CORS, keeps the beatlab server on localhost only).
 
+**Deployment model:** Both the beatlab server and synthesizer run on a **provisioned cloud desktop instance per customer** with a mounted volume holding `.beatlab_work/`. This is the same architecture as local dev — no GCS, no database, no multi-tenant complexity. YAML files on the mounted volume are the primary storage, treated as project documents (like a `.docx`). GPU-heavy operations (generation, rendering) shell out to separate machines (Vast.ai) as beatlab already does, keeping the desktop lightweight.
+
 **Rejected alternatives:**
 
 | Alternative | Why rejected |
@@ -46,6 +48,8 @@ The synthesizer's TanStack server functions proxy requests to the beatlab server
 | Direct YAML editing from Node.js | Drift risk — beatlab does file copies, cache invalidation, YAML field updates together |
 | Shell out to `beatlab narrative select-keyframes` | Fragile argument passing, no structured error responses, hard to stream progress |
 | Separate REST wrapper service | Third codebase to maintain, duplicates knowledge of beatlab internals |
+| GCS + D1 database | Unnecessary — provisioned desktop with mounted volume provides persistent storage without sync complexity |
+| Multi-tenant server | Customer isolation is simpler with per-customer desktop instances; no data partitioning needed |
 
 ---
 
@@ -273,7 +277,9 @@ The existing `updateKeyframeTimestamp` server function in the editor route would
 - **FastAPI migration**: If endpoint count grows significantly, migrate from stdlib to FastAPI for automatic validation, OpenAPI docs
 - **File watching**: Beatlab server could watch `.beatlab_work/` for external changes and push updates to the frontend
 - **Multi-project**: Currently assumes one `.beatlab_work/` directory; may need to support multiple roots
-- **Auth**: If the server is ever exposed beyond localhost, add token-based auth
+- **Auth**: If the desktop instance is ever network-exposed beyond localhost, add token-based auth
+- **`beatlab archive`**: Backup `.beatlab_work/` to object storage from the mounted volume for disaster recovery
+- **Desktop provisioning automation**: Scripts or Terraform for spinning up customer desktop instances with beatlab + synthesizer pre-installed
 
 ---
 
