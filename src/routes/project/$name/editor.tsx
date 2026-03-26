@@ -26,6 +26,7 @@ export type Keyframe = {
   selected: number | string | null
   hasSelectedImage: boolean
   context: KeyframeContext | null
+  candidates: string[]
 }
 
 export type EditorData = {
@@ -90,6 +91,11 @@ const getEditorData = createServerFn({ method: 'GET' })
                 visual_direction: (ctx.visual_direction as string) || '',
                 details: (ctx.details as string) || '',
               } : null,
+              candidates: Array.isArray(kf.candidates)
+                ? (kf.candidates as Array<string | Record<string, unknown>>).map((c) =>
+                    typeof c === 'string' ? c : (c.path as string) || ''
+                  ).filter(Boolean)
+                : [],
             }
           })
         )

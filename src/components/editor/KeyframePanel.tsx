@@ -18,6 +18,7 @@ export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelP
     const stored = localStorage.getItem(STORAGE_KEY)
     return stored ? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, parseInt(stored, 10))) : DEFAULT_WIDTH
   })
+  const [tab, setTab] = useState<'details' | 'candidates'>('details')
   const isDragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -52,7 +53,6 @@ export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelP
     }
   }, [width])
 
-  // Persist on width change (debounced by mouseup above)
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(width))
   }, [width])
@@ -68,9 +68,9 @@ export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelP
       />
 
       {/* Panel content */}
-      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto">
+      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="text-sm font-medium">{kf.id}</div>
           <button
             onClick={onClose}
@@ -80,79 +80,181 @@ export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelP
           </button>
         </div>
 
-        {/* Image */}
-        {kf.hasSelectedImage && (
-          <div className="p-3">
-            <img
-              src={`/api/files/${projectName}/selected_keyframes/${kf.id}.png`}
-              alt={kf.id}
-              className="w-full rounded"
-            />
+        {/* Tabs */}
+        <div className="flex border-b border-gray-800 shrink-0">
+          <button
+            onClick={() => setTab('details')}
+            className={`flex-1 text-xs py-2 transition-colors ${tab === 'details' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
+          >
+            Details
+          </button>
+          <button
+            onClick={() => setTab('candidates')}
+            className={`flex-1 text-xs py-2 transition-colors ${tab === 'candidates' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
+          >
+            Candidates{kf.candidates.length > 0 ? ` (${kf.candidates.length})` : ''}
+          </button>
+        </div>
+
+        {/* Tab content */}
+        <div className="flex-1 overflow-y-auto">
+          {tab === 'details' ? (
+            <DetailsTab kf={kf} projectName={projectName} />
+          ) : (
+            <CandidatesTab kf={kf} projectName={projectName} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+  return (
+    <>
+      {/* Image */}
+      {kf.hasSelectedImage && (
+        <div className="p-3">
+          <img
+            src={`/api/files/${projectName}/selected_keyframes/${kf.id}.png`}
+            alt={kf.id}
+            className="w-full rounded"
+          />
+        </div>
+      )}
+
+      {/* Metadata */}
+      <div className="px-3 pb-4 space-y-3">
+        <Field label="Timestamp" value={kf.timestamp} />
+        <Field label="Section" value={kf.section} />
+
+        {kf.prompt && (
+          <div>
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Prompt</div>
+            <div className="text-sm text-gray-300 leading-relaxed">{kf.prompt}</div>
           </div>
         )}
 
-        {/* Metadata */}
-        <div className="px-3 pb-4 space-y-3">
-          <Field label="Timestamp" value={kf.timestamp} />
-          <Field label="Section" value={kf.section} />
+        {kf.selected !== null && (
+          <Field
+            label="Selected"
+            value={typeof kf.selected === 'number' ? `Candidate #${kf.selected}` : String(kf.selected)}
+          />
+        )}
 
-          {kf.prompt && (
-            <div>
-              <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Prompt</div>
-              <div className="text-sm text-gray-300 leading-relaxed">{kf.prompt}</div>
+        {kf.context && (
+          <>
+            {kf.context.mood && <Field label="Mood" value={kf.context.mood} />}
+            {kf.context.energy && <Field label="Energy" value={kf.context.energy} />}
+            {kf.context.visual_direction && (
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Visual Direction</div>
+                <div className="text-sm text-gray-300">{kf.context.visual_direction}</div>
+              </div>
+            )}
+            {kf.context.instruments.length > 0 && (
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Instruments</div>
+                <div className="flex flex-wrap gap-1">
+                  {kf.context.instruments.map((inst) => (
+                    <span key={inst} className="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">
+                      {inst}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {kf.context.motifs.length > 0 && (
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Motifs</div>
+                <div className="flex flex-wrap gap-1">
+                  {kf.context.motifs.map((m) => (
+                    <span key={m} className="text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0.5 rounded font-mono">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {kf.context.details && (
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Details</div>
+                <div className="text-xs text-gray-400 leading-relaxed whitespace-pre-wrap">{kf.context.details}</div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+  if (kf.candidates.length === 0) {
+    return (
+      <div className="p-4 text-center text-sm text-gray-600">
+        No candidates generated yet.
+      </div>
+    )
+  }
+
+  // Extract variant number from path like ".../v1.png" or ".../styled_003.png"
+  function variantLabel(path: string): string {
+    const match = path.match(/v(\d+)\.png$/)
+    if (match) return `v${match[1]}`
+    const styledMatch = path.match(/styled_([^/]+)\.png$/)
+    if (styledMatch) return styledMatch[1]
+    return path.split('/').pop() || path
+  }
+
+  // Check if this candidate is the currently selected one
+  function isSelected(path: string, idx: number): boolean {
+    if (typeof kf.selected === 'number') {
+      return idx + 1 === kf.selected
+    }
+    if (typeof kf.selected === 'string') {
+      return path === kf.selected || path.endsWith(kf.selected)
+    }
+    return false
+  }
+
+  return (
+    <div className="p-2">
+      <div className="grid grid-cols-2 gap-2">
+        {kf.candidates.map((candidatePath, idx) => {
+          const selected = isSelected(candidatePath, idx)
+          // Convert .beatlab_work/project/path to /api/files/project/path
+          const parts = candidatePath.split('/')
+          const projectIdx = parts.indexOf('.beatlab_work')
+          const relativePath = projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : candidatePath
+          const imgUrl = `/api/files/${projectName}/${relativePath}`
+
+          return (
+            <div
+              key={candidatePath}
+              className={`relative rounded overflow-hidden border-2 transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
+            >
+              <img
+                src={imgUrl}
+                alt={variantLabel(candidatePath)}
+                className="w-full aspect-video object-cover"
+                loading="lazy"
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-300 font-mono">
+                    {variantLabel(candidatePath)}
+                  </span>
+                  {selected && (
+                    <span className="text-[9px] bg-blue-500 text-white px-1 rounded">
+                      selected
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-          )}
-
-          {kf.selected !== null && (
-            <Field
-              label="Selected"
-              value={typeof kf.selected === 'number' ? `Candidate #${kf.selected}` : String(kf.selected)}
-            />
-          )}
-
-          {kf.context && (
-            <>
-              {kf.context.mood && <Field label="Mood" value={kf.context.mood} />}
-              {kf.context.energy && <Field label="Energy" value={kf.context.energy} />}
-              {kf.context.visual_direction && (
-                <div>
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Visual Direction</div>
-                  <div className="text-sm text-gray-300">{kf.context.visual_direction}</div>
-                </div>
-              )}
-              {kf.context.instruments.length > 0 && (
-                <div>
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Instruments</div>
-                  <div className="flex flex-wrap gap-1">
-                    {kf.context.instruments.map((inst) => (
-                      <span key={inst} className="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">
-                        {inst}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {kf.context.motifs.length > 0 && (
-                <div>
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Motifs</div>
-                  <div className="flex flex-wrap gap-1">
-                    {kf.context.motifs.map((m) => (
-                      <span key={m} className="text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0.5 rounded font-mono">
-                        {m}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {kf.context.details && (
-                <div>
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Details</div>
-                  <div className="text-xs text-gray-400 leading-relaxed whitespace-pre-wrap">{kf.context.details}</div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+          )
+        })}
       </div>
     </div>
   )
