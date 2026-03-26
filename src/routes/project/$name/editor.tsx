@@ -245,6 +245,23 @@ export const restoreKeyframe = createServerFn({ method: 'POST' })
     return { success: true }
   })
 
+export const updateKeyframePrompt = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; prompt: string }) => input)
+  .handler(async ({ data }) => {
+    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
+    const content = await readFile(yamlPath, 'utf-8')
+    const parsed = yaml.load(content) as Record<string, unknown>
+    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
+
+    const kf = keyframes.find((k) => k.id === data.keyframeId)
+    if (!kf) return { success: false, error: 'Keyframe not found' }
+
+    kf.prompt = data.prompt
+    parsed.keyframes = keyframes
+    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
+    return { success: true }
+  })
+
 function parseTs(ts: string): number {
   const parts = ts.split(':')
   if (parts.length === 2) return parseInt(parts[0], 10) * 60 + parseFloat(parts[1])

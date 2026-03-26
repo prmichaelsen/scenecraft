@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { KeyframeWithTime } from './Timeline'
+import { updateKeyframePrompt } from '@/routes/project/$name/editor'
 
 const STORAGE_KEY = 'beatlab-keyframe-panel-width'
 const DEFAULT_WIDTH = 360
@@ -120,6 +121,30 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: Keyf
 }
 
 function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+  const [editingPrompt, setEditingPrompt] = useState(false)
+  const [promptText, setPromptText] = useState(kf.prompt)
+  const [saving, setSaving] = useState(false)
+
+  // Sync when keyframe changes
+  useEffect(() => {
+    setPromptText(kf.prompt)
+    setEditingPrompt(false)
+  }, [kf.id, kf.prompt])
+
+  const savePrompt = useCallback(async () => {
+    if (promptText === kf.prompt) {
+      setEditingPrompt(false)
+      return
+    }
+    setSaving(true)
+    await updateKeyframePrompt({
+      data: { projectName, keyframeId: kf.id, prompt: promptText },
+    })
+    kf.prompt = promptText
+    setSaving(false)
+    setEditingPrompt(false)
+  }, [promptText, kf, projectName])
+
   return (
     <>
       {/* Image */}
@@ -138,12 +163,49 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
         <Field label="Timestamp" value={kf.timestamp} />
         <Field label="Section" value={kf.section} />
 
-        {kf.prompt && (
-          <div>
-            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Prompt</div>
-            <div className="text-sm text-gray-300 leading-relaxed">{kf.prompt}</div>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt</div>
+            {!editingPrompt && (
+              <button
+                onClick={() => setEditingPrompt(true)}
+                className="text-[10px] text-blue-500 hover:text-blue-400"
+              >
+                Edit
+              </button>
+            )}
           </div>
-        )}
+          {editingPrompt ? (
+            <div className="space-y-1">
+              <textarea
+                value={promptText}
+                onChange={(e) => setPromptText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault()
+                    savePrompt()
+                  }
+                  if (e.key === 'Escape') {
+                    setPromptText(kf.prompt)
+                    setEditingPrompt(false)
+                  }
+                }}
+                onBlur={savePrompt}
+                autoFocus
+                className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
+                disabled={saving}
+              />
+              <div className="text-[9px] text-gray-600">Ctrl+Enter to save, Esc to cancel</div>
+            </div>
+          ) : (
+            <div
+              className="text-sm text-gray-300 leading-relaxed cursor-pointer hover:bg-gray-800/50 rounded p-1 -m-1 transition-colors"
+              onClick={() => setEditingPrompt(true)}
+            >
+              {kf.prompt || <span className="text-gray-600 italic">No prompt</span>}
+            </div>
+          )}
+        </div>
 
         {kf.selected !== null && (
           <Field
