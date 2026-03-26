@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import type { EditorData, Keyframe } from '@/routes/project/$name/editor'
+import type { EditorData, Keyframe, Beat, Section } from '@/routes/project/$name/editor'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, restoreKeyframe } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { VideoTrack } from './VideoTrack'
@@ -169,17 +169,38 @@ export function Timeline({ data }: { data: EditorData }) {
     }
   }, [videoTrackHeight])
 
-  // Spacebar play/pause
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !e.target || !(e.target as HTMLElement).closest('input, textarea')) {
+      if ((e.target as HTMLElement)?.closest('input, textarea')) return
+
+      if (e.code === 'Space') {
         e.preventDefault()
         playPauseFnRef.current?.()
+      }
+
+      // Arrow keys: navigate between keyframes
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault()
+        const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+        if (e.key === 'ArrowRight') {
+          const next = sorted.find((kf) => kf.timeSeconds > currentTime + 0.1)
+          if (next) {
+            seekFnRef.current?.(next.timeSeconds)
+            setSelectedKeyframe(next)
+          }
+        } else {
+          const prev = [...sorted].reverse().find((kf) => kf.timeSeconds < currentTime - 0.1)
+          if (prev) {
+            seekFnRef.current?.(prev.timeSeconds)
+            setSelectedKeyframe(prev)
+          }
+        }
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [keyframes, currentTime])
 
   // Keep playhead in view
   useEffect(() => {
@@ -257,6 +278,8 @@ export function Timeline({ data }: { data: EditorData }) {
               <div className="absolute left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
                 Video
               </div>
+              {/* Section color bands */}
+              <SectionBands sections={data.sections} pxPerSec={pxPerSec} />
               <VideoTrack
                 keyframes={keyframes}
                 pxPerSec={pxPerSec}
@@ -283,6 +306,8 @@ export function Timeline({ data }: { data: EditorData }) {
               <div className="absolute left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
                 Audio
               </div>
+              {/* Beat markers */}
+              <BeatMarkers beats={data.beats} pxPerSec={pxPerSec} />
               {data.audioFile && (
                 <AudioTrack
                   audioUrl={`/api/files/${data.projectName}/${data.audioFile}`}
@@ -345,6 +370,71 @@ function TimeRuler({ duration, pxPerSec }: { duration: number; pxPerSec: number 
           <span className="text-[9px] text-gray-600 ml-1 whitespace-nowrap">{m.label}</span>
         </div>
       ))}
+    </div>
+  )
+}
+
+function BeatMarkers({ beats, pxPerSec }: { beats: Beat[]; pxPerSec: number }) {
+  if (beats.length === 0) return null
+
+  // Only render visible beats (skip rendering thousands of off-screen markers)
+  // At low zoom levels, thin out to avoid overwhelming the DOM
+  const step = pxPerSec < 10 ? 4 : pxPerSec < 20 ? 2 : 1
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {beats.map((beat, i) => {
+        if (i % step !== 0) return null
+        const x = beat.time * pxPerSec
+        const opacity = 0.1 + beat.intensity * 0.3
+        return (
+          <div
+            key={i}
+            className="absolute top-0 h-full"
+            style={{ left: x, width: 1, backgroundColor: `rgba(59, 130, 246, ${opacity})` }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+const SECTION_COLORS: Record<string, string> = {
+  verse: 'rgba(59, 130, 246, 0.08)',
+  chorus: 'rgba(168, 85, 247, 0.12)',
+  drop: 'rgba(239, 68, 68, 0.12)',
+  bridge: 'rgba(34, 197, 94, 0.08)',
+  intro: 'rgba(107, 114, 128, 0.06)',
+  outro: 'rgba(107, 114, 128, 0.06)',
+  buildup: 'rgba(245, 158, 11, 0.10)',
+  low_energy: 'rgba(59, 130, 246, 0.05)',
+  high_energy: 'rgba(239, 68, 68, 0.08)',
+  mid_energy: 'rgba(168, 85, 247, 0.06)',
+}
+
+function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: number }) {
+  if (sections.length === 0) return null
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {sections.map((section, i) => {
+        const x = section.start_time * pxPerSec
+        const w = (section.end_time - section.start_time) * pxPerSec
+        const color = SECTION_COLORS[section.type] || SECTION_COLORS[section.label] || 'rgba(107, 114, 128, 0.04)'
+        return (
+          <div
+            key={i}
+            className="absolute top-0 h-full"
+            style={{ left: x, width: w, backgroundColor: color }}
+          >
+            {w > 40 && (
+              <span className="absolute bottom-0.5 right-1 text-[7px] text-gray-600 truncate max-w-full">
+                {section.label}
+              </span>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

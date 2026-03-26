@@ -29,6 +29,18 @@ export type Keyframe = {
   candidates: string[]
 }
 
+export type Beat = {
+  time: number
+  intensity: number
+}
+
+export type Section = {
+  start_time: number
+  end_time: number
+  type: string
+  label: string
+}
+
 export type EditorData = {
   meta: {
     title: string
@@ -38,6 +50,8 @@ export type EditorData = {
   keyframes: Keyframe[]
   audioFile: string | null
   projectName: string
+  beats: Beat[]
+  sections: Section[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
@@ -114,7 +128,31 @@ const getEditorData = createServerFn({ method: 'GET' })
       } catch {}
     }
 
-    return { meta, keyframes, audioFile, projectName: data.name }
+    // Load beats.json
+    let beats: Beat[] = []
+    let sections: Section[] = []
+    try {
+      const beatsContent = await readFile(join(projectDir, 'beats.json'), 'utf-8')
+      const beatsData = JSON.parse(beatsContent)
+      if (Array.isArray(beatsData.beats)) {
+        beats = beatsData.beats.map((b: Record<string, unknown>) => ({
+          time: b.time as number,
+          intensity: b.intensity as number,
+        }))
+      }
+      if (Array.isArray(beatsData.sections)) {
+        sections = beatsData.sections.map((s: Record<string, unknown>) => ({
+          start_time: s.start_time as number,
+          end_time: s.end_time as number,
+          type: (s.type as string) || '',
+          label: (s.label as string) || '',
+        }))
+      }
+    } catch {
+      // No beats.json — that's OK
+    }
+
+    return { meta, keyframes, audioFile, projectName: data.name, beats, sections }
   })
 
 export function secondsToTimestamp(seconds: number): string {
