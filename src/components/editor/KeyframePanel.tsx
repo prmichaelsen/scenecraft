@@ -1,0 +1,168 @@
+import { useState, useRef, useCallback, useEffect } from 'react'
+import type { KeyframeWithTime } from './Timeline'
+
+const STORAGE_KEY = 'beatlab-keyframe-panel-width'
+const DEFAULT_WIDTH = 360
+const MIN_WIDTH = 240
+const MAX_WIDTH = 800
+
+type KeyframePanelProps = {
+  keyframe: KeyframeWithTime
+  projectName: string
+  onClose: () => void
+}
+
+export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelProps) {
+  const [width, setWidth] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_WIDTH
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, parseInt(stored, 10))) : DEFAULT_WIDTH
+  })
+  const isDragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true
+    startX.current = e.clientX
+    startWidth.current = width
+    e.preventDefault()
+  }, [width])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = startX.current - e.clientX
+      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth.current + delta))
+      setWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false
+        localStorage.setItem(STORAGE_KEY, String(width))
+      }
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [width])
+
+  // Persist on width change (debounced by mouseup above)
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, String(width))
+  }, [width])
+
+  const kf = keyframe
+
+  return (
+    <div className="relative flex shrink-0" style={{ width }}>
+      {/* Drag handle */}
+      <div
+        className="w-1 cursor-col-resize hover:bg-blue-500/50 active:bg-blue-500 transition-colors shrink-0"
+        onMouseDown={handleMouseDown}
+      />
+
+      {/* Panel content */}
+      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
+          <div className="text-sm font-medium">{kf.id}</div>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+          >
+            &times;
+          </button>
+        </div>
+
+        {/* Image */}
+        {kf.hasSelectedImage && (
+          <div className="p-3">
+            <img
+              src={`/api/files/${projectName}/selected_keyframes/${kf.id}.png`}
+              alt={kf.id}
+              className="w-full rounded"
+            />
+          </div>
+        )}
+
+        {/* Metadata */}
+        <div className="px-3 pb-4 space-y-3">
+          <Field label="Timestamp" value={kf.timestamp} />
+          <Field label="Section" value={kf.section} />
+
+          {kf.prompt && (
+            <div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Prompt</div>
+              <div className="text-sm text-gray-300 leading-relaxed">{kf.prompt}</div>
+            </div>
+          )}
+
+          {kf.selected !== null && (
+            <Field
+              label="Selected"
+              value={typeof kf.selected === 'number' ? `Candidate #${kf.selected}` : String(kf.selected)}
+            />
+          )}
+
+          {kf.context && (
+            <>
+              {kf.context.mood && <Field label="Mood" value={kf.context.mood} />}
+              {kf.context.energy && <Field label="Energy" value={kf.context.energy} />}
+              {kf.context.visual_direction && (
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Visual Direction</div>
+                  <div className="text-sm text-gray-300">{kf.context.visual_direction}</div>
+                </div>
+              )}
+              {kf.context.instruments.length > 0 && (
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Instruments</div>
+                  <div className="flex flex-wrap gap-1">
+                    {kf.context.instruments.map((inst) => (
+                      <span key={inst} className="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">
+                        {inst}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {kf.context.motifs.length > 0 && (
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Motifs</div>
+                  <div className="flex flex-wrap gap-1">
+                    {kf.context.motifs.map((m) => (
+                      <span key={m} className="text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0.5 rounded font-mono">
+                        {m}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {kf.context.details && (
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Details</div>
+                  <div className="text-xs text-gray-400 leading-relaxed whitespace-pre-wrap">{kf.context.details}</div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{label}</div>
+      <div className="text-sm text-gray-300">{value}</div>
+    </div>
+  )
+}

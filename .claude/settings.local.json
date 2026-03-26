@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./agent/scripts/acp.package-search.sh tanstack:*)",
+      "Bash(./agent/scripts/acp.package-search.sh core:*)",
+      "Bash(./agent/scripts/acp.package-install.sh --repo https://github.com/prmichaelsen/acp-tanstack-cloudflare.git)",
+      "Bash(./agent/scripts/acp.package-install.sh --repo https://github.com/prmichaelsen/acp-core-sdk.git --patterns)",
+      "Bash(git add:*)",
+      "Bash(ls:*)",
+      "Bash(grep -E \"\\\\.\\(toml|json|jsonc\\)$\")",
+      "Bash(find /home/prmichaelsen/.acp/projects/cleanbook-tanstack/src -type f -name *.context* -o -name *context*)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f''''  \"\"{k}\"\": \"\"{v}\"\"''''\\) for k,v in sorted\\({**d.get\\(''''dependencies'''',{}\\),**d.get\\(''''devDependencies'''',{}\\)}.items\\(\\)\\) if any\\(x in k for x in [''''tanstack'''',''''cloudflare'''',''''vite'''',''''tailwind'''',''''react'''']\\)]\")",
+      "Bash(npm install:*)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "WebSearch",
+      "Bash(find /home/prmichaelsen/.acp/projects/davinci-beat-lab/.beatlab_work/beyond_the_veil -type f -name *.yaml)",
+      "WebFetch(domain:wavesurfer.xyz)",
+      "WebFetch(domain:www.npmjs.com)"
+    ]
+  }
+}
