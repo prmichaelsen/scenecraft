@@ -10,9 +10,10 @@ type KeyframePanelProps = {
   keyframe: KeyframeWithTime
   projectName: string
   onClose: () => void
+  onDelete: () => void
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -72,12 +73,21 @@ export function KeyframePanel({ keyframe, projectName, onClose }: KeyframePanelP
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="text-sm font-medium">{kf.id}</div>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
-          >
-            &times;
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onDelete}
+              className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
+              title="Delete keyframe (move to bin)"
+            >
+              Delete
+            </button>
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+            >
+              &times;
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}

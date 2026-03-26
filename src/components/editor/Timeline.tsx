@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe } from '@/routes/project/$name/editor'
-import { updateKeyframeTimestamp, secondsToTimestamp } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, restoreKeyframe } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { VideoTrack } from './VideoTrack'
 import { Playhead } from './Playhead'
@@ -24,6 +25,7 @@ const MIN_VIDEO_HEIGHT = 48
 const MAX_VIDEO_HEIGHT = 400
 
 export function Timeline({ data }: { data: EditorData }) {
+  const router = useRouter()
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [pxPerSec, setPxPerSec] = useState(20)
@@ -105,6 +107,41 @@ export function Timeline({ data }: { data: EditorData }) {
     })
   }, [data])
 
+  const handleAddKeyframe = useCallback(async () => {
+    const timestamp = secondsToTimestamp(currentTime)
+    await addKeyframe({
+      data: {
+        projectName: data.projectName,
+        timestamp,
+        section: '',
+        prompt: '',
+      },
+    })
+    router.invalidate()
+  }, [currentTime, data.projectName, router])
+
+  const handleDeleteKeyframe = useCallback(async (id: string) => {
+    await deleteKeyframe({ data: { projectName: data.projectName, keyframeId: id } })
+    setSelectedKeyframe(null)
+    router.invalidate()
+  }, [data.projectName, router])
+
+  const handleRestoreKeyframe = useCallback(async (id: string) => {
+    await restoreKeyframe({ data: { projectName: data.projectName, keyframeId: id } })
+    router.invalidate()
+  }, [data.projectName, router])
+
+  // Delete key shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Delete' && selectedKeyframe && !(e.target as HTMLElement).closest('input, textarea')) {
+        handleDeleteKeyframe(selectedKeyframe.id)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [selectedKeyframe, handleDeleteKeyframe])
+
   // Track boundary drag
   const handleTrackDividerDown = useCallback((e: React.MouseEvent) => {
     trackDragRef.current = { dragging: true, startY: e.clientY, startHeight: videoTrackHeight }
@@ -131,6 +168,18 @@ export function Timeline({ data }: { data: EditorData }) {
       document.removeEventListener('mouseup', handleMouseUp)
     }
   }, [videoTrackHeight])
+
+  // Spacebar play/pause
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.target || !(e.target as HTMLElement).closest('input, textarea')) {
+        e.preventDefault()
+        playPauseFnRef.current?.()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // Keep playhead in view
   useEffect(() => {
@@ -174,6 +223,15 @@ export function Timeline({ data }: { data: EditorData }) {
           <div className="text-sm font-mono text-gray-400">
             {formatTime(currentTime)} / {formatTime(duration)}
           </div>
+
+          {/* Add keyframe at playhead */}
+          <button
+            onClick={handleAddKeyframe}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
+            title="Add keyframe at playhead position"
+          >
+            + Keyframe
+          </button>
 
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
@@ -239,7 +297,12 @@ export function Timeline({ data }: { data: EditorData }) {
             </div>
 
             {/* Playhead overlay */}
-            <Playhead currentTime={currentTime} pxPerSec={pxPerSec} />
+            <Playhead
+              currentTime={currentTime}
+              pxPerSec={pxPerSec}
+              duration={duration}
+              onSeek={(time) => seekFnRef.current?.(time)}
+            />
           </div>
         </div>
       </div>
@@ -250,6 +313,7 @@ export function Timeline({ data }: { data: EditorData }) {
           keyframe={selectedKeyframe}
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
+          onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
         />
       )}
     </div>

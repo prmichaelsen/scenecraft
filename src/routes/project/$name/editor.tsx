@@ -160,6 +160,97 @@ export const updateKeyframeTimestamp = createServerFn({ method: 'POST' })
     return { success: true }
   })
 
+export const addKeyframe = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; timestamp: string; section: string; prompt: string }) => input)
+  .handler(async ({ data }) => {
+    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
+    const content = await readFile(yamlPath, 'utf-8')
+    const parsed = yaml.load(content) as Record<string, unknown>
+    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
+
+    // Find next ID
+    const maxNum = keyframes.reduce((max, kf) => {
+      const m = (kf.id as string).match(/kf_(\d+)/)
+      return m ? Math.max(max, parseInt(m[1], 10)) : max
+    }, 0)
+    const newId = `kf_${String(maxNum + 1).padStart(3, '0')}`
+
+    const newKf = {
+      id: newId,
+      timestamp: data.timestamp,
+      section: data.section,
+      source: 'assets/stills/default.png',
+      prompt: data.prompt,
+      context: null,
+      candidates: [],
+      selected: null,
+    }
+
+    keyframes.push(newKf)
+    // Sort by timestamp
+    keyframes.sort((a, b) => {
+      const ta = parseTs(a.timestamp as string)
+      const tb = parseTs(b.timestamp as string)
+      return ta - tb
+    })
+
+    parsed.keyframes = keyframes
+    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
+    return { success: true, id: newId }
+  })
+
+export const deleteKeyframe = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string }) => input)
+  .handler(async ({ data }) => {
+    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
+    const content = await readFile(yamlPath, 'utf-8')
+    const parsed = yaml.load(content) as Record<string, unknown>
+    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
+
+    const idx = keyframes.findIndex((kf) => kf.id === data.keyframeId)
+    if (idx === -1) return { success: false, error: 'Keyframe not found' }
+
+    const [removed] = keyframes.splice(idx, 1)
+
+    // Add to bin
+    const bin = (parsed.bin || []) as Array<Record<string, unknown>>
+    bin.push({ ...removed, deleted_at: new Date().toISOString() })
+    parsed.bin = bin
+    parsed.keyframes = keyframes
+
+    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
+    return { success: true }
+  })
+
+export const restoreKeyframe = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string }) => input)
+  .handler(async ({ data }) => {
+    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
+    const content = await readFile(yamlPath, 'utf-8')
+    const parsed = yaml.load(content) as Record<string, unknown>
+    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
+    const bin = (parsed.bin || []) as Array<Record<string, unknown>>
+
+    const idx = bin.findIndex((kf) => kf.id === data.keyframeId)
+    if (idx === -1) return { success: false, error: 'Keyframe not in bin' }
+
+    const [restored] = bin.splice(idx, 1)
+    delete restored.deleted_at
+    keyframes.push(restored)
+    keyframes.sort((a, b) => parseTs(a.timestamp as string) - parseTs(b.timestamp as string))
+
+    parsed.keyframes = keyframes
+    parsed.bin = bin
+    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
+    return { success: true }
+  })
+
+function parseTs(ts: string): number {
+  const parts = ts.split(':')
+  if (parts.length === 2) return parseInt(parts[0], 10) * 60 + parseFloat(parts[1])
+  return 0
+}
+
 export const Route = createFileRoute('/project/$name/editor')({
   component: EditorPage,
   loader: ({ params }) => getEditorData({ data: { name: params.name } }),
