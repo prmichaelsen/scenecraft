@@ -3,6 +3,7 @@ import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Beat, Section } from '@/routes/project/$name/editor'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, restoreKeyframe } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
+import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
 import { Playhead } from './Playhead'
 import { KeyframePanel } from './KeyframePanel'
@@ -158,7 +159,10 @@ export function Timeline({ data }: { data: EditorData }) {
     const handleMouseUp = () => {
       if (trackDragRef.current.dragging) {
         trackDragRef.current.dragging = false
-        localStorage.setItem(VIDEO_HEIGHT_KEY, String(videoTrackHeight))
+        setVideoTrackHeight((current) => {
+          localStorage.setItem(VIDEO_HEIGHT_KEY, String(current))
+          return current
+        })
       }
     }
     document.addEventListener('mousemove', handleMouseMove)
@@ -167,7 +171,7 @@ export function Timeline({ data }: { data: EditorData }) {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [videoTrackHeight])
+  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -223,7 +227,7 @@ export function Timeline({ data }: { data: EditorData }) {
           <div className="w-32 h-18 bg-gray-800 rounded overflow-hidden shrink-0">
             {currentKeyframe?.hasSelectedImage ? (
               <img
-                src={`/api/files/${data.projectName}/selected_keyframes/${currentKeyframe.id}.png`}
+                src={beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)}
                 alt={currentKeyframe.id}
                 className="w-full h-full object-cover"
               />
@@ -267,7 +271,7 @@ export function Timeline({ data }: { data: EditorData }) {
         >
           <div style={{ width: Math.max(totalWidth, 800), minHeight: '100%' }} className="relative flex flex-col">
             {/* Time ruler */}
-            <TimeRuler duration={duration} pxPerSec={pxPerSec} />
+            <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
 
             {/* Video track */}
             <div
@@ -310,7 +314,7 @@ export function Timeline({ data }: { data: EditorData }) {
               <BeatMarkers beats={data.beats} pxPerSec={pxPerSec} />
               {data.audioFile && (
                 <AudioTrack
-                  audioUrl={`/api/files/${data.projectName}/${data.audioFile}`}
+                  audioUrl={beatlabFileUrl(data.projectName, data.audioFile)}
                   pxPerSec={pxPerSec}
                   onTimeUpdate={setCurrentTime}
                   onDurationChange={setDuration}
@@ -345,7 +349,7 @@ export function Timeline({ data }: { data: EditorData }) {
   )
 }
 
-function TimeRuler({ duration, pxPerSec }: { duration: number; pxPerSec: number }) {
+function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec: number; onClick?: (e: React.MouseEvent) => void }) {
   const marks: { time: number; label: string }[] = []
 
   let interval = 60
@@ -359,7 +363,7 @@ function TimeRuler({ duration, pxPerSec }: { duration: number; pxPerSec: number 
   }
 
   return (
-    <div className="h-5 border-b border-gray-800 relative bg-gray-950 shrink-0">
+    <div className="h-5 border-b border-gray-800 relative bg-gray-950 shrink-0 cursor-pointer" onClick={onClick}>
       {marks.map((m) => (
         <div
           key={m.time}

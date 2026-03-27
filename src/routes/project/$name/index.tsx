@@ -1,53 +1,12 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { readdir, stat } from 'node:fs/promises'
-import { join, extname } from 'node:path'
-
-const BEATLAB_WORK_DIR = process.env.BEATLAB_WORK_DIR
-  || join(process.env.HOME || '', '.acp/projects/davinci-beat-lab/.beatlab_work')
-
-type FileEntry = {
-  name: string
-  type: 'audio' | 'video' | 'image' | 'json' | 'text' | 'other'
-  size: number
-  isDirectory: boolean
-}
-
-function classifyFile(name: string): FileEntry['type'] {
-  const ext = extname(name).toLowerCase()
-  if (['.wav', '.mp3', '.flac', '.ogg'].includes(ext)) return 'audio'
-  if (['.mp4', '.webm', '.mov'].includes(ext)) return 'video'
-  if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) return 'image'
-  if (ext === '.json') return 'json'
-  if (['.md', '.txt', '.yaml', '.yml'].includes(ext)) return 'text'
-  return 'other'
-}
+import { useState, useCallback } from 'react'
+import { beatlabFileUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
 
 const getProjectFiles = createServerFn({ method: 'GET' })
-  .inputValidator((input: { name: string }) => input)
+  .inputValidator((input: { name: string; path?: string }) => input)
   .handler(async ({ data }) => {
-    const projectDir = join(BEATLAB_WORK_DIR, data.name)
-    const targetDir = projectDir
-    const entries = await readdir(targetDir, { withFileTypes: true })
-
-    const files: FileEntry[] = await Promise.all(
-      entries.map(async (e) => {
-        const fullPath = join(targetDir, e.name)
-        const fileStat = await stat(fullPath)
-        return {
-          name: e.name,
-          type: classifyFile(e.name),
-          size: fileStat.size,
-          isDirectory: e.isDirectory(),
-        }
-      })
-    )
-
-    // Sort: directories first, then by type, then name
-    return files.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-      return a.name.localeCompare(b.name)
-    })
+    return fetchDirectoryListing(data.name, data.path || '')
   })
 
 export const Route = createFileRoute('/project/$name/')({
@@ -56,94 +15,207 @@ export const Route = createFileRoute('/project/$name/')({
 })
 
 function formatSize(bytes: number): string {
+  if (!bytes) return ''
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-const TYPE_COLORS: Record<FileEntry['type'], string> = {
+function fileType(name: string): 'audio' | 'video' | 'image' | 'text' | 'other' {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  if (['wav', 'mp3', 'flac', 'ogg'].includes(ext)) return 'audio'
+  if (['mp4', 'webm', 'mov'].includes(ext)) return 'video'
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) return 'image'
+  if (['md', 'txt', 'yaml', 'yml', 'json'].includes(ext)) return 'text'
+  return 'other'
+}
+
+const TYPE_COLORS: Record<string, string> = {
   audio: 'text-blue-400',
   video: 'text-purple-400',
   image: 'text-green-400',
-  json: 'text-yellow-400',
   text: 'text-gray-400',
   other: 'text-gray-600',
 }
 
 function ProjectPage() {
   const { name } = Route.useParams()
-  const files = Route.useLoaderData()
-  const mediaFiles = files.filter((f) => f.type === 'audio' || f.type === 'video')
+  const initialFiles = Route.useLoaderData()
+  const [currentPath, setCurrentPath] = useState('')
+  const [files, setFiles] = useState<FileEntry[]>(initialFiles)
+  const [loading, setLoading] = useState(false)
+  const [preview, setPreview] = useState<FileEntry | null>(null)
+
+  const navigateTo = useCallback(async (path: string) => {
+    setLoading(true)
+    try {
+      const entries = await getProjectFiles({ data: { name, path } })
+      setFiles(entries)
+      setCurrentPath(path)
+      setPreview(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [name])
+
+  const navigateUp = useCallback(() => {
+    const parts = currentPath.split('/').filter(Boolean)
+    parts.pop()
+    navigateTo(parts.join('/'))
+  }, [currentPath, navigateTo])
+
+  const breadcrumbs = currentPath ? currentPath.split('/').filter(Boolean) : []
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="mb-6">
         <Link to="/" className="text-sm text-gray-500 hover:text-gray-300">
           &larr; All Projects
         </Link>
-        <h1 className="text-2xl font-bold mt-2">{decodeURIComponent(name)}</h1>
-        <Link
-          to="/project/$name/editor"
-          params={{ name }}
-          className="inline-block mt-2 text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors"
+        <div className="flex items-center gap-3 mt-2">
+          <h1 className="text-2xl font-bold">{decodeURIComponent(name)}</h1>
+          <Link
+            to="/project/$name/editor"
+            params={{ name }}
+            className="text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors"
+          >
+            Open Editor
+          </Link>
+        </div>
+      </div>
+
+      {/* Breadcrumb path */}
+      <div className="flex items-center gap-1 text-sm mb-3 min-h-[24px]">
+        <button
+          onClick={() => navigateTo('')}
+          className={`hover:text-gray-200 transition-colors ${currentPath ? 'text-blue-400' : 'text-gray-300'}`}
         >
-          Open Editor
-        </Link>
-      </div>
-
-      {/* Media Player Section */}
-      {mediaFiles.length > 0 && (
-        <div className="mb-8 space-y-4">
-          <h2 className="text-lg font-semibold text-gray-300">Media</h2>
-          {mediaFiles.map((file) => (
-            <div key={file.name} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-              <div className="text-sm text-gray-400 mb-2">
-                {file.name}
-                <span className="ml-2 text-gray-600">{formatSize(file.size)}</span>
-              </div>
-              {file.type === 'audio' ? (
-                <audio
-                  controls
-                  className="w-full"
-                  src={`/api/files/${encodeURIComponent(name)}/${encodeURIComponent(file.name)}`}
-                />
+          /
+        </button>
+        {breadcrumbs.map((part, i) => {
+          const pathUpTo = breadcrumbs.slice(0, i + 1).join('/')
+          const isLast = i === breadcrumbs.length - 1
+          return (
+            <span key={pathUpTo} className="flex items-center gap-1">
+              <span className="text-gray-600">/</span>
+              {isLast ? (
+                <span className="text-gray-300">{part}</span>
               ) : (
-                <video
-                  controls
-                  className="w-full rounded max-h-[500px]"
-                  src={`/api/files/${encodeURIComponent(name)}/${encodeURIComponent(file.name)}`}
-                />
+                <button
+                  onClick={() => navigateTo(pathUpTo)}
+                  className="text-blue-400 hover:text-gray-200 transition-colors"
+                >
+                  {part}
+                </button>
               )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* File List */}
-      <div>
-        <h2 className="text-lg font-semibold text-gray-300 mb-3">Files</h2>
-        <div className="bg-gray-900 border border-gray-800 rounded-lg divide-y divide-gray-800">
-          {files.map((file) => (
-            <div
-              key={file.name}
-              className="flex items-center justify-between px-4 py-2 text-sm"
-            >
-              <div className="flex items-center gap-2">
-                {file.isDirectory ? (
-                  <span className="text-gray-500">📁</span>
-                ) : (
-                  <span className={TYPE_COLORS[file.type]}>●</span>
-                )}
-                <span className={file.isDirectory ? 'text-gray-300' : ''}>{file.name}</span>
-              </div>
-              <span className="text-gray-600 text-xs">
-                {file.isDirectory ? 'dir' : formatSize(file.size)}
-              </span>
-            </div>
-          ))}
-        </div>
+            </span>
+          )
+        })}
+        {loading && <span className="text-gray-600 ml-2 text-xs">loading...</span>}
       </div>
+
+      <div className="flex gap-4">
+        {/* File list */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-gray-900 border border-gray-800 rounded-lg divide-y divide-gray-800">
+            {currentPath && (
+              <button
+                onClick={navigateUp}
+                className="flex items-center gap-2 px-4 py-2 text-sm w-full text-left hover:bg-gray-800/50 transition-colors"
+              >
+                <span className="text-gray-500">..</span>
+              </button>
+            )}
+            {files.map((file) => {
+              const type = fileType(file.name)
+              return (
+                <button
+                  key={file.name}
+                  onClick={() => {
+                    if (file.isDirectory) {
+                      navigateTo(file.path)
+                    } else {
+                      setPreview(file)
+                    }
+                  }}
+                  className="flex items-center justify-between px-4 py-2 text-sm w-full text-left hover:bg-gray-800/50 transition-colors"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {file.isDirectory ? (
+                      <span className="text-yellow-500/70 shrink-0">dir</span>
+                    ) : (
+                      <span className={`${TYPE_COLORS[type]} shrink-0`}>*</span>
+                    )}
+                    <span className={`truncate ${file.isDirectory ? 'text-gray-200' : 'text-gray-400'}`}>
+                      {file.name}
+                    </span>
+                  </div>
+                  <span className="text-gray-600 text-xs shrink-0 ml-2">
+                    {file.isDirectory ? '' : formatSize(file.size || 0)}
+                  </span>
+                </button>
+              )
+            })}
+            {files.length === 0 && (
+              <div className="px-4 py-6 text-center text-sm text-gray-600">Empty directory</div>
+            )}
+          </div>
+        </div>
+
+        {/* Preview panel */}
+        {preview && (
+          <div className="w-80 shrink-0">
+            <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                <span className="text-sm font-medium text-gray-300 truncate">{preview.name}</span>
+                <button
+                  onClick={() => setPreview(null)}
+                  className="text-gray-500 hover:text-gray-300 text-lg leading-none ml-2"
+                >
+                  &times;
+                </button>
+              </div>
+              <FilePreview project={name} file={preview} />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FilePreview({ project, file }: { project: string; file: FileEntry }) {
+  const url = beatlabFileUrl(project, file.path)
+  const type = fileType(file.name)
+
+  if (type === 'image') {
+    return <img src={url} alt={file.name} className="w-full" loading="lazy" />
+  }
+
+  if (type === 'audio') {
+    return (
+      <div className="p-3">
+        <audio controls className="w-full" src={url} />
+      </div>
+    )
+  }
+
+  if (type === 'video') {
+    return <video controls className="w-full" src={url} />
+  }
+
+  return (
+    <div className="p-3 text-sm text-gray-500">
+      <div className="mb-2">{formatSize(file.size || 0)}</div>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-400 hover:text-blue-300 text-xs"
+      >
+        Open raw file
+      </a>
     </div>
   )
 }

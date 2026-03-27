@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ProjectNameRouteImport } from './routes/project/$name'
 import { Route as ProjectNameIndexRouteImport } from './routes/project/$name/index'
 import { Route as ProjectNameEditorRouteImport } from './routes/project/$name/editor'
-import { Route as ApiFilesProjectSplatRouteImport } from './routes/api/files/$project/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -35,24 +34,17 @@ const ProjectNameEditorRoute = ProjectNameEditorRouteImport.update({
   path: '/editor',
   getParentRoute: () => ProjectNameRoute,
 } as any)
-const ApiFilesProjectSplatRoute = ApiFilesProjectSplatRouteImport.update({
-  id: '/api/files/$project/$',
-  path: '/api/files/$project/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/project/$name': typeof ProjectNameRouteWithChildren
   '/project/$name/editor': typeof ProjectNameEditorRoute
   '/project/$name/': typeof ProjectNameIndexRoute
-  '/api/files/$project/$': typeof ApiFilesProjectSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/project/$name/editor': typeof ProjectNameEditorRoute
   '/project/$name': typeof ProjectNameIndexRoute
-  '/api/files/$project/$': typeof ApiFilesProjectSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -60,7 +52,6 @@ export interface FileRoutesById {
   '/project/$name': typeof ProjectNameRouteWithChildren
   '/project/$name/editor': typeof ProjectNameEditorRoute
   '/project/$name/': typeof ProjectNameIndexRoute
-  '/api/files/$project/$': typeof ApiFilesProjectSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -69,22 +60,19 @@ export interface FileRouteTypes {
     | '/project/$name'
     | '/project/$name/editor'
     | '/project/$name/'
-    | '/api/files/$project/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/project/$name/editor' | '/project/$name' | '/api/files/$project/$'
+  to: '/' | '/project/$name/editor' | '/project/$name'
   id:
     | '__root__'
     | '/'
     | '/project/$name'
     | '/project/$name/editor'
     | '/project/$name/'
-    | '/api/files/$project/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ProjectNameRoute: typeof ProjectNameRouteWithChildren
-  ApiFilesProjectSplatRoute: typeof ApiFilesProjectSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -117,13 +105,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectNameEditorRouteImport
       parentRoute: typeof ProjectNameRoute
     }
-    '/api/files/$project/$': {
-      id: '/api/files/$project/$'
-      path: '/api/files/$project/$'
-      fullPath: '/api/files/$project/$'
-      preLoaderRoute: typeof ApiFilesProjectSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -144,7 +125,6 @@ const ProjectNameRouteWithChildren = ProjectNameRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ProjectNameRoute: ProjectNameRouteWithChildren,
-  ApiFilesProjectSplatRoute: ApiFilesProjectSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

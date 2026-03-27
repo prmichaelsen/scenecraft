@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt } from '@/routes/project/$name/editor'
+import { beatlabFileUrl } from '@/lib/beatlab-client'
 
 const STORAGE_KEY = 'beatlab-keyframe-panel-width'
 const DEFAULT_WIDTH = 360
@@ -151,7 +152,7 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
       {kf.hasSelectedImage && (
         <div className="p-3">
           <img
-            src={`/api/files/${projectName}/selected_keyframes/${kf.id}.png`}
+            src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
             alt={kf.id}
             className="w-full rounded"
           />
@@ -295,11 +296,11 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
       <div className="grid grid-cols-2 gap-2">
         {kf.candidates.map((candidatePath, idx) => {
           const selected = isSelected(candidatePath, idx)
-          // Convert .beatlab_work/project/path to /api/files/project/path
+          // Convert .beatlab_work/project/path to beatlab API file URL
           const parts = candidatePath.split('/')
           const projectIdx = parts.indexOf('.beatlab_work')
           const relativePath = projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : candidatePath
-          const imgUrl = `/api/files/${projectName}/${relativePath}`
+          const imgUrl = beatlabFileUrl(projectName, relativePath)
 
           return (
             <div

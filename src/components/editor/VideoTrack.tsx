@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback, type RefObject } from 'react'
 import type { KeyframeWithTime } from './Timeline'
+import { beatlabFileUrl } from '@/lib/beatlab-client'
 
 type VideoTrackProps = {
   keyframes: KeyframeWithTime[]
@@ -34,6 +35,7 @@ export function VideoTrack({
   scrollRef,
 }: VideoTrackProps) {
   const dragState = useRef<DragState | null>(null)
+  const didDrag = useRef(false)
 
   const handleEdgeMouseDown = useCallback((e: React.MouseEvent, kf: KeyframeWithTime, idx: number) => {
     e.stopPropagation()
@@ -76,7 +78,7 @@ export function VideoTrack({
       const deltaX = e.clientX - ds.startX
       const deltaTime = deltaX / pxPerSec
       const newTime = Math.max(ds.minTime, Math.min(ds.maxTime, ds.startTime + deltaTime))
-      if (Math.abs(deltaX) > 2) ds.didMove = true
+      if (Math.abs(deltaX) > 2) { ds.didMove = true; didDrag.current = true }
       onKeyframeDrag(ds.keyframeId, newTime)
     }
 
@@ -117,7 +119,7 @@ export function VideoTrack({
             style={{ left: x, width }}
             onMouseDown={(e) => handleBodyMouseDown(e, kf)}
             onClick={(e) => {
-              if (dragState.current?.didMove) return
+              if (didDrag.current) { didDrag.current = false; return }
               e.stopPropagation()
               onKeyframeClick(kf)
             }}
@@ -134,7 +136,7 @@ export function VideoTrack({
             {/* Thumbnail */}
             {kf.hasSelectedImage ? (
               <img
-                src={`/api/files/${projectName}/selected_keyframes/${kf.id}.png`}
+                src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
                 alt={kf.id}
                 className={`absolute top-1 left-3 h-[calc(100%-8px)] aspect-video object-cover rounded-sm transition-opacity cursor-grab active:cursor-grabbing ${isSelected ? 'opacity-100 ring-1 ring-blue-500' : 'opacity-70 group-hover:opacity-100'}`}
                 loading="lazy"

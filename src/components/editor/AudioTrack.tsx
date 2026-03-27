@@ -1,4 +1,4 @@
-import { useRef, useEffect, type MutableRefObject } from 'react'
+import { useRef, useEffect, useState, type MutableRefObject } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 
 type AudioTrackProps = {
@@ -9,6 +9,54 @@ type AudioTrackProps = {
   onPlayingChange: (playing: boolean) => void
   seekRef: MutableRefObject<((time: number) => void) | null>
   playPauseRef: MutableRefObject<(() => void) | null>
+}
+
+// IndexedDB cache for waveform peaks
+const DB_NAME = 'beatlab-waveform-cache'
+const STORE_NAME = 'peaks'
+
+function openCacheDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1)
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME)
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function getCachedPeaks(url: string): Promise<{ peaks: Float32Array[]; duration: number } | null> {
+  try {
+    const db = await openCacheDb()
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly')
+      const req = tx.objectStore(STORE_NAME).get(url)
+      req.onsuccess = () => {
+        const val = req.result
+        if (val?.peaks && val?.duration) {
+          resolve({ peaks: val.peaks.map((p: ArrayBuffer) => new Float32Array(p)), duration: val.duration })
+        } else {
+          resolve(null)
+        }
+      }
+      req.onerror = () => resolve(null)
+    })
+  } catch {
+    return null
+  }
+}
+
+async function cachePeaks(url: string, peaks: Float32Array[], duration: number): Promise<void> {
+  try {
+    const db = await openCacheDb()
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    // Store as plain ArrayBuffers (structured-cloneable)
+    tx.objectStore(STORE_NAME).put(
+      { peaks: peaks.map((p) => p.buffer.slice(0)), duration },
+      url
+    )
+  } catch {
+    // Cache failures are non-fatal
+  }
 }
 
 export function AudioTrack({
@@ -22,43 +70,70 @@ export function AudioTrack({
 }: AudioTrackProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WaveSurfer | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [progress, setProgress] = useState(0)
 
-  // Initialize wavesurfer
   useEffect(() => {
     if (!containerRef.current) return
+    let destroyed = false
 
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      url: audioUrl,
-      waveColor: '#4a5568',
-      progressColor: '#3b82f6',
-      cursorColor: 'transparent', // We draw our own playhead
-      height: 'auto',
-      fillParent: false,
-      minPxPerSec: pxPerSec,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 1,
-      normalize: true,
-      interact: false, // We handle clicks at the timeline level
-    })
+    setLoading(true)
+    setProgress(0)
 
-    ws.on('timeupdate', (time) => onTimeUpdate(time))
-    ws.on('ready', () => onDurationChange(ws.getDuration()))
-    ws.on('play', () => onPlayingChange(true))
-    ws.on('pause', () => onPlayingChange(false))
+    async function init() {
+      const cached = await getCachedPeaks(audioUrl)
 
-    // Expose seek and play/pause
-    seekRef.current = (time: number) => {
-      ws.setTime(time)
-      onTimeUpdate(time)
+      if (destroyed || !containerRef.current) return
+
+      const ws = WaveSurfer.create({
+        container: containerRef.current!,
+        url: audioUrl,
+        waveColor: '#4a5568',
+        progressColor: '#3b82f6',
+        cursorColor: 'transparent',
+        height: 'auto',
+        fillParent: false,
+        minPxPerSec: pxPerSec,
+        barWidth: 2,
+        barGap: 1,
+        barRadius: 1,
+        normalize: true,
+        interact: false,
+        // If we have cached peaks, use them for instant rendering
+        ...(cached ? { peaks: cached.peaks, duration: cached.duration } : {}),
+      })
+
+      ws.on('loading', (pct) => setProgress(pct))
+      ws.on('ready', () => {
+        if (destroyed) return
+        setLoading(false)
+        const dur = ws.getDuration()
+        onDurationChange(dur)
+
+        // Cache peaks for next time (only if we didn't load from cache)
+        if (!cached) {
+          const peaks = ws.exportPeaks()
+          cachePeaks(audioUrl, peaks as Float32Array[], dur)
+        }
+      })
+      ws.on('timeupdate', (time) => onTimeUpdate(time))
+      ws.on('play', () => onPlayingChange(true))
+      ws.on('pause', () => onPlayingChange(false))
+
+      seekRef.current = (time: number) => {
+        ws.setTime(time)
+        onTimeUpdate(time)
+      }
+      playPauseRef.current = () => ws.playPause()
+
+      wsRef.current = ws
     }
-    playPauseRef.current = () => ws.playPause()
 
-    wsRef.current = ws
+    init()
 
     return () => {
-      ws.destroy()
+      destroyed = true
+      wsRef.current?.destroy()
       wsRef.current = null
       seekRef.current = null
       playPauseRef.current = null
@@ -66,12 +141,21 @@ export function AudioTrack({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl])
 
-  // Sync zoom level
   useEffect(() => {
     if (wsRef.current) {
       wsRef.current.setOptions({ minPxPerSec: pxPerSec })
     }
   }, [pxPerSec])
 
-  return <div ref={containerRef} className="h-full" />
+  return (
+    <div ref={containerRef} className="h-full relative">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-950/80 z-10">
+          <div className="text-xs text-gray-500">
+            Loading waveform... {progress}%
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }

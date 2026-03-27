@@ -1,12 +1,15 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { readFile, writeFile, access } from 'node:fs/promises'
-import { join } from 'node:path'
-import yaml from 'js-yaml'
 import { Timeline } from '@/components/editor/Timeline'
-
-const BEATLAB_WORK_DIR = process.env.BEATLAB_WORK_DIR
-  || join(process.env.HOME || '', '.acp/projects/davinci-beat-lab/.beatlab_work')
+import {
+  fetchKeyframes,
+  fetchBeats,
+  postUpdateTimestamp,
+  postAddKeyframe,
+  postDeleteKeyframe,
+  postRestoreKeyframe,
+  postUpdatePrompt,
+} from '@/lib/beatlab-client'
 
 export type KeyframeContext = {
   mood: string
@@ -57,102 +60,32 @@ export type EditorData = {
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const projectDir = join(BEATLAB_WORK_DIR, data.name)
+    const [kfData, beatsData] = await Promise.all([
+      fetchKeyframes(data.name),
+      fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
+    ])
 
-    // Load narrative_keyframes.yaml
-    let keyframes: Keyframe[] = []
-    let meta = { title: data.name, fps: 24, resolution: [1920, 1080] as [number, number] }
-
-    try {
-      const yamlContent = await readFile(join(projectDir, 'narrative_keyframes.yaml'), 'utf-8')
-      const parsed = yaml.load(yamlContent) as Record<string, unknown>
-
-      if (parsed?.meta) {
-        const m = parsed.meta as Record<string, unknown>
-        meta = {
-          title: (m.title as string) || data.name,
-          fps: (m.fps as number) || 24,
-          resolution: (m.resolution as [number, number]) || [1920, 1080],
-        }
-      }
-
-      if (Array.isArray(parsed?.keyframes)) {
-        keyframes = await Promise.all(
-          (parsed.keyframes as Array<Record<string, unknown>>).map(async (kf) => {
-            const id = kf.id as string
-            // Check if selected keyframe image exists
-            const imgPath = join(projectDir, 'selected_keyframes', `${id}.png`)
-            let hasSelectedImage = false
-            try {
-              await access(imgPath)
-              hasSelectedImage = true
-            } catch {}
-
-            const ctx = kf.context as Record<string, unknown> | undefined
-            return {
-              id,
-              timestamp: kf.timestamp as string,
-              section: kf.section as string,
-              prompt: (kf.prompt as string) || '',
-              selected: kf.selected as number | string | null,
-              hasSelectedImage,
-              context: ctx ? {
-                mood: (ctx.mood as string) || '',
-                energy: (ctx.energy as string) || '',
-                instruments: (ctx.instruments as string[]) || [],
-                motifs: (ctx.motifs as string[]) || [],
-                events: (ctx.events as string[]) || [],
-                visual_direction: (ctx.visual_direction as string) || '',
-                details: (ctx.details as string) || '',
-              } : null,
-              candidates: Array.isArray(kf.candidates)
-                ? (kf.candidates as Array<string | Record<string, unknown>>).map((c) =>
-                    typeof c === 'string' ? c : (c.path as string) || ''
-                  ).filter(Boolean)
-                : [],
-            }
-          })
-        )
-      }
-    } catch {
-      // No narrative_keyframes.yaml — that's OK
+    return {
+      meta: kfData.meta || { title: data.name, fps: 24, resolution: [1920, 1080] },
+      keyframes: (kfData.keyframes || []).map((kf: Record<string, unknown>) => ({
+        id: kf.id as string,
+        timestamp: kf.timestamp as string,
+        section: kf.section as string,
+        prompt: (kf.prompt as string) || '',
+        selected: kf.selected as number | string | null,
+        hasSelectedImage: kf.hasSelectedImage as boolean,
+        context: kf.context as KeyframeContext | null,
+        candidates: Array.isArray(kf.candidates)
+          ? (kf.candidates as Array<string | Record<string, unknown>>).map((c) =>
+              typeof c === 'string' ? c : (c.path as string) || ''
+            ).filter(Boolean)
+          : [],
+      })),
+      audioFile: kfData.audioFile || null,
+      projectName: data.name,
+      beats: Array.isArray(beatsData.beats) ? beatsData.beats : [],
+      sections: Array.isArray(beatsData.sections) ? beatsData.sections : [],
     }
-
-    // Find audio file
-    let audioFile: string | null = null
-    for (const candidate of ['audio.wav', 'audio.mp3']) {
-      try {
-        await access(join(projectDir, candidate))
-        audioFile = candidate
-        break
-      } catch {}
-    }
-
-    // Load beats.json
-    let beats: Beat[] = []
-    let sections: Section[] = []
-    try {
-      const beatsContent = await readFile(join(projectDir, 'beats.json'), 'utf-8')
-      const beatsData = JSON.parse(beatsContent)
-      if (Array.isArray(beatsData.beats)) {
-        beats = beatsData.beats.map((b: Record<string, unknown>) => ({
-          time: b.time as number,
-          intensity: b.intensity as number,
-        }))
-      }
-      if (Array.isArray(beatsData.sections)) {
-        sections = beatsData.sections.map((s: Record<string, unknown>) => ({
-          start_time: s.start_time as number,
-          end_time: s.end_time as number,
-          type: (s.type as string) || '',
-          label: (s.label as string) || '',
-        }))
-      }
-    } catch {
-      // No beats.json — that's OK
-    }
-
-    return { meta, keyframes, audioFile, projectName: data.name, beats, sections }
   })
 
 export function secondsToTimestamp(seconds: number): string {
@@ -169,142 +102,32 @@ export function secondsToTimestamp(seconds: number): string {
 export const updateKeyframeTimestamp = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; newTimestamp: string }) => input)
   .handler(async ({ data }) => {
-    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
-    const content = await readFile(yamlPath, 'utf-8')
-
-    // Find and replace the timestamp for the specific keyframe
-    // The YAML structure has `- id: kf_XXX\n  timestamp: M:SS` patterns
-    const idPattern = `- id: ${data.keyframeId}`
-    const idx = content.indexOf(idPattern)
-    if (idx === -1) {
-      return { success: false, error: 'Keyframe not found' }
-    }
-
-    // Find the timestamp field after this id
-    const tsPattern = /\n(\s+)timestamp:\s*'?([^'\n]+)'?/
-    const after = content.slice(idx)
-    const match = after.match(tsPattern)
-    if (!match) {
-      return { success: false, error: 'Timestamp field not found' }
-    }
-
-    const fullMatch = match[0]
-    const indent = match[1]
-    const replacement = `\n${indent}timestamp: '${data.newTimestamp}'`
-
-    const updated = content.slice(0, idx) + after.replace(fullMatch, replacement)
-    await writeFile(yamlPath, updated, 'utf-8')
-
-    return { success: true }
+    return postUpdateTimestamp(data.projectName, data.keyframeId, data.newTimestamp)
   })
 
 export const addKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; timestamp: string; section: string; prompt: string }) => input)
   .handler(async ({ data }) => {
-    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
-    const content = await readFile(yamlPath, 'utf-8')
-    const parsed = yaml.load(content) as Record<string, unknown>
-    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
-
-    // Find next ID
-    const maxNum = keyframes.reduce((max, kf) => {
-      const m = (kf.id as string).match(/kf_(\d+)/)
-      return m ? Math.max(max, parseInt(m[1], 10)) : max
-    }, 0)
-    const newId = `kf_${String(maxNum + 1).padStart(3, '0')}`
-
-    const newKf = {
-      id: newId,
-      timestamp: data.timestamp,
-      section: data.section,
-      source: 'assets/stills/default.png',
-      prompt: data.prompt,
-      context: null,
-      candidates: [],
-      selected: null,
-    }
-
-    keyframes.push(newKf)
-    // Sort by timestamp
-    keyframes.sort((a, b) => {
-      const ta = parseTs(a.timestamp as string)
-      const tb = parseTs(b.timestamp as string)
-      return ta - tb
-    })
-
-    parsed.keyframes = keyframes
-    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
-    return { success: true, id: newId }
+    return postAddKeyframe(data.projectName, data.timestamp, data.section, data.prompt)
   })
 
 export const deleteKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string }) => input)
   .handler(async ({ data }) => {
-    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
-    const content = await readFile(yamlPath, 'utf-8')
-    const parsed = yaml.load(content) as Record<string, unknown>
-    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
-
-    const idx = keyframes.findIndex((kf) => kf.id === data.keyframeId)
-    if (idx === -1) return { success: false, error: 'Keyframe not found' }
-
-    const [removed] = keyframes.splice(idx, 1)
-
-    // Add to bin
-    const bin = (parsed.bin || []) as Array<Record<string, unknown>>
-    bin.push({ ...removed, deleted_at: new Date().toISOString() })
-    parsed.bin = bin
-    parsed.keyframes = keyframes
-
-    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
-    return { success: true }
+    return postDeleteKeyframe(data.projectName, data.keyframeId)
   })
 
 export const restoreKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string }) => input)
   .handler(async ({ data }) => {
-    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
-    const content = await readFile(yamlPath, 'utf-8')
-    const parsed = yaml.load(content) as Record<string, unknown>
-    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
-    const bin = (parsed.bin || []) as Array<Record<string, unknown>>
-
-    const idx = bin.findIndex((kf) => kf.id === data.keyframeId)
-    if (idx === -1) return { success: false, error: 'Keyframe not in bin' }
-
-    const [restored] = bin.splice(idx, 1)
-    delete restored.deleted_at
-    keyframes.push(restored)
-    keyframes.sort((a, b) => parseTs(a.timestamp as string) - parseTs(b.timestamp as string))
-
-    parsed.keyframes = keyframes
-    parsed.bin = bin
-    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
-    return { success: true }
+    return postRestoreKeyframe(data.projectName, data.keyframeId)
   })
 
 export const updateKeyframePrompt = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; prompt: string }) => input)
   .handler(async ({ data }) => {
-    const yamlPath = join(BEATLAB_WORK_DIR, data.projectName, 'narrative_keyframes.yaml')
-    const content = await readFile(yamlPath, 'utf-8')
-    const parsed = yaml.load(content) as Record<string, unknown>
-    const keyframes = (parsed.keyframes || []) as Array<Record<string, unknown>>
-
-    const kf = keyframes.find((k) => k.id === data.keyframeId)
-    if (!kf) return { success: false, error: 'Keyframe not found' }
-
-    kf.prompt = data.prompt
-    parsed.keyframes = keyframes
-    await writeFile(yamlPath, yaml.dump(parsed, { lineWidth: -1, quotingType: "'", forceQuotes: false }), 'utf-8')
-    return { success: true }
+    return postUpdatePrompt(data.projectName, data.keyframeId, data.prompt)
   })
-
-function parseTs(ts: string): number {
-  const parts = ts.split(':')
-  if (parts.length === 2) return parseInt(parts[0], 10) * 60 + parseFloat(parts[1])
-  return 0
-}
 
 export const Route = createFileRoute('/project/$name/editor')({
   component: EditorPage,

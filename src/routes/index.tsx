@@ -1,31 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
-
-const BEATLAB_WORK_DIR = process.env.BEATLAB_WORK_DIR
-  || join(process.env.HOME || '', '.acp/projects/davinci-beat-lab/.beatlab_work')
+import { fetchProjects } from '@/lib/beatlab-client'
 
 const getProjects = createServerFn({ method: 'GET' }).handler(async () => {
-  const entries = await readdir(BEATLAB_WORK_DIR, { withFileTypes: true })
-  const projects = await Promise.all(
-    entries
-      .filter((e) => e.isDirectory())
-      .map(async (e) => {
-        const dirPath = join(BEATLAB_WORK_DIR, e.name)
-        const files = await readdir(dirPath)
-        const hasAudio = files.some((f) => f.endsWith('.wav') || f.endsWith('.mp3'))
-        const hasVideo = files.some((f) => f.endsWith('.mp4'))
-        const dirStat = await stat(dirPath)
-        return {
-          name: e.name,
-          hasAudio,
-          hasVideo,
-          fileCount: files.length,
-          modified: dirStat.mtimeMs,
-        }
-      })
-  )
+  const projects = await fetchProjects()
   return projects.sort((a, b) => b.modified - a.modified)
 })
 
