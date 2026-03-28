@@ -24,6 +24,14 @@ import {
   type UserEffect,
   type BeatSuppression,
 } from '@/lib/beatlab-client'
+import {
+  fetchNarrative,
+  fetchTimelines,
+  type NarrativeSection,
+  type TimelineInfo,
+} from '@/lib/timeline-client'
+
+export type { NarrativeSection, TimelineInfo } from '@/lib/timeline-client'
 
 export type KeyframeContext = {
   mood: string
@@ -86,6 +94,8 @@ export type EditorData = {
   projectName: string
   beats: Beat[]
   sections: Section[]
+  narrativeSections: NarrativeSection[]
+  timelineInfo: TimelineInfo | null
   userEffects: UserEffect[]
   beatSuppressions: BeatSuppression[]
 }
@@ -93,10 +103,12 @@ export type EditorData = {
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const [kfData, beatsData, effectsData] = await Promise.all([
+    const [kfData, beatsData, effectsData, narrativeData, timelineData] = await Promise.all([
       fetchKeyframes(data.name),
       fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
       fetchEffects(data.name).catch(() => ({ effects: [], suppressions: [] })),
+      fetchNarrative(data.name).catch(() => ({ sections: [] })),
+      fetchTimelines(data.name).catch(() => null),
     ])
 
     return {
@@ -138,6 +150,8 @@ const getEditorData = createServerFn({ method: 'GET' })
       projectName: data.name,
       beats: Array.isArray(beatsData.beats) ? beatsData.beats : [],
       sections: Array.isArray(beatsData.sections) ? beatsData.sections : [],
+      narrativeSections: narrativeData.sections || [],
+      timelineInfo: timelineData,
       userEffects: effectsData.effects || [],
       beatSuppressions: effectsData.suppressions || [],
     }
@@ -273,6 +287,9 @@ function EditorPage() {
         <h1 className="text-sm font-medium">{data.meta.title}</h1>
         <span className="text-xs text-gray-600">{data.meta.fps}fps</span>
         <span className="text-xs text-gray-600">{data.keyframes.length} keyframes</span>
+        {data.timelineInfo && (
+          <span className="text-xs text-purple-400 font-mono">{data.timelineInfo.active}</span>
+        )}
       </div>
 
       {/* Timeline */}

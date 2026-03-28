@@ -16,6 +16,7 @@ import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
+import { TimelineSwitcher } from './TimelineSwitcher'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 function parseTimestamp(ts: string): number {
@@ -424,6 +425,8 @@ export function Timeline({ data }: { data: EditorData }) {
           >
             Versions
           </button>
+
+          <TimelineSwitcher projectName={data.projectName} onSwitch={() => router.invalidate()} />
 
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
