@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
+import { beatlabFileUrl } from '@/lib/beatlab-client'
 
 const STORAGE_KEY = 'beatlab-transition-panel-width'
 const DEFAULT_WIDTH = 360
@@ -62,7 +63,9 @@ export function TransitionPanel({
     }
   }, [])
 
+  const [tab, setTab] = useState<'details' | 'candidates'>('details')
   const tr = transition
+  const totalCandidates = Object.values(tr.candidates).reduce((sum, arr) => sum + arr.length, 0)
 
   return (
     <div className="relative flex shrink-0" style={{ width }}>
@@ -93,24 +96,33 @@ export function TransitionPanel({
           </div>
         </div>
 
+        {/* Tabs */}
+        <TabBar tab={tab} setTab={setTab} candidateCount={totalCandidates} />
+
         <div className="flex-1 overflow-y-auto">
-          {/* Metadata */}
-          <div className="px-3 py-3 space-y-3 border-b border-gray-800">
-            <Field label="From → To" value={`${tr.from} → ${tr.to}`} />
-            <Field label="Duration" value={`${tr.durationSeconds.toFixed(1)}s`} />
-            <Field label="Slots" value={String(tr.slots)} />
-            <Field label="Remap" value={`${tr.remap.method} (${tr.remap.target_duration.toFixed(1)}s)`} />
-          </div>
+          {tab === 'details' ? (
+            <>
+              {/* Metadata */}
+              <div className="px-3 py-3 space-y-3 border-b border-gray-800">
+                <Field label="From → To" value={`${tr.from} → ${tr.to}`} />
+                <Field label="Duration" value={`${tr.durationSeconds.toFixed(1)}s`} />
+                <Field label="Slots" value={String(tr.slots)} />
+                <Field label="Remap" value={`${tr.remap.method} (${tr.remap.target_duration.toFixed(1)}s)`} />
+              </div>
 
-          {/* Action prompt */}
-          <div className="px-3 py-3 border-b border-gray-800">
-            <ActionPromptEditor transition={tr} projectName={projectName} />
-          </div>
+              {/* Action prompt */}
+              <div className="px-3 py-3 border-b border-gray-800">
+                <ActionPromptEditor transition={tr} projectName={projectName} />
+              </div>
 
-          {/* Motion prompt (global) */}
-          <div className="px-3 py-3">
-            <MotionPromptEditor projectName={projectName} motionPrompt={motionPrompt} />
-          </div>
+              {/* Motion prompt (global) */}
+              <div className="px-3 py-3">
+                <MotionPromptEditor projectName={projectName} motionPrompt={motionPrompt} />
+              </div>
+            </>
+          ) : (
+            <CandidatesTab transition={tr} projectName={projectName} />
+          )}
         </div>
       </div>
     </div>
@@ -239,6 +251,113 @@ function MotionPromptEditor({ projectName, motionPrompt }: { projectName: string
         disabled={saving}
       />
       <div className="text-[9px] text-gray-600">Appended as "Camera and motion: ..." to every transition with the checkbox enabled</div>
+    </div>
+  )
+}
+
+function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'details' | 'candidates') => void; candidateCount: number }) {
+  return (
+    <div className="flex border-b border-gray-800 shrink-0">
+      <button
+        onClick={() => setTab('details')}
+        className={`flex-1 text-xs py-2 transition-colors ${tab === 'details' ? 'text-gray-200 border-b-2 border-orange-500' : 'text-gray-500 hover:text-gray-400'}`}
+      >
+        Details
+      </button>
+      <button
+        onClick={() => setTab('candidates')}
+        className={`flex-1 text-xs py-2 transition-colors ${tab === 'candidates' ? 'text-gray-200 border-b-2 border-orange-500' : 'text-gray-500 hover:text-gray-400'}`}
+      >
+        Videos{candidateCount > 0 ? ` (${candidateCount})` : ''}
+      </button>
+    </div>
+  )
+}
+
+function CandidatesTab({ transition, projectName }: { transition: Transition; projectName: string }) {
+  const [generating, setGenerating] = useState(false)
+  const [candidates, setCandidates] = useState(transition.candidates)
+
+  useEffect(() => {
+    setCandidates(transition.candidates)
+  }, [transition.id, transition.candidates])
+
+  const handleGenerate = useCallback(async () => {
+    if (!transition.action) {
+      alert('Generate an action prompt first (Details tab) before generating video candidates.')
+      return
+    }
+    setGenerating(true)
+    try {
+      const result = await generateTransitionCandidates({
+        data: { projectName, transitionId: transition.id },
+      })
+      if (result.candidates) {
+        setCandidates(result.candidates)
+        transition.candidates = result.candidates
+      }
+    } finally {
+      setGenerating(false)
+    }
+  }, [projectName, transition])
+
+  const slotKeys = Object.keys(candidates).sort()
+  const totalVideos = slotKeys.reduce((sum, k) => sum + candidates[k].length, 0)
+
+  return (
+    <div className="p-2 space-y-3">
+      {/* Generate button */}
+      <button
+        onClick={handleGenerate}
+        disabled={generating}
+        className="w-full text-xs bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+      >
+        {generating ? 'Generating with Veo...' : totalVideos > 0 ? 'Generate More Videos' : 'Generate Video Candidates'}
+      </button>
+      {generating && (
+        <div className="text-[10px] text-gray-500 text-center">
+          This may take a few minutes per slot. Videos are generated via Veo 3.1.
+        </div>
+      )}
+
+      {/* Candidates by slot */}
+      {slotKeys.length === 0 && !generating ? (
+        <div className="text-center text-sm text-gray-600 py-4">
+          No video candidates yet.
+        </div>
+      ) : (
+        slotKeys.map((slotKey) => (
+          <div key={slotKey}>
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+              {slotKey.replace('_', ' ')}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {candidates[slotKey].map((videoPath, idx) => {
+                const url = beatlabFileUrl(projectName, videoPath)
+                const label = videoPath.split('/').pop() || `v${idx + 1}`
+                return (
+                  <div
+                    key={videoPath}
+                    className="relative rounded overflow-hidden border border-gray-700 hover:border-orange-500 transition-colors group"
+                  >
+                    <video
+                      src={url}
+                      className="w-full aspect-video object-cover"
+                      muted
+                      loop
+                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                      onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                      <span className="text-[10px] text-gray-300 font-mono">{label}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   )
 }

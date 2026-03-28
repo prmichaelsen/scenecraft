@@ -13,6 +13,7 @@ import {
   postDeleteTransition,
   postRestoreTransition,
   postGenerateTransitionAction,
+  postGenerateTransitionCandidates,
   postUpdateTransitionAction,
   postUpdateMeta,
 } from '@/lib/beatlab-client'
@@ -58,7 +59,8 @@ export type Transition = {
   slots: number
   action: string
   useGlobalPrompt: boolean
-  candidates: string[]
+  candidates: Record<string, string[]>  // slot_0: ["path/v1.mp4", ...], slot_1: [...]
+  hasSelectedVideos: boolean[]
   selected: string[]
   remap: { method: string; target_duration: number }
 }
@@ -117,7 +119,8 @@ const getEditorData = createServerFn({ method: 'GET' })
         slots: tr.slots as number,
         action: (tr.action as string) || '',
         useGlobalPrompt: tr.useGlobalPrompt !== false,
-        candidates: (tr.candidates as string[]) || [],
+        candidates: (tr.candidates as Record<string, string[]>) || {},
+        hasSelectedVideos: (tr.hasSelectedVideos as boolean[]) || [],
         selected: (tr.selected as string[]) || [],
         remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
       })),
@@ -185,6 +188,12 @@ export const updateMeta = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; fields: Record<string, string> }) => input)
   .handler(async ({ data }) => {
     return postUpdateMeta(data.projectName, data.fields)
+  })
+
+export const generateTransitionCandidates = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string; count?: number }) => input)
+  .handler(async ({ data }) => {
+    return postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count)
   })
 
 export const deleteTransition = createServerFn({ method: 'POST' })

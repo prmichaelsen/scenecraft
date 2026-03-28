@@ -31,7 +31,7 @@ export function TransitionTrack({
         if (width <= 0) return null
 
         const isSelected = tr.id === selectedId
-        const hasCandidates = tr.candidates.length > 0
+        const hasCandidates = Object.values(tr.candidates).some((arr) => arr.length > 0)
 
         return (
           <div
@@ -66,7 +66,7 @@ export function TransitionTrack({
             {/* Hover tooltip */}
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-xs text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none">
               {tr.id}: {tr.from} → {tr.to} ({tr.durationSeconds.toFixed(1)}s, {tr.slots} slot{tr.slots !== 1 ? 's' : ''})
-              {hasCandidates && <span className="text-orange-400 ml-1">{tr.candidates.length} candidates</span>}
+              {hasCandidates && <span className="text-orange-400 ml-1">{Object.values(tr.candidates).reduce((s, a) => s + a.length, 0)} videos</span>}
             </div>
           </div>
         )

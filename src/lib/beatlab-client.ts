@@ -144,6 +144,15 @@ export async function postUpdateMeta(project: string, fields: Record<string, str
   return res.json()
 }
 
+export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, count }),
+  })
+  return res.json() as Promise<{ success: boolean; transitionId: string; candidates: Record<string, string[]> }>
+}
+
 export async function postDeleteTransition(project: string, transitionId: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/delete-transition`, {
     method: 'POST',
