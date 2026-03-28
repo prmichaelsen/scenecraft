@@ -2,14 +2,16 @@ import { useState, useCallback, useEffect } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
+import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 type BinPanelProps = {
   projectName: string
   onClose: () => void
   onRestore: () => void
+  socket: ReturnType<typeof useBeatlabSocket>
 }
 
-export function BinPanel({ projectName, onClose, onRestore }: BinPanelProps) {
+export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelProps) {
   const [keyframeEntries, setKeyframeEntries] = useState<BinEntry[]>([])
   const [transitionEntries, setTransitionEntries] = useState<TransitionBinEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -27,6 +29,15 @@ export function BinPanel({ projectName, onClose, onRestore }: BinPanelProps) {
   }, [projectName])
 
   useEffect(() => { loadBin() }, [loadBin])
+
+  // Auto-refresh bin when folder watcher imports new files
+  useEffect(() => {
+    return socket.subscribeAll((msg) => {
+      if ('type' in msg && (msg as { type: string }).type === 'folder_import') {
+        loadBin()
+      }
+    })
+  }, [socket, loadBin])
 
   const handleRestoreKeyframe = useCallback(async (id: string) => {
     await restoreKeyframe({ data: { projectName, keyframeId: id } })

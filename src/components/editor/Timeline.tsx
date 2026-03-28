@@ -545,6 +545,7 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
+          socket={socket}
         />
       )}
 
