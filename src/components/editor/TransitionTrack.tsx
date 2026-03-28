@@ -25,7 +25,7 @@ export function TransitionTrack({
         const toKf = kfMap.get(tr.to)
         if (!fromKf || !toKf) return null
 
-        const x = fromKf.timeSeconds * pxPerSec
+        const x = fromKf.timeSeconds * pxPerSec + 3
         const endX = toKf.timeSeconds * pxPerSec
         const width = endX - x
         if (width <= 0) return null
