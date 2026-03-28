@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { beatlabFileUrl } from '@/lib/beatlab-client'
+import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
 import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -14,21 +14,31 @@ type BinPanelProps = {
 export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelProps) {
   const [keyframeEntries, setKeyframeEntries] = useState<BinEntry[]>([])
   const [transitionEntries, setTransitionEntries] = useState<TransitionBinEntry[]>([])
+  const [watchedFolders, setWatchedFolders] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'keyframes' | 'transitions'>('keyframes')
 
   const loadBin = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getBin({ data: { projectName } })
-      setKeyframeEntries(data.bin || [])
-      setTransitionEntries(data.transitionBin || [])
+      const [binData, watchData] = await Promise.all([
+        getBin({ data: { projectName } }),
+        fetchWatchedFolders(projectName).catch(() => ({ watchedFolders: [] })),
+      ])
+      setKeyframeEntries(binData.bin || [])
+      setTransitionEntries(binData.transitionBin || [])
+      setWatchedFolders(watchData.watchedFolders || [])
     } finally {
       setLoading(false)
     }
   }, [projectName])
 
   useEffect(() => { loadBin() }, [loadBin])
+
+  const handleUnwatch = useCallback(async (folderPath: string) => {
+    await postUnwatchFolder(projectName, folderPath)
+    setWatchedFolders((prev) => prev.filter((p) => p !== folderPath))
+  }, [projectName])
 
   // Auto-refresh bin when folder watcher imports new files
   useEffect(() => {
@@ -65,6 +75,24 @@ export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelPr
           &times;
         </button>
       </div>
+
+      {/* Watched folders */}
+      {watchedFolders.length > 0 && (
+        <div className="px-3 py-2 border-b border-gray-800 shrink-0 space-y-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Watching</div>
+          {watchedFolders.map((folder) => (
+            <div key={folder} className="flex items-center justify-between text-[10px]">
+              <span className="text-green-400 truncate flex-1" title={folder}>{folder || '/'}</span>
+              <button
+                onClick={() => handleUnwatch(folder)}
+                className="text-red-400/60 hover:text-red-400 ml-2 shrink-0"
+              >
+                stop
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex border-b border-gray-800 shrink-0">

@@ -226,6 +226,12 @@ export async function postUpdateEffects(project: string, effects: UserEffect[], 
   return res.json()
 }
 
+export async function fetchWatchedFolders(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/watched-folders`)
+  if (!res.ok) throw new Error(`Failed to fetch watched folders: ${res.status}`)
+  return res.json() as Promise<{ watchedFolders: string[] }>
+}
+
 export async function postWatchFolder(project: string, folderPath: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/watch-folder`, {
     method: 'POST',
