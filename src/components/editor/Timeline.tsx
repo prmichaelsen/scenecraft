@@ -29,6 +29,11 @@ const DEFAULT_VIDEO_HEIGHT = 96
 const MIN_VIDEO_HEIGHT = 48
 const MAX_VIDEO_HEIGHT = 400
 
+const PREVIEW_HEIGHT_KEY = 'beatlab-preview-height'
+const DEFAULT_PREVIEW_HEIGHT = 180
+const MIN_PREVIEW_HEIGHT = 80
+const MAX_PREVIEW_HEIGHT = 500
+
 export function Timeline({ data }: { data: EditorData }) {
   const router = useRouter()
   const [currentTime, setCurrentTime] = useState(0)
@@ -45,10 +50,16 @@ export function Timeline({ data }: { data: EditorData }) {
     const stored = localStorage.getItem(VIDEO_HEIGHT_KEY)
     return stored ? Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(stored, 10))) : DEFAULT_VIDEO_HEIGHT
   })
+  const [previewHeight, setPreviewHeight] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_PREVIEW_HEIGHT
+    const stored = localStorage.getItem(PREVIEW_HEIGHT_KEY)
+    return stored ? Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(stored, 10))) : DEFAULT_PREVIEW_HEIGHT
+  })
   const scrollRef = useRef<HTMLDivElement>(null)
   const seekFnRef = useRef<((time: number) => void) | null>(null)
   const playPauseFnRef = useRef<(() => void) | null>(null)
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
+  const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
 
   const totalWidth = duration * pxPerSec
 
@@ -156,6 +167,12 @@ export function Timeline({ data }: { data: EditorData }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [selectedKeyframe, handleDeleteKeyframe])
 
+  // Preview divider drag
+  const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
+    previewDragRef.current = { dragging: true, startY: e.clientY, startHeight: previewHeight }
+    e.preventDefault()
+  }, [previewHeight])
+
   // Track boundary drag
   const handleTrackDividerDown = useCallback((e: React.MouseEvent) => {
     trackDragRef.current = { dragging: true, startY: e.clientY, startHeight: videoTrackHeight }
@@ -164,12 +181,25 @@ export function Timeline({ data }: { data: EditorData }) {
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
+      if (previewDragRef.current.dragging) {
+        const delta = e.clientY - previewDragRef.current.startY
+        const newHeight = Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, previewDragRef.current.startHeight + delta))
+        setPreviewHeight(newHeight)
+        return
+      }
       if (!trackDragRef.current.dragging) return
       const delta = e.clientY - trackDragRef.current.startY
       const newHeight = Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, trackDragRef.current.startHeight + delta))
       setVideoTrackHeight(newHeight)
     }
     const handleMouseUp = () => {
+      if (previewDragRef.current.dragging) {
+        previewDragRef.current.dragging = false
+        setPreviewHeight((current) => {
+          localStorage.setItem(PREVIEW_HEIGHT_KEY, String(current))
+          return current
+        })
+      }
       if (trackDragRef.current.dragging) {
         trackDragRef.current.dragging = false
         setVideoTrackHeight((current) => {
@@ -235,9 +265,12 @@ export function Timeline({ data }: { data: EditorData }) {
     <div className="h-full flex">
       {/* Main timeline area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Preview + controls */}
-        <div className="flex items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
-          <div className="w-32 h-18 bg-gray-800 rounded overflow-hidden shrink-0">
+        {/* Preview */}
+        <div
+          className="bg-gray-950 flex items-center justify-center shrink-0 overflow-hidden"
+          style={{ height: previewHeight }}
+        >
+          <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden">
             {currentKeyframe?.hasSelectedImage ? (
               <BeatEffectPreview
                 src={beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)}
@@ -247,12 +280,21 @@ export function Timeline({ data }: { data: EditorData }) {
                 className="w-full h-full object-cover"
               />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
+              <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
                 No image
               </div>
             )}
           </div>
+        </div>
 
+        {/* Preview/tracks divider */}
+        <div
+          className="h-1.5 cursor-row-resize hover:bg-blue-500/50 active:bg-blue-500 bg-gray-800 transition-colors shrink-0 relative z-20"
+          onMouseDown={handlePreviewDividerDown}
+        />
+
+        {/* Controls bar */}
+        <div className="flex items-center gap-4 px-4 py-1.5 bg-gray-900 border-b border-gray-800 shrink-0">
           <button
             onClick={handlePlayPause}
             className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 rounded transition-colors"
