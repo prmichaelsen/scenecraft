@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { importAssets } from '@/routes/project/$name/editor'
-import { fetchBrowse, type BrowseEntry } from '@/lib/beatlab-client'
+import { fetchBrowse, postWatchFolder, postUnwatchFolder, type BrowseEntry } from '@/lib/beatlab-client'
 
 type ImportDialogProps = {
   projectName: string
@@ -17,6 +17,7 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [watching, setWatching] = useState<string | null>(null)
 
   const loadDir = useCallback(async (path: string) => {
     setLoading(true)
@@ -97,6 +98,23 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
       setImporting(false)
     }
   }, [selected, projectName, timestamp, onImported])
+
+  const handleWatch = useCallback(async () => {
+    try {
+      const res = await postWatchFolder(projectName, currentPath)
+      if (res.success) {
+        setWatching(currentPath)
+      }
+    } catch (e) {
+      setError(String(e))
+    }
+  }, [projectName, currentPath])
+
+  const handleUnwatch = useCallback(async () => {
+    if (!watching) return
+    await postUnwatchFolder(projectName, watching)
+    setWatching(null)
+  }, [projectName, watching])
 
   const breadcrumbs = currentPath ? currentPath.split('/').filter(Boolean) : []
   const importableCount = entries.filter((e) => !e.isDirectory && (e.type === 'image' || e.type === 'video')).length
@@ -207,6 +225,14 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
             <div className="text-xs text-green-400 bg-green-900/20 rounded px-3 py-2">{result}</div>
           )}
 
+          {/* Watch folder indicator */}
+          {watching && (
+            <div className="flex items-center justify-between text-xs bg-green-900/20 rounded px-3 py-2">
+              <span className="text-green-400">Watching: {watching || '/'} — new files auto-import to bin</span>
+              <button onClick={handleUnwatch} className="text-red-400 hover:text-red-300 ml-2">Stop</button>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 flex-1">
               <label className="text-[10px] text-gray-500 shrink-0">Start at:</label>
@@ -224,6 +250,16 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
                 className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors shrink-0"
               >
                 {selected.size === importableCount ? 'Deselect all' : 'Select all'}
+              </button>
+            )}
+
+            {!watching && !result && (
+              <button
+                onClick={handleWatch}
+                className="text-[10px] text-green-400 hover:text-green-300 transition-colors shrink-0"
+                title="Watch this folder — new files will auto-import to bin"
+              >
+                Watch folder
               </button>
             )}
 

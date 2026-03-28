@@ -226,6 +226,24 @@ export async function postUpdateEffects(project: string, effects: UserEffect[], 
   return res.json()
 }
 
+export async function postWatchFolder(project: string, folderPath: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/watch-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderPath }),
+  })
+  return res.json() as Promise<{ success: boolean; watching: string; existingFiles: number }>
+}
+
+export async function postUnwatchFolder(project: string, folderPath: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unwatch-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderPath }),
+  })
+  return res.json()
+}
+
 export async function postImport(project: string, sourcePath: string, timestamp?: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/import`, {
     method: 'POST',
