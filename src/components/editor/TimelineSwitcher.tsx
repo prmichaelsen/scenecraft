@@ -3,6 +3,7 @@ import {
   fetchTimelines,
   postSwitchTimeline,
   postCreateTimeline,
+  postImportTimeline,
   type TimelineInfo,
 } from '@/lib/timeline-client'
 
@@ -16,6 +17,9 @@ export function TimelineSwitcher({ projectName, onSwitch }: TimelineSwitcherProp
   const [loading, setLoading] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const [importPath, setImportPath] = useState('')
+  const [importName, setImportName] = useState('')
   const [newName, setNewName] = useState('')
   const [copyFrom, setCopyFrom] = useState('')
 
@@ -58,6 +62,21 @@ export function TimelineSwitcher({ projectName, onSwitch }: TimelineSwitcherProp
     }
   }, [newName, copyFrom, projectName, loadTimelines, onSwitch])
 
+  const handleImport = useCallback(async () => {
+    if (!importPath.trim()) return
+    setLoading(true)
+    try {
+      await postImportTimeline(projectName, importPath.trim(), importName.trim() || undefined)
+      setImportPath('')
+      setImportName('')
+      setShowImport(false)
+      await loadTimelines()
+      onSwitch()
+    } finally {
+      setLoading(false)
+    }
+  }, [importPath, importName, projectName, loadTimelines, onSwitch])
+
   // Don't render if backend doesn't support timelines
   if (!info || info.timelines.length === 0) return null
 
@@ -92,15 +111,25 @@ export function TimelineSwitcher({ projectName, onSwitch }: TimelineSwitcherProp
             ))}
           </div>
 
-          <div className="border-t border-gray-700 p-2 space-y-1">
-            {!showCreate ? (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="text-[10px] text-blue-400 hover:text-blue-300"
-              >
-                + New timeline
-              </button>
-            ) : (
+          <div className="border-t border-gray-700 p-2 space-y-2">
+            {!showCreate && !showImport && (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setShowCreate(true); setShowImport(false) }}
+                  className="text-[10px] text-blue-400 hover:text-blue-300"
+                >
+                  + New timeline
+                </button>
+                <button
+                  onClick={() => { setShowImport(true); setShowCreate(false) }}
+                  className="text-[10px] text-green-400 hover:text-green-300"
+                >
+                  Import timeline
+                </button>
+              </div>
+            )}
+
+            {showCreate && (
               <div className="space-y-1">
                 <input
                   type="text"
@@ -128,6 +157,36 @@ export function TimelineSwitcher({ projectName, onSwitch }: TimelineSwitcherProp
                     className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded disabled:bg-gray-700"
                   >
                     Create
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showImport && (
+              <div className="space-y-1">
+                <input
+                  type="text"
+                  value={importPath}
+                  onChange={(e) => setImportPath(e.target.value)}
+                  placeholder="path/to/timeline.yaml or project"
+                  className="w-full bg-gray-900 text-xs text-gray-300 rounded px-2 py-1 border border-gray-600 focus:border-green-500 focus:outline-none"
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleImport() }}
+                  autoFocus
+                />
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={importName}
+                    onChange={(e) => setImportName(e.target.value)}
+                    placeholder="name (optional)"
+                    className="flex-1 bg-gray-900 text-[10px] text-gray-400 rounded px-1 py-0.5 border border-gray-600"
+                  />
+                  <button
+                    onClick={handleImport}
+                    disabled={!importPath.trim() || loading}
+                    className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded disabled:bg-gray-700"
+                  >
+                    Import
                   </button>
                 </div>
               </div>
