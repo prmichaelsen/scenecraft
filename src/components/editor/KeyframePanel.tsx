@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { KeyframeWithTime } from './Timeline'
-import { updateKeyframePrompt, generateKeyframeCandidates } from '@/routes/project/$name/editor'
+import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -316,6 +316,24 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
     }
   }, [projectName, kf, socket])
 
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(() => {
+    return typeof kf.selected === 'number' ? kf.selected : null
+  })
+  const [selecting, setSelecting] = useState(false)
+
+  const handleSelect = useCallback(async (variantNum: number) => {
+    setSelecting(true)
+    try {
+      await selectKeyframes({
+        data: { projectName, selections: { [kf.id]: variantNum } },
+      })
+      setSelectedIdx(variantNum)
+      kf.selected = variantNum
+    } finally {
+      setSelecting(false)
+    }
+  }, [projectName, kf])
+
   // Extract variant number from path like ".../v1.png" or ".../styled_003.png"
   function variantLabel(path: string): string {
     const match = path.match(/v(\d+)\.png$/)
@@ -325,15 +343,8 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
     return path.split('/').pop() || path
   }
 
-  // Check if this candidate is the currently selected one
-  function isSelected(path: string, idx: number): boolean {
-    if (typeof kf.selected === 'number') {
-      return idx + 1 === kf.selected
-    }
-    if (typeof kf.selected === 'string') {
-      return path === kf.selected || path.endsWith(kf.selected)
-    }
-    return false
+  function isSelected(idx: number): boolean {
+    return selectedIdx === idx + 1
   }
 
   return (
@@ -358,7 +369,8 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
       ) : (
         <div className="grid grid-cols-2 gap-2">
           {candidates.map((candidatePath, idx) => {
-            const selected = isSelected(candidatePath, idx)
+            const selected = isSelected(idx)
+            const variantNum = idx + 1
             // Convert .beatlab_work/project/path to beatlab API file URL
             const parts = candidatePath.split('/')
             const projectIdx = parts.indexOf('.beatlab_work')
@@ -368,7 +380,8 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
             return (
               <div
                 key={candidatePath}
-                className={`relative rounded overflow-hidden border-2 transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
+                className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
+                onClick={() => handleSelect(variantNum)}
               >
                 <img
                   src={imgUrl}

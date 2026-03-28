@@ -19,6 +19,7 @@ import {
   postUpdateMeta,
   postImport,
   postSelectTransitions,
+  postSelectKeyframes,
   fetchEffects,
   postUpdateEffects,
   type UserEffect,
@@ -196,6 +197,12 @@ export const updateKeyframePrompt = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; prompt: string }) => input)
   .handler(async ({ data }) => {
     return postUpdatePrompt(data.projectName, data.keyframeId, data.prompt)
+  })
+
+export const selectKeyframes = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
+  .handler(async ({ data }) => {
+    return postSelectKeyframes(data.projectName, data.selections)
   })
 
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
