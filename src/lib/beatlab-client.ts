@@ -224,6 +224,15 @@ export async function postImport(project: string, sourcePath: string, timestamp?
   }>
 }
 
+export async function postSelectTransitions(project: string, selections: Record<string, number>) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-transitions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selections }),
+  })
+  return res.json()
+}
+
 export async function postSelectKeyframes(project: string, selections: Record<string, number>) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-keyframes`, {
     method: 'POST',

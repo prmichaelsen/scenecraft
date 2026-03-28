@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 
 const STORAGE_KEY = 'beatlab-transition-panel-width'
@@ -276,7 +276,16 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
 
 function CandidatesTab({ transition, projectName }: { transition: Transition; projectName: string }) {
   const [generating, setGenerating] = useState(false)
+  const [selecting, setSelecting] = useState(false)
   const [candidates, setCandidates] = useState(transition.candidates)
+  const [selectedMap, setSelectedMap] = useState<Record<string, number>>(() => {
+    // Build initial selection state from hasSelectedVideos
+    const map: Record<string, number> = {}
+    transition.selected?.forEach((sel: string, i: number) => {
+      if (sel) map[`slot_${i}`] = typeof sel === 'number' ? sel : 0
+    })
+    return map
+  })
 
   useEffect(() => {
     setCandidates(transition.candidates)
@@ -300,6 +309,19 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
       setGenerating(false)
     }
   }, [projectName, transition])
+
+  const handleSelect = useCallback(async (slotKey: string, variantIndex: number) => {
+    setSelecting(true)
+    const selectionKey = `${transition.id}_${slotKey}`
+    try {
+      await selectTransitions({
+        data: { projectName, selections: { [selectionKey]: variantIndex } },
+      })
+      setSelectedMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
+    } finally {
+      setSelecting(false)
+    }
+  }, [projectName, transition.id])
 
   const slotKeys = Object.keys(candidates).sort()
   const totalVideos = slotKeys.reduce((sum, k) => sum + candidates[k].length, 0)
@@ -333,12 +355,17 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
             </div>
             <div className="grid grid-cols-2 gap-2">
               {candidates[slotKey].map((videoPath, idx) => {
+                const variantNum = idx + 1
                 const url = beatlabFileUrl(projectName, videoPath)
-                const label = videoPath.split('/').pop() || `v${idx + 1}`
+                const label = videoPath.split('/').pop() || `v${variantNum}`
+                const isSelected = selectedMap[slotKey] === variantNum
                 return (
                   <div
                     key={videoPath}
-                    className="relative rounded overflow-hidden border border-gray-700 hover:border-orange-500 transition-colors group"
+                    className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors group ${
+                      isSelected ? 'border-orange-500' : 'border-transparent hover:border-gray-600'
+                    } ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
+                    onClick={() => handleSelect(slotKey, variantNum)}
                   >
                     <video
                       src={url}
@@ -349,7 +376,12 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
                       onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
-                      <span className="text-[10px] text-gray-300 font-mono">{label}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-300 font-mono">{label}</span>
+                        {isSelected && (
+                          <span className="text-[9px] bg-orange-500 text-white px-1 rounded">selected</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )

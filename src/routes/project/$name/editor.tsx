@@ -18,6 +18,7 @@ import {
   postUpdateTransitionAction,
   postUpdateMeta,
   postImport,
+  postSelectTransitions,
   fetchEffects,
   postUpdateEffects,
   type UserEffect,
@@ -205,6 +206,12 @@ export const updateMeta = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; fields: Record<string, string> }) => input)
   .handler(async ({ data }) => {
     return postUpdateMeta(data.projectName, data.fields)
+  })
+
+export const selectTransitions = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
+  .handler(async ({ data }) => {
+    return postSelectTransitions(data.projectName, data.selections)
   })
 
 export const generateTransitionCandidates = createServerFn({ method: 'POST' })
