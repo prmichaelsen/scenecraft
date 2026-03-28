@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { KeyframeWithTime } from './Timeline'
-import { updateKeyframePrompt } from '@/routes/project/$name/editor'
+import { updateKeyframePrompt, generateKeyframeCandidates } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 
 const STORAGE_KEY = 'beatlab-keyframe-panel-width'
@@ -263,13 +263,31 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
 }
 
 function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
-  if (kf.candidates.length === 0) {
-    return (
-      <div className="p-4 text-center text-sm text-gray-600">
-        No candidates generated yet.
-      </div>
-    )
-  }
+  const [generating, setGenerating] = useState(false)
+  const [candidates, setCandidates] = useState(kf.candidates)
+
+  useEffect(() => {
+    setCandidates(kf.candidates)
+  }, [kf.id, kf.candidates])
+
+  const handleGenerate = useCallback(async () => {
+    if (!kf.prompt) {
+      alert('Add a prompt to this keyframe first (Details tab) before generating candidates.')
+      return
+    }
+    setGenerating(true)
+    try {
+      const result = await generateKeyframeCandidates({
+        data: { projectName, keyframeId: kf.id },
+      })
+      if (result.candidates) {
+        setCandidates(result.candidates)
+        kf.candidates = result.candidates
+      }
+    } finally {
+      setGenerating(false)
+    }
+  }, [projectName, kf])
 
   // Extract variant number from path like ".../v1.png" or ".../styled_003.png"
   function variantLabel(path: string): string {
@@ -292,43 +310,62 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
   }
 
   return (
-    <div className="p-2">
-      <div className="grid grid-cols-2 gap-2">
-        {kf.candidates.map((candidatePath, idx) => {
-          const selected = isSelected(candidatePath, idx)
-          // Convert .beatlab_work/project/path to beatlab API file URL
-          const parts = candidatePath.split('/')
-          const projectIdx = parts.indexOf('.beatlab_work')
-          const relativePath = projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : candidatePath
-          const imgUrl = beatlabFileUrl(projectName, relativePath)
+    <div className="p-2 space-y-2">
+      <button
+        onClick={handleGenerate}
+        disabled={generating}
+        className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+      >
+        {generating ? 'Generating with Imagen...' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
+      </button>
+      {generating && (
+        <div className="text-[10px] text-gray-500 text-center">
+          Generating styled image candidates from the keyframe prompt...
+        </div>
+      )}
 
-          return (
-            <div
-              key={candidatePath}
-              className={`relative rounded overflow-hidden border-2 transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
-            >
-              <img
-                src={imgUrl}
-                alt={variantLabel(candidatePath)}
-                className="w-full aspect-video object-cover"
-                loading="lazy"
-              />
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-gray-300 font-mono">
-                    {variantLabel(candidatePath)}
-                  </span>
-                  {selected && (
-                    <span className="text-[9px] bg-blue-500 text-white px-1 rounded">
-                      selected
+      {candidates.length === 0 && !generating ? (
+        <div className="text-center text-sm text-gray-600 py-4">
+          No candidates yet. Add a prompt and click Generate.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {candidates.map((candidatePath, idx) => {
+            const selected = isSelected(candidatePath, idx)
+            // Convert .beatlab_work/project/path to beatlab API file URL
+            const parts = candidatePath.split('/')
+            const projectIdx = parts.indexOf('.beatlab_work')
+            const relativePath = projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : candidatePath
+            const imgUrl = beatlabFileUrl(projectName, relativePath)
+
+            return (
+              <div
+                key={candidatePath}
+                className={`relative rounded overflow-hidden border-2 transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
+              >
+                <img
+                  src={imgUrl}
+                  alt={variantLabel(candidatePath)}
+                  className="w-full aspect-video object-cover"
+                  loading="lazy"
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-300 font-mono">
+                      {variantLabel(candidatePath)}
                     </span>
-                  )}
+                    {selected && (
+                      <span className="text-[9px] bg-blue-500 text-white px-1 rounded">
+                        selected
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

@@ -12,6 +12,7 @@ import {
   postUpdatePrompt,
   postDeleteTransition,
   postRestoreTransition,
+  postGenerateKeyframeCandidates,
   postGenerateTransitionAction,
   postGenerateTransitionCandidates,
   postUpdateTransitionAction,
@@ -171,6 +172,12 @@ export const updateKeyframePrompt = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; prompt: string }) => input)
   .handler(async ({ data }) => {
     return postUpdatePrompt(data.projectName, data.keyframeId, data.prompt)
+  })
+
+export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
+  .handler(async ({ data }) => {
+    return postGenerateKeyframeCandidates(data.projectName, data.keyframeId, data.count)
   })
 
 export const generateTransitionAction = createServerFn({ method: 'POST' })

@@ -117,6 +117,15 @@ export async function fetchBin(project: string) {
   return res.json() as Promise<{ bin: BinEntry[]; transitionBin: TransitionBinEntry[] }>
 }
 
+export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, count }),
+  })
+  return res.json() as Promise<{ success: boolean; keyframeId: string; candidates: string[] }>
+}
+
 export async function postGenerateTransitionAction(project: string, transitionId: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-action`, {
     method: 'POST',
