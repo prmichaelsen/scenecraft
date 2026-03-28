@@ -180,6 +180,37 @@ export async function postRestoreTransition(project: string, transitionId: strin
   return res.json()
 }
 
+export type EffectType = 'pulse' | 'zoom' | 'shake' | 'glow' | 'flash'
+
+export type UserEffect = {
+  id: string
+  time: number
+  type: EffectType
+  intensity: number  // 0-1
+  duration: number   // seconds
+}
+
+export type BeatSuppression = {
+  id: string
+  from: number  // start time in seconds
+  to: number    // end time in seconds
+}
+
+export async function fetchEffects(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/effects`)
+  if (!res.ok) throw new Error(`Failed to fetch effects: ${res.status}`)
+  return res.json() as Promise<{ effects: UserEffect[]; suppressions: BeatSuppression[] }>
+}
+
+export async function postUpdateEffects(project: string, effects: UserEffect[], suppressions: BeatSuppression[]) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/effects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ effects, suppressions }),
+  })
+  return res.json()
+}
+
 export async function postImport(project: string, sourcePath: string, timestamp?: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/import`, {
     method: 'POST',

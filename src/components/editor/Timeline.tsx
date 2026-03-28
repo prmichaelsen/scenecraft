@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition } from '@/routes/project/$name/editor'
+import type { UserEffect, BeatSuppression } from '@/lib/beatlab-client'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
@@ -12,6 +13,8 @@ import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
 import { ImportDialog } from './ImportDialog'
+import { EffectsTrack } from './EffectsTrack'
+import { EffectEditor } from './EffectEditor'
 
 function parseTimestamp(ts: string): number {
   const parts = ts.split(':')
@@ -45,6 +48,10 @@ export function Timeline({ data }: { data: EditorData }) {
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [showBin, setShowBin] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
+  const [suppressions, _setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
+  const [selectedEffect, setSelectedEffect] = useState<UserEffect | null>(null)
+  const nextFxId = useRef(data.userEffects.length + 1)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(() => {
@@ -103,12 +110,57 @@ export function Timeline({ data }: { data: EditorData }) {
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
     setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
     setSelectedTransition(null)
+    setSelectedEffect(null)
   }, [])
 
   const handleTransitionClick = useCallback((tr: Transition) => {
     setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
     setSelectedKeyframe(null)
+    setSelectedEffect(null)
   }, [])
+
+  // Effects handlers
+  const persistEffects = useCallback((effects: UserEffect[], supps: BeatSuppression[]) => {
+    saveEffects({ data: { projectName: data.projectName, effects, suppressions: supps } })
+  }, [data.projectName])
+
+  const handleAddEffect = useCallback((time: number) => {
+    const id = `fx_${String(nextFxId.current++).padStart(3, '0')}`
+    const newEffect: UserEffect = { id, time, type: 'pulse', intensity: 0.8, duration: 0.2 }
+    const updated = [...userEffects, newEffect].sort((a, b) => a.time - b.time)
+    setUserEffects(updated)
+    setSelectedEffect(newEffect)
+    setSelectedKeyframe(null)
+    setSelectedTransition(null)
+    persistEffects(updated, suppressions)
+  }, [userEffects, suppressions, persistEffects])
+
+  const handleEffectClick = useCallback((fx: UserEffect) => {
+    setSelectedEffect((prev) => prev?.id === fx.id ? null : fx)
+    setSelectedKeyframe(null)
+    setSelectedTransition(null)
+  }, [])
+
+  const handleEffectDrag = useCallback((id: string, newTime: number) => {
+    setUserEffects((prev) => {
+      const updated = prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx)
+      return updated
+    })
+  }, [])
+
+  const handleEffectUpdate = useCallback((updated: UserEffect) => {
+    const newEffects = userEffects.map((fx) => fx.id === updated.id ? updated : fx)
+    setUserEffects(newEffects)
+    setSelectedEffect(updated)
+    persistEffects(newEffects, suppressions)
+  }, [userEffects, suppressions, persistEffects])
+
+  const handleEffectDelete = useCallback((id: string) => {
+    const newEffects = userEffects.filter((fx) => fx.id !== id)
+    setUserEffects(newEffects)
+    setSelectedEffect(null)
+    persistEffects(newEffects, suppressions)
+  }, [userEffects, suppressions, persistEffects])
 
   // Keyframe boundary drag — updates local state during drag, persists to YAML on release
   const handleKeyframeDrag = useCallback((id: string, newTimeSeconds: number) => {
@@ -277,6 +329,8 @@ export function Timeline({ data }: { data: EditorData }) {
               <BeatEffectPreview
                 src={beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)}
                 beats={data.beats}
+                userEffects={userEffects}
+                suppressions={suppressions}
                 currentTime={currentTime}
                 isPlaying={isPlaying}
                 className="w-full h-full object-cover"
@@ -407,6 +461,22 @@ export function Timeline({ data }: { data: EditorData }) {
               )}
             </div>
 
+            {/* Effects track */}
+            <div className="relative h-8 shrink-0 border-t border-gray-800 cursor-crosshair">
+              <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+                FX
+              </div>
+              <EffectsTrack
+                effects={userEffects}
+                suppressions={suppressions}
+                pxPerSec={pxPerSec}
+                selectedEffectId={selectedEffect?.id ?? null}
+                onEffectClick={handleEffectClick}
+                onAddEffect={handleAddEffect}
+                onEffectDrag={handleEffectDrag}
+              />
+            </div>
+
             {/* Playhead overlay */}
             <Playhead
               currentTime={currentTime}
@@ -446,6 +516,18 @@ export function Timeline({ data }: { data: EditorData }) {
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
         />
+      )}
+
+      {/* Effect editor popover */}
+      {selectedEffect && (
+        <div className="absolute bottom-12 left-4 z-50">
+          <EffectEditor
+            effect={selectedEffect}
+            onUpdate={handleEffectUpdate}
+            onDelete={handleEffectDelete}
+            onClose={() => setSelectedEffect(null)}
+          />
+        </div>
       )}
 
       {/* Import dialog */}

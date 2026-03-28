@@ -18,6 +18,10 @@ import {
   postUpdateTransitionAction,
   postUpdateMeta,
   postImport,
+  fetchEffects,
+  postUpdateEffects,
+  type UserEffect,
+  type BeatSuppression,
 } from '@/lib/beatlab-client'
 
 export type KeyframeContext = {
@@ -81,14 +85,17 @@ export type EditorData = {
   projectName: string
   beats: Beat[]
   sections: Section[]
+  userEffects: UserEffect[]
+  beatSuppressions: BeatSuppression[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const [kfData, beatsData] = await Promise.all([
+    const [kfData, beatsData, effectsData] = await Promise.all([
       fetchKeyframes(data.name),
       fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
+      fetchEffects(data.name).catch(() => ({ effects: [], suppressions: [] })),
     ])
 
     return {
@@ -130,6 +137,8 @@ const getEditorData = createServerFn({ method: 'GET' })
       projectName: data.name,
       beats: Array.isArray(beatsData.beats) ? beatsData.beats : [],
       sections: Array.isArray(beatsData.sections) ? beatsData.sections : [],
+      userEffects: effectsData.effects || [],
+      beatSuppressions: effectsData.suppressions || [],
     }
   })
 
@@ -214,6 +223,12 @@ export const restoreTransition = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; transitionId: string }) => input)
   .handler(async ({ data }) => {
     return postRestoreTransition(data.projectName, data.transitionId)
+  })
+
+export const saveEffects = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; effects: UserEffect[]; suppressions: BeatSuppression[] }) => input)
+  .handler(async ({ data }) => {
+    return postUpdateEffects(data.projectName, data.effects, data.suppressions)
   })
 
 export const importAssets = createServerFn({ method: 'POST' })

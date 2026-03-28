@@ -1,9 +1,12 @@
 import { useRef, useEffect, useCallback } from 'react'
 import type { Beat } from '@/routes/project/$name/editor'
+import type { UserEffect, BeatSuppression } from '@/lib/beatlab-client'
 
 type BeatEffectPreviewProps = {
   src: string
   beats: Beat[]
+  userEffects?: UserEffect[]
+  suppressions?: BeatSuppression[]
   currentTime: number
   isPlaying: boolean
   className?: string
@@ -47,38 +50,61 @@ const FRAGMENT_SHADER = `
   }
 `
 
-function findBeatIntensity(beats: Beat[], time: number): { intensity: number; decay: number } {
-  if (beats.length === 0) return { intensity: 0, decay: 0 }
-
-  // Find the most recent beat at or before current time
-  let bestBeat: Beat | null = null
-  let bestDist = Infinity
-
-  // Binary search for efficiency
-  let lo = 0
-  let hi = beats.length - 1
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1
-    if (beats[mid].time <= time) {
-      lo = mid + 1
-    } else {
-      hi = mid - 1
-    }
-  }
-  // hi is now the index of the last beat <= time
-  if (hi >= 0) {
-    bestBeat = beats[hi]
-    bestDist = time - bestBeat.time
-  }
-
-  if (!bestBeat || bestDist > 0.3) return { intensity: 0, decay: 0 }
-
-  // Exponential decay: full intensity at beat, fades over ~200ms
-  const decay = Math.max(0, 1 - bestDist / 0.2)
-  return { intensity: bestBeat.intensity, decay: decay * decay }
+function isTimeSuppressed(time: number, suppressions: BeatSuppression[]): boolean {
+  return suppressions.some((s) => time >= s.from && time <= s.to)
 }
 
-export function BeatEffectPreview({ src, beats, currentTime, isPlaying, className }: BeatEffectPreviewProps) {
+function findEffectIntensity(
+  beats: Beat[],
+  userEffects: UserEffect[],
+  suppressions: BeatSuppression[],
+  time: number,
+): { intensity: number; decay: number } {
+  let bestIntensity = 0
+  let bestDecay = 0
+
+  // Check auto-beats (unless suppressed)
+  if (beats.length > 0 && !isTimeSuppressed(time, suppressions)) {
+    let lo = 0
+    let hi = beats.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (beats[mid].time <= time) {
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    if (hi >= 0) {
+      const dist = time - beats[hi].time
+      if (dist <= 0.3) {
+        const decay = Math.max(0, 1 - dist / 0.2)
+        const d = decay * decay
+        if (beats[hi].intensity * d > bestIntensity * bestDecay) {
+          bestIntensity = beats[hi].intensity
+          bestDecay = d
+        }
+      }
+    }
+  }
+
+  // Check user effects (always active, never suppressed)
+  for (const fx of userEffects) {
+    const dist = time - fx.time
+    if (dist >= 0 && dist <= fx.duration) {
+      const decay = Math.max(0, 1 - dist / fx.duration)
+      const d = decay * decay
+      if (fx.intensity * d > bestIntensity * bestDecay) {
+        bestIntensity = fx.intensity
+        bestDecay = d
+      }
+    }
+  }
+
+  return { intensity: bestIntensity, decay: bestDecay }
+}
+
+export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className }: BeatEffectPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const glRef = useRef<{
     gl: WebGLRenderingContext
@@ -199,7 +225,7 @@ export function BeatEffectPreview({ src, beats, currentTime, isPlaying, classNam
     }
 
     const loop = () => {
-      const { intensity, decay } = findBeatIntensity(beats, currentTime)
+      const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
       render(intensity, decay)
       animRef.current = requestAnimationFrame(loop)
     }
@@ -211,7 +237,7 @@ export function BeatEffectPreview({ src, beats, currentTime, isPlaying, classNam
   // Also render on time changes when paused (seeking)
   useEffect(() => {
     if (isPlaying) return
-    const { intensity, decay } = findBeatIntensity(beats, currentTime)
+    const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
     render(intensity, decay)
   }, [currentTime, isPlaying, beats, render])
 
