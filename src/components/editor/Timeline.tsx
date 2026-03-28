@@ -12,6 +12,7 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
+import { TransitionVideoPreview } from './TransitionVideoPreview'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -82,6 +83,18 @@ export function Timeline({ data }: { data: EditorData }) {
   const currentKeyframe = [...keyframes]
     .reverse()
     .find((kf) => kf.timeSeconds <= currentTime)
+
+  // Find active transition at current time (if any with selected video)
+  const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
+  const activeTransition = data.transitions.find((tr) => {
+    const fromKf = kfMap.get(tr.from)
+    const toKf = kfMap.get(tr.to)
+    if (!fromKf || !toKf) return false
+    if (!tr.hasSelectedVideos?.some(Boolean)) return false
+    return currentTime >= fromKf.timeSeconds && currentTime < toKf.timeSeconds
+  })
+  const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
+  const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -327,7 +340,18 @@ export function Timeline({ data }: { data: EditorData }) {
           style={{ height: previewHeight }}
         >
           <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden">
-            {currentKeyframe?.hasSelectedImage ? (
+            {activeTransition && activeTransitionFrom && activeTransitionTo ? (
+              <TransitionVideoPreview
+                projectName={data.projectName}
+                transitionId={activeTransition.id}
+                slotIndex={0}
+                currentTime={currentTime}
+                transitionStart={activeTransitionFrom.timeSeconds}
+                transitionEnd={activeTransitionTo.timeSeconds}
+                isPlaying={isPlaying}
+                className="w-full h-full object-cover"
+              />
+            ) : currentKeyframe?.hasSelectedImage ? (
               <BeatEffectPreview
                 src={beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)}
                 beats={data.beats}
