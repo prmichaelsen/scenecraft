@@ -282,7 +282,14 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
   const [jobStatus, setJobStatus] = useState('')
   const [selecting, setSelecting] = useState(false)
   const [candidates, setCandidates] = useState(transition.candidates)
-  const [selectedMap, setSelectedMap] = useState<Record<string, number>>(transition.selectedVariants || {})
+  const [selectedMap, setSelectedMap] = useState<Record<string, number>>(() => {
+    // Build map from selected list: [slot_0_variant, slot_1_variant, ...]
+    const map: Record<string, number> = {}
+    transition.selected?.forEach((sel, i) => {
+      if (typeof sel === 'number') map[`slot_${i}`] = sel
+    })
+    return map
+  })
 
   useEffect(() => {
     setCandidates(transition.candidates)
