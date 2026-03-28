@@ -36,22 +36,22 @@ export function TransitionTrack({
         return (
           <div
             key={tr.id}
-            className={`absolute top-0 h-full pointer-events-auto group ${isSelected ? 'z-20' : 'z-10'}`}
+            className={`absolute top-0 h-full pointer-events-none group ${isSelected ? 'z-20' : 'z-10'}`}
             style={{ left: x, width }}
-            onClick={(e) => {
-              e.stopPropagation()
-              onTransitionClick(tr)
-            }}
           >
-            {/* Transition bar */}
+            {/* Transition bar — only this is clickable */}
             <div
-              className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer transition-colors ${
+              className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer pointer-events-auto transition-colors ${
                 isSelected
                   ? 'bg-orange-500/40 border-t border-orange-500'
                   : hasCandidates
                     ? 'bg-orange-500/15 hover:bg-orange-500/25 border-t border-orange-500/30'
                     : 'bg-gray-700/20 hover:bg-gray-700/40 border-t border-gray-700/40'
               }`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onTransitionClick(tr)
+              }}
             >
               {/* Label */}
               {width > 50 && (
