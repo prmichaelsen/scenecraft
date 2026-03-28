@@ -86,6 +86,21 @@ export type FileEntry = {
   size?: number
 }
 
+export type BrowseEntry = {
+  name: string
+  path: string
+  isDirectory: boolean
+  size?: number
+  type?: 'image' | 'video' | 'other'
+}
+
+export async function fetchBrowse(subpath: string = '') {
+  const params = subpath ? `?path=${encodeURIComponent(subpath)}` : ''
+  const res = await fetch(`${BEATLAB_API_URL}/api/browse${params}`)
+  if (!res.ok) throw new Error(`Failed to browse: ${res.status}`)
+  return res.json() as Promise<{ path: string; entries: BrowseEntry[] }>
+}
+
 export async function fetchDirectoryListing(project: string, subpath: string = '') {
   const params = subpath ? `?path=${encodeURIComponent(subpath)}` : ''
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/ls${params}`)
