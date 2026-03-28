@@ -23,12 +23,23 @@ export function useBeatlabSocket() {
     let ws: WebSocket
     let reconnectTimer: ReturnType<typeof setTimeout>
 
+    let reconnectDelay = 2000
+    const MAX_RECONNECT_DELAY = 30000
+
     function connect() {
-      ws = new WebSocket(WS_URL)
+      try {
+        ws = new WebSocket(WS_URL)
+      } catch {
+        // WebSocket constructor can throw if URL is invalid
+        reconnectTimer = setTimeout(connect, reconnectDelay)
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
+        return
+      }
 
       ws.onopen = () => {
         wsRef.current = ws
         setConnected(true)
+        reconnectDelay = 2000 // Reset on successful connect
       }
 
       ws.onmessage = (event) => {
@@ -53,8 +64,8 @@ export function useBeatlabSocket() {
       ws.onclose = () => {
         wsRef.current = null
         setConnected(false)
-        // Reconnect after 2 seconds
-        reconnectTimer = setTimeout(connect, 2000)
+        reconnectTimer = setTimeout(connect, reconnectDelay)
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
       }
 
       ws.onerror = () => {

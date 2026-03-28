@@ -217,7 +217,9 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     }
   }, [])
 
-  // Control video playback and seeking
+  // Start/stop video playback — only runs when play state or source changes
+  const wasPlaying = useRef(false)
+  const lastVideoSrc = useRef('')
   useEffect(() => {
     const video = videoRef.current
     if (!video || !videoSrc) {
@@ -227,22 +229,36 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
 
     if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
 
-    const seekTime = videoCurrentTime !== undefined && isFinite(video.duration)
-      ? videoCurrentTime * video.duration
-      : undefined
-
-    if (videoPlaying) {
-      if (seekTime !== undefined && isFinite(seekTime)) {
-        video.currentTime = seekTime
+    if (videoPlaying && !wasPlaying.current) {
+      // Starting playback — seek to current position then play
+      if (videoCurrentTime !== undefined && isFinite(video.duration)) {
+        video.currentTime = videoCurrentTime * video.duration
       }
       video.play().catch(() => {})
-    } else {
+    } else if (!videoPlaying && wasPlaying.current) {
+      // Stopping playback
       video.pause()
-      if (seekTime !== undefined && isFinite(seekTime)) {
-        video.currentTime = seekTime
+    }
+
+    // Source changed while playing — seek and continue
+    if (videoSrc !== lastVideoSrc.current && videoPlaying) {
+      if (videoCurrentTime !== undefined && isFinite(video.duration)) {
+        video.currentTime = videoCurrentTime * video.duration
       }
     }
-  }, [videoSrc, videoPlaying, videoCurrentTime, videoPlaybackRate])
+
+    wasPlaying.current = !!videoPlaying
+    lastVideoSrc.current = videoSrc
+  }, [videoSrc, videoPlaying, videoPlaybackRate])
+
+  // Seek when paused (user scrubbing) — only when NOT playing
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !videoSrc || videoPlaying) return
+    if (videoCurrentTime !== undefined && isFinite(video.duration)) {
+      video.currentTime = videoCurrentTime * video.duration
+    }
+  }, [videoCurrentTime, videoSrc, videoPlaying])
 
   // Clear video mode when videoSrc is removed
   useEffect(() => {
