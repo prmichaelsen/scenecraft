@@ -171,6 +171,19 @@ export async function postRestoreTransition(project: string, transitionId: strin
   return res.json()
 }
 
+export async function postImport(project: string, sourcePath: string, timestamp?: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourcePath, timestamp }),
+  })
+  return res.json() as Promise<{
+    success: boolean
+    imported: { keyframes: string[]; transitions: string[] }
+    summary: string
+  }>
+}
+
 export async function postSelectKeyframes(project: string, selections: Record<string, number>) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-keyframes`, {
     method: 'POST',

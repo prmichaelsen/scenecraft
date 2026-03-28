@@ -11,6 +11,7 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
+import { ImportDialog } from './ImportDialog'
 
 function parseTimestamp(ts: string): number {
   const parts = ts.split(':')
@@ -43,6 +44,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [showBin, setShowBin] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(() => {
@@ -323,6 +325,14 @@ export function Timeline({ data }: { data: EditorData }) {
             Bin
           </button>
 
+          <button
+            onClick={() => setShowImport(true)}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
+            title="Import images/videos from filesystem"
+          >
+            Import
+          </button>
+
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
           </div>
@@ -435,6 +445,15 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
+        />
+      )}
+
+      {/* Import dialog */}
+      {showImport && (
+        <ImportDialog
+          projectName={data.projectName}
+          onClose={() => setShowImport(false)}
+          onImported={() => router.invalidate()}
         />
       )}
     </div>

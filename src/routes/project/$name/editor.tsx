@@ -16,6 +16,7 @@ import {
   postGenerateTransitionCandidates,
   postUpdateTransitionAction,
   postUpdateMeta,
+  postImport,
 } from '@/lib/beatlab-client'
 
 export type KeyframeContext = {
@@ -206,6 +207,12 @@ export const restoreTransition = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; transitionId: string }) => input)
   .handler(async ({ data }) => {
     return postRestoreTransition(data.projectName, data.transitionId)
+  })
+
+export const importAssets = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; sourcePath: string; timestamp?: string }) => input)
+  .handler(async ({ data }) => {
+    return postImport(data.projectName, data.sourcePath, data.timestamp)
   })
 
 export const getBin = createServerFn({ method: 'GET' })
