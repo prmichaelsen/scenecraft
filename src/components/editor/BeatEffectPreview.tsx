@@ -10,6 +10,11 @@ type BeatEffectPreviewProps = {
   currentTime: number
   isPlaying: boolean
   className?: string
+  // Transition video overlay — when set, renders video frames through the shader instead of static image
+  videoSrc?: string
+  videoCurrentTime?: number  // progress 0-1 within the transition
+  videoPlaybackRate?: number // if omitted, auto-computed from video duration / transition span
+  videoPlaying?: boolean
 }
 
 const VERTEX_SHADER = `
@@ -104,7 +109,7 @@ function findEffectIntensity(
   return { intensity: bestIntensity, decay: bestDecay }
 }
 
-export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className }: BeatEffectPreviewProps) {
+export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className, videoSrc, videoCurrentTime, videoPlaybackRate, videoPlaying }: BeatEffectPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const glRef = useRef<{
     gl: WebGLRenderingContext
@@ -114,8 +119,11 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     decayLoc: WebGLUniformLocation
   } | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   const animRef = useRef<number>(0)
   const currentSrc = useRef('')
+  const currentVideoSrc = useRef('')
+  const useVideo = useRef(false)
 
   const initGL = useCallback((canvas: HTMLCanvasElement) => {
     const gl = canvas.getContext('webgl', { premultipliedAlpha: false })
@@ -203,9 +211,78 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     img.src = src
   }, [src])
 
+  // Load/manage transition video
+  useEffect(() => {
+    if (!videoSrc) {
+      useVideo.current = false
+      if (videoRef.current) {
+        videoRef.current.pause()
+        videoRef.current.src = ''
+        videoRef.current = null
+        currentVideoSrc.current = ''
+      }
+      return
+    }
+    if (videoSrc === currentVideoSrc.current) return
+    currentVideoSrc.current = videoSrc
+
+    const video = document.createElement('video')
+    video.crossOrigin = 'anonymous'
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'auto'
+
+    video.onloadeddata = () => {
+      videoRef.current = video
+      useVideo.current = true
+      if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
+    }
+
+    video.src = videoSrc
+    video.load()
+
+    return () => {
+      video.pause()
+      video.src = ''
+    }
+  }, [videoSrc, videoPlaybackRate])
+
+  // Control video playback
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !useVideo.current) return
+    if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
+
+    const seekTime = videoCurrentTime !== undefined ? videoCurrentTime * video.duration : undefined
+
+    if (videoPlaying) {
+      if (seekTime !== undefined && isFinite(seekTime)) {
+        video.currentTime = seekTime
+      }
+      video.play().catch(() => {})
+    } else {
+      video.pause()
+      if (seekTime !== undefined && isFinite(seekTime)) {
+        video.currentTime = seekTime
+      }
+    }
+  }, [videoPlaying, videoCurrentTime, videoPlaybackRate])
+
   const render = useCallback((intensity: number, decay: number) => {
     const ctx = glRef.current
-    if (!ctx || !imgRef.current) return
+    if (!ctx) return
+
+    // Upload video frame or static image as texture
+    const video = videoRef.current
+    const hasVideo = useVideo.current && video && video.readyState >= 2
+    const source = hasVideo ? video : imgRef.current
+    if (!source) return
+
+    if (hasVideo) {
+      // Re-upload video frame every render tick
+      ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.texture)
+      ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, video)
+    }
 
     const canvas = canvasRef.current
     if (!canvas) return

@@ -12,7 +12,6 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
-import { TransitionVideoPreview } from './TransitionVideoPreview'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -340,26 +339,29 @@ export function Timeline({ data }: { data: EditorData }) {
           style={{ height: previewHeight }}
         >
           <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden">
-            {activeTransition && activeTransitionFrom && activeTransitionTo ? (
-              <TransitionVideoPreview
-                projectName={data.projectName}
-                transitionId={activeTransition.id}
-                slotIndex={0}
-                currentTime={currentTime}
-                transitionStart={activeTransitionFrom.timeSeconds}
-                transitionEnd={activeTransitionTo.timeSeconds}
-                isPlaying={isPlaying}
-                className="w-full h-full object-cover"
-              />
-            ) : currentKeyframe?.hasSelectedImage ? (
+            {currentKeyframe?.hasSelectedImage || activeTransition ? (
               <BeatEffectPreview
-                src={beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)}
+                src={currentKeyframe?.hasSelectedImage
+                  ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
+                  : ''}
                 beats={data.beats}
                 userEffects={userEffects}
                 suppressions={suppressions}
                 currentTime={currentTime}
                 isPlaying={isPlaying}
                 className="w-full h-full object-cover"
+                videoSrc={activeTransition && activeTransitionFrom && activeTransitionTo
+                  ? beatlabFileUrl(data.projectName, `selected_transitions/${activeTransition.id}_slot_0.mp4`)
+                  : undefined}
+                videoCurrentTime={activeTransition && activeTransitionFrom && activeTransitionTo
+                  ? (() => {
+                      const tStart = activeTransitionFrom.timeSeconds
+                      const tEnd = activeTransitionTo.timeSeconds
+                      const progress = Math.max(0, Math.min(1, (currentTime - tStart) / (tEnd - tStart)))
+                      return progress // Will be multiplied by video.duration in the component — but we don't know it here. Pass progress 0-1 and let component handle it.
+                    })()
+                  : undefined}
+                videoPlaying={!!activeTransition && isPlaying}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
