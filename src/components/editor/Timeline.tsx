@@ -15,6 +15,7 @@ import { BeatEffectPreview } from './BeatEffectPreview'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
+import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 function parseTimestamp(ts: string): number {
   const parts = ts.split(':')
@@ -40,6 +41,7 @@ const MAX_PREVIEW_HEIGHT = 500
 
 export function Timeline({ data }: { data: EditorData }) {
   const router = useRouter()
+  const socket = useBeatlabSocket()
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [pxPerSec, setPxPerSec] = useState(20)
@@ -495,6 +497,7 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
           onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
+          socket={socket}
         />
       )}
 
@@ -506,6 +509,7 @@ export function Timeline({ data }: { data: EditorData }) {
           motionPrompt={data.meta.motionPrompt}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
+          socket={socket}
         />
       )}
 

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Transition } from '@/routes/project/$name/editor'
 import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
+import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 const STORAGE_KEY = 'beatlab-transition-panel-width'
 const DEFAULT_WIDTH = 360
@@ -14,6 +15,7 @@ type TransitionPanelProps = {
   motionPrompt: string
   onClose: () => void
   onDelete: () => void
+  socket: ReturnType<typeof useBeatlabSocket>
 }
 
 export function TransitionPanel({
@@ -22,6 +24,7 @@ export function TransitionPanel({
   motionPrompt,
   onClose,
   onDelete,
+  socket,
 }: TransitionPanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
@@ -121,7 +124,7 @@ export function TransitionPanel({
               </div>
             </>
           ) : (
-            <CandidatesTab transition={tr} projectName={projectName} />
+            <CandidatesTab transition={tr} projectName={projectName} socket={socket} />
           )}
         </div>
       </div>
@@ -274,12 +277,12 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName }: { transition: Transition; projectName: string }) {
+function CandidatesTab({ transition, projectName, socket }: { transition: Transition; projectName: string; socket: ReturnType<typeof useBeatlabSocket> }) {
   const [generating, setGenerating] = useState(false)
+  const [jobStatus, setJobStatus] = useState('')
   const [selecting, setSelecting] = useState(false)
   const [candidates, setCandidates] = useState(transition.candidates)
   const [selectedMap, setSelectedMap] = useState<Record<string, number>>(() => {
-    // Build initial selection state from hasSelectedVideos
     const map: Record<string, number> = {}
     transition.selected?.forEach((sel: string, i: number) => {
       if (sel) map[`slot_${i}`] = typeof sel === 'number' ? sel : 0
@@ -297,18 +300,40 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
       return
     }
     setGenerating(true)
-    try {
-      const result = await generateTransitionCandidates({
-        data: { projectName, transitionId: transition.id },
+    setJobStatus('Starting...')
+
+    const result = await generateTransitionCandidates({
+      data: { projectName, transitionId: transition.id },
+    })
+
+    if (result.jobId) {
+      const unsub = socket.subscribeJob(result.jobId, (msg) => {
+        if (msg.type === 'job_progress') {
+          setJobStatus(`${msg.completed}/${msg.total} videos generated`)
+        } else if (msg.type === 'job_completed') {
+          const res = msg.result as { candidates?: Record<string, string[]> }
+          if (res?.candidates) {
+            setCandidates(res.candidates)
+            transition.candidates = res.candidates
+          }
+          setGenerating(false)
+          setJobStatus('')
+          unsub()
+        } else if (msg.type === 'job_failed') {
+          setJobStatus(`Failed: ${msg.error}`)
+          setGenerating(false)
+          unsub()
+        }
       })
+    } else {
       if (result.candidates) {
         setCandidates(result.candidates)
         transition.candidates = result.candidates
       }
-    } finally {
       setGenerating(false)
+      setJobStatus('')
     }
-  }, [projectName, transition])
+  }, [projectName, transition, socket])
 
   const handleSelect = useCallback(async (slotKey: string, variantIndex: number) => {
     setSelecting(true)
@@ -338,7 +363,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
       </button>
       {generating && (
         <div className="text-[10px] text-gray-500 text-center">
-          This may take a few minutes per slot. Videos are generated via Veo 3.1.
+          {jobStatus || 'Starting Veo 3.1 generation...'}
         </div>
       )}
 

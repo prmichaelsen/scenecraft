@@ -138,7 +138,7 @@ export async function postGenerateKeyframeCandidates(project: string, keyframeId
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, count }),
   })
-  return res.json() as Promise<{ success: boolean; keyframeId: string; candidates: string[] }>
+  return res.json() as Promise<{ jobId: string; keyframeId: string; candidates?: string[] }>
 }
 
 export async function postGenerateTransitionAction(project: string, transitionId: string) {
@@ -174,7 +174,7 @@ export async function postGenerateTransitionCandidates(project: string, transiti
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, count }),
   })
-  return res.json() as Promise<{ success: boolean; transitionId: string; candidates: Record<string, string[]> }>
+  return res.json() as Promise<{ jobId: string; transitionId: string; candidates?: Record<string, string[]> }>
 }
 
 export async function postDeleteTransition(project: string, transitionId: string) {

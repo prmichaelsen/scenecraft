@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
+import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 const STORAGE_KEY = 'beatlab-keyframe-panel-width'
 const DEFAULT_WIDTH = 360
@@ -13,9 +14,10 @@ type KeyframePanelProps = {
   projectName: string
   onClose: () => void
   onDelete: () => void
+  socket: ReturnType<typeof useBeatlabSocket>
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, socket }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -113,7 +115,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: Keyf
           {tab === 'details' ? (
             <DetailsTab kf={kf} projectName={projectName} />
           ) : (
-            <CandidatesTab kf={kf} projectName={projectName} />
+            <CandidatesTab kf={kf} projectName={projectName} socket={socket} />
           )}
         </div>
       </div>
@@ -262,8 +264,9 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
   )
 }
 
-function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; projectName: string; socket: ReturnType<typeof useBeatlabSocket> }) {
   const [generating, setGenerating] = useState(false)
+  const [jobStatus, setJobStatus] = useState('')
   const [candidates, setCandidates] = useState(kf.candidates)
 
   useEffect(() => {
@@ -276,18 +279,42 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
       return
     }
     setGenerating(true)
-    try {
-      const result = await generateKeyframeCandidates({
-        data: { projectName, keyframeId: kf.id },
+    setJobStatus('Starting...')
+
+    const result = await generateKeyframeCandidates({
+      data: { projectName, keyframeId: kf.id },
+    })
+
+    if (result.jobId) {
+      // Subscribe to WebSocket for progress
+      const unsub = socket.subscribeJob(result.jobId, (msg) => {
+        if (msg.type === 'job_progress') {
+          setJobStatus(`${msg.completed}/${msg.total} generated`)
+        } else if (msg.type === 'job_completed') {
+          const res = msg.result as { candidates?: string[] }
+          if (res?.candidates) {
+            setCandidates(res.candidates)
+            kf.candidates = res.candidates
+          }
+          setGenerating(false)
+          setJobStatus('')
+          unsub()
+        } else if (msg.type === 'job_failed') {
+          setJobStatus(`Failed: ${msg.error}`)
+          setGenerating(false)
+          unsub()
+        }
       })
+    } else {
+      // Fallback: no jobId (old server), treat result as final
       if (result.candidates) {
         setCandidates(result.candidates)
         kf.candidates = result.candidates
       }
-    } finally {
       setGenerating(false)
+      setJobStatus('')
     }
-  }, [projectName, kf])
+  }, [projectName, kf, socket])
 
   // Extract variant number from path like ".../v1.png" or ".../styled_003.png"
   function variantLabel(path: string): string {
@@ -320,7 +347,7 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
       </button>
       {generating && (
         <div className="text-[10px] text-gray-500 text-center">
-          Generating styled image candidates from the keyframe prompt...
+          {jobStatus || 'Generating styled image candidates...'}
         </div>
       )}
 
