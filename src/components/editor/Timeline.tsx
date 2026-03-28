@@ -15,6 +15,7 @@ import { BeatEffectPreview } from './BeatEffectPreview'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
+import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 function parseTimestamp(ts: string): number {
@@ -50,6 +51,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [showBin, setShowBin] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showVersions, setShowVersions] = useState(false)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, _setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
   const [selectedEffect, setSelectedEffect] = useState<UserEffect | null>(null)
@@ -415,6 +417,14 @@ export function Timeline({ data }: { data: EditorData }) {
             Import
           </button>
 
+          <button
+            onClick={() => { setShowVersions((p) => !p); if (!showVersions) { setShowBin(false) } }}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showVersions ? 'bg-green-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
+            title="Version history — save, restore, branch"
+          >
+            Versions
+          </button>
+
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
           </div>
@@ -540,12 +550,21 @@ export function Timeline({ data }: { data: EditorData }) {
       )}
 
       {/* Bin panel */}
-      {showBin && (
+      {showBin && !showVersions && (
         <BinPanel
           projectName={data.projectName}
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
           socket={socket}
+        />
+      )}
+
+      {/* Version history panel */}
+      {showVersions && (
+        <VersionHistoryPanel
+          projectName={data.projectName}
+          onClose={() => setShowVersions(false)}
+          onRestore={() => router.invalidate()}
         />
       )}
 
