@@ -122,7 +122,6 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const animRef = useRef<number>(0)
   const currentSrc = useRef('')
-  const currentVideoSrc = useRef('')
   const useVideo = useRef(false)
 
   const initGL = useCallback((canvas: HTMLCanvasElement) => {
@@ -211,49 +210,26 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     img.src = src
   }, [src])
 
-  // Load/manage transition video
-  useEffect(() => {
-    if (!videoSrc) {
-      useVideo.current = false
-      if (videoRef.current) {
-        videoRef.current.pause()
-        videoRef.current.src = ''
-        videoRef.current = null
-        currentVideoSrc.current = ''
-      }
-      return
-    }
-    if (videoSrc === currentVideoSrc.current) return
-    currentVideoSrc.current = videoSrc
-
-    const video = document.createElement('video')
-    video.crossOrigin = 'anonymous'
-    video.muted = true
-    video.playsInline = true
-    video.preload = 'auto'
-
-    video.onloadeddata = () => {
-      videoRef.current = video
+  // Track video readiness via the DOM ref
+  const handleVideoReady = useCallback(() => {
+    if (videoRef.current && videoRef.current.readyState >= 2) {
       useVideo.current = true
-      if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
     }
+  }, [])
 
-    video.src = videoSrc
-    video.load()
-
-    return () => {
-      video.pause()
-      video.src = ''
-    }
-  }, [videoSrc, videoPlaybackRate])
-
-  // Control video playback
+  // Control video playback and seeking
   useEffect(() => {
     const video = videoRef.current
-    if (!video || !useVideo.current) return
+    if (!video || !videoSrc) {
+      useVideo.current = false
+      return
+    }
+
     if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
 
-    const seekTime = videoCurrentTime !== undefined ? videoCurrentTime * video.duration : undefined
+    const seekTime = videoCurrentTime !== undefined && isFinite(video.duration)
+      ? videoCurrentTime * video.duration
+      : undefined
 
     if (videoPlaying) {
       if (seekTime !== undefined && isFinite(seekTime)) {
@@ -266,7 +242,14 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
         video.currentTime = seekTime
       }
     }
-  }, [videoPlaying, videoCurrentTime, videoPlaybackRate])
+  }, [videoSrc, videoPlaying, videoCurrentTime, videoPlaybackRate])
+
+  // Clear video mode when videoSrc is removed
+  useEffect(() => {
+    if (!videoSrc) {
+      useVideo.current = false
+    }
+  }, [videoSrc])
 
   const render = useCallback((intensity: number, decay: number) => {
     const ctx = glRef.current
@@ -319,11 +302,26 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
   }, [currentTime, isPlaying, beats, render])
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={256}
-      height={144}
-      className={className}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        width={256}
+        height={144}
+        className={className}
+      />
+      {videoSrc && (
+        <video
+          ref={videoRef}
+          src={videoSrc}
+          crossOrigin="anonymous"
+          muted
+          playsInline
+          preload="auto"
+          onLoadedData={handleVideoReady}
+          onCanPlay={handleVideoReady}
+          style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+        />
+      )}
+    </>
   )
 }
