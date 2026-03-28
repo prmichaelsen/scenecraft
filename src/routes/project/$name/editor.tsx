@@ -68,6 +68,7 @@ export type Transition = {
   useGlobalPrompt: boolean
   candidates: Record<string, string[]>  // slot_0: ["path/v1.mp4", ...], slot_1: [...]
   hasSelectedVideos: boolean[]
+  selectedVariants: Record<string, number>  // slot_0: 2 (variant number, 1-based)
   selected: string[]
   remap: { method: string; target_duration: number }
 }
@@ -131,6 +132,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         useGlobalPrompt: tr.useGlobalPrompt !== false,
         candidates: (tr.candidates as Record<string, string[]>) || {},
         hasSelectedVideos: (tr.hasSelectedVideos as boolean[]) || [],
+        selectedVariants: (tr.selectedVariants as Record<string, number>) || {},
         selected: (tr.selected as string[]) || [],
         remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
       })),
