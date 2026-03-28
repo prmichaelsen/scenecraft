@@ -93,6 +93,75 @@ export async function fetchDirectoryListing(project: string, subpath: string = '
   return res.json() as Promise<FileEntry[]>
 }
 
+export type BinEntry = {
+  id: string
+  deleted_at: string
+  timestamp: string
+  section: string
+  prompt: string
+  hasSelectedImage: boolean
+}
+
+export type TransitionBinEntry = {
+  id: string
+  deleted_at: string
+  from: string
+  to: string
+  durationSeconds: number
+  slots: number
+}
+
+export async function fetchBin(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bin`)
+  if (!res.ok) throw new Error(`Failed to fetch bin: ${res.status}`)
+  return res.json() as Promise<{ bin: BinEntry[]; transitionBin: TransitionBinEntry[] }>
+}
+
+export async function postGenerateTransitionAction(project: string, transitionId: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId }),
+  })
+  return res.json() as Promise<{ success: boolean; action: string }>
+}
+
+export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, action, useGlobalPrompt }),
+  })
+  return res.json()
+}
+
+export async function postUpdateMeta(project: string, fields: Record<string, string>) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-meta`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  })
+  return res.json()
+}
+
+export async function postDeleteTransition(project: string, transitionId: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/delete-transition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId }),
+  })
+  return res.json()
+}
+
+export async function postRestoreTransition(project: string, transitionId: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/restore-transition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId }),
+  })
+  return res.json()
+}
+
 export async function postSelectKeyframes(project: string, selections: Record<string, number>) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-keyframes`, {
     method: 'POST',

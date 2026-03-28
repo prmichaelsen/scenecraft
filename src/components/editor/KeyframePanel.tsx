@@ -75,7 +75,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: Keyf
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="text-sm font-medium">{kf.id}</div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
             <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"

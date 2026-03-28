@@ -1,0 +1,226 @@
+import { useRef, useEffect, useCallback } from 'react'
+import type { Beat } from '@/routes/project/$name/editor'
+
+type BeatEffectPreviewProps = {
+  src: string
+  beats: Beat[]
+  currentTime: number
+  isPlaying: boolean
+  className?: string
+}
+
+const VERTEX_SHADER = `
+  attribute vec2 a_position;
+  attribute vec2 a_texCoord;
+  varying vec2 v_texCoord;
+  void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_texCoord = a_texCoord;
+  }
+`
+
+const FRAGMENT_SHADER = `
+  precision mediump float;
+  varying vec2 v_texCoord;
+  uniform sampler2D u_image;
+  uniform float u_intensity;   // 0.0 - 1.0 beat intensity
+  uniform float u_decay;       // 0.0 - 1.0 time since beat (1.0 = on beat, decays to 0)
+
+  void main() {
+    float effect = u_intensity * u_decay;
+
+    // Zoom toward center on beat
+    vec2 center = vec2(0.5, 0.5);
+    float zoom = 1.0 - effect * 0.06;
+    vec2 uv = center + (v_texCoord - center) * zoom;
+
+    vec4 color = texture2D(u_image, uv);
+
+    // Brightness pulse
+    color.rgb *= 1.0 + effect * 0.4;
+
+    // Slight warm tint on strong beats
+    color.r += effect * 0.03;
+    color.g += effect * 0.01;
+
+    gl_FragColor = color;
+  }
+`
+
+function findBeatIntensity(beats: Beat[], time: number): { intensity: number; decay: number } {
+  if (beats.length === 0) return { intensity: 0, decay: 0 }
+
+  // Find the most recent beat at or before current time
+  let bestBeat: Beat | null = null
+  let bestDist = Infinity
+
+  // Binary search for efficiency
+  let lo = 0
+  let hi = beats.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (beats[mid].time <= time) {
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  // hi is now the index of the last beat <= time
+  if (hi >= 0) {
+    bestBeat = beats[hi]
+    bestDist = time - bestBeat.time
+  }
+
+  if (!bestBeat || bestDist > 0.3) return { intensity: 0, decay: 0 }
+
+  // Exponential decay: full intensity at beat, fades over ~200ms
+  const decay = Math.max(0, 1 - bestDist / 0.2)
+  return { intensity: bestBeat.intensity, decay: decay * decay }
+}
+
+export function BeatEffectPreview({ src, beats, currentTime, isPlaying, className }: BeatEffectPreviewProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const glRef = useRef<{
+    gl: WebGLRenderingContext
+    program: WebGLProgram
+    texture: WebGLTexture
+    intensityLoc: WebGLUniformLocation
+    decayLoc: WebGLUniformLocation
+  } | null>(null)
+  const imgRef = useRef<HTMLImageElement | null>(null)
+  const animRef = useRef<number>(0)
+  const currentSrc = useRef('')
+
+  const initGL = useCallback((canvas: HTMLCanvasElement) => {
+    const gl = canvas.getContext('webgl', { premultipliedAlpha: false })
+    if (!gl) return null
+
+    // Compile shaders
+    const vs = gl.createShader(gl.VERTEX_SHADER)!
+    gl.shaderSource(vs, VERTEX_SHADER)
+    gl.compileShader(vs)
+
+    const fs = gl.createShader(gl.FRAGMENT_SHADER)!
+    gl.shaderSource(fs, FRAGMENT_SHADER)
+    gl.compileShader(fs)
+
+    const program = gl.createProgram()!
+    gl.attachShader(program, vs)
+    gl.attachShader(program, fs)
+    gl.linkProgram(program)
+    gl.useProgram(program)
+
+    // Quad vertices (position + texcoord)
+    const posLoc = gl.getAttribLocation(program, 'a_position')
+    const texLoc = gl.getAttribLocation(program, 'a_texCoord')
+
+    const posBuf = gl.createBuffer()!
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1,
+      -1, 1, 1, -1, 1, 1,
+    ]), gl.STATIC_DRAW)
+    gl.enableVertexAttribArray(posLoc)
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0)
+
+    const texBuf = gl.createBuffer()!
+    gl.bindBuffer(gl.ARRAY_BUFFER, texBuf)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      0, 1, 1, 1, 0, 0,
+      0, 0, 1, 1, 1, 0,
+    ]), gl.STATIC_DRAW)
+    gl.enableVertexAttribArray(texLoc)
+    gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0)
+
+    const texture = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+    return {
+      gl,
+      program,
+      texture,
+      intensityLoc: gl.getUniformLocation(program, 'u_intensity')!,
+      decayLoc: gl.getUniformLocation(program, 'u_decay')!,
+    }
+  }, [])
+
+  // Init WebGL on mount
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    glRef.current = initGL(canvas)
+    return () => {
+      cancelAnimationFrame(animRef.current)
+    }
+  }, [initGL])
+
+  // Load image when src changes
+  useEffect(() => {
+    if (!src || src === currentSrc.current) return
+    currentSrc.current = src
+
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      imgRef.current = img
+      const ctx = glRef.current
+      if (!ctx) return
+      ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.texture)
+      ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, img)
+      // Draw once immediately
+      render(0, 0)
+    }
+    img.src = src
+  }, [src])
+
+  const render = useCallback((intensity: number, decay: number) => {
+    const ctx = glRef.current
+    if (!ctx || !imgRef.current) return
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    ctx.gl.viewport(0, 0, canvas.width, canvas.height)
+    ctx.gl.uniform1f(ctx.intensityLoc, intensity)
+    ctx.gl.uniform1f(ctx.decayLoc, decay)
+    ctx.gl.drawArrays(ctx.gl.TRIANGLES, 0, 6)
+  }, [])
+
+  // Render loop when playing
+  useEffect(() => {
+    if (!isPlaying) {
+      // When paused, render with no effect
+      render(0, 0)
+      return
+    }
+
+    const loop = () => {
+      const { intensity, decay } = findBeatIntensity(beats, currentTime)
+      render(intensity, decay)
+      animRef.current = requestAnimationFrame(loop)
+    }
+    loop()
+
+    return () => cancelAnimationFrame(animRef.current)
+  }, [isPlaying, beats, currentTime, render])
+
+  // Also render on time changes when paused (seeking)
+  useEffect(() => {
+    if (isPlaying) return
+    const { intensity, decay } = findBeatIntensity(beats, currentTime)
+    render(intensity, decay)
+  }, [currentTime, isPlaying, beats, render])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={256}
+      height={144}
+      className={className}
+    />
+  )
+}

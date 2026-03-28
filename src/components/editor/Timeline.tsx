@@ -1,12 +1,16 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import type { EditorData, Keyframe, Beat, Section } from '@/routes/project/$name/editor'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, restoreKeyframe } from '@/routes/project/$name/editor'
+import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
+import { TransitionTrack } from './TransitionTrack'
 import { Playhead } from './Playhead'
 import { KeyframePanel } from './KeyframePanel'
+import { BinPanel } from './BinPanel'
+import { TransitionPanel } from './TransitionPanel'
+import { BeatEffectPreview } from './BeatEffectPreview'
 
 function parseTimestamp(ts: string): number {
   const parts = ts.split(':')
@@ -32,6 +36,8 @@ export function Timeline({ data }: { data: EditorData }) {
   const [pxPerSec, setPxPerSec] = useState(20)
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
+  const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
+  const [showBin, setShowBin] = useState(false)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(() => {
@@ -83,6 +89,12 @@ export function Timeline({ data }: { data: EditorData }) {
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
     setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
+    setSelectedTransition(null)
+  }, [])
+
+  const handleTransitionClick = useCallback((tr: Transition) => {
+    setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
+    setSelectedKeyframe(null)
   }, [])
 
   // Keyframe boundary drag — updates local state during drag, persists to YAML on release
@@ -127,8 +139,9 @@ export function Timeline({ data }: { data: EditorData }) {
     router.invalidate()
   }, [data.projectName, router])
 
-  const handleRestoreKeyframe = useCallback(async (id: string) => {
-    await restoreKeyframe({ data: { projectName: data.projectName, keyframeId: id } })
+  const handleDeleteTransition = useCallback(async (id: string) => {
+    await deleteTransition({ data: { projectName: data.projectName, transitionId: id } })
+    setSelectedTransition(null)
     router.invalidate()
   }, [data.projectName, router])
 
@@ -226,9 +239,11 @@ export function Timeline({ data }: { data: EditorData }) {
         <div className="flex items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
           <div className="w-32 h-18 bg-gray-800 rounded overflow-hidden shrink-0">
             {currentKeyframe?.hasSelectedImage ? (
-              <img
+              <BeatEffectPreview
                 src={beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)}
-                alt={currentKeyframe.id}
+                beats={data.beats}
+                currentTime={currentTime}
+                isPlaying={isPlaying}
                 className="w-full h-full object-cover"
               />
             ) : (
@@ -256,6 +271,14 @@ export function Timeline({ data }: { data: EditorData }) {
             title="Add keyframe at playhead position"
           >
             + Keyframe
+          </button>
+
+          <button
+            onClick={() => setShowBin((prev) => !prev)}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showBin ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
+            title="Show deleted keyframes bin"
+          >
+            Bin
           </button>
 
           <div className="text-xs text-gray-600 ml-auto">
@@ -293,6 +316,13 @@ export function Timeline({ data }: { data: EditorData }) {
                 onKeyframeDrag={handleKeyframeDrag}
                 onKeyframeDragEnd={handleKeyframeDragEnd}
                 scrollRef={scrollRef}
+              />
+              <TransitionTrack
+                transitions={data.transitions}
+                keyframes={keyframes}
+                pxPerSec={pxPerSec}
+                selectedId={selectedTransition?.id ?? null}
+                onTransitionClick={handleTransitionClick}
               />
             </div>
 
@@ -337,12 +367,32 @@ export function Timeline({ data }: { data: EditorData }) {
       </div>
 
       {/* Side panel */}
-      {selectedKeyframe && (
+      {selectedKeyframe && !showBin && !selectedTransition && (
         <KeyframePanel
           keyframe={selectedKeyframe}
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
           onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
+        />
+      )}
+
+      {/* Transition panel */}
+      {selectedTransition && !showBin && !selectedKeyframe && (
+        <TransitionPanel
+          transition={selectedTransition}
+          projectName={data.projectName}
+          motionPrompt={data.meta.motionPrompt}
+          onClose={() => setSelectedTransition(null)}
+          onDelete={() => handleDeleteTransition(selectedTransition.id)}
+        />
+      )}
+
+      {/* Bin panel */}
+      {showBin && (
+        <BinPanel
+          projectName={data.projectName}
+          onClose={() => setShowBin(false)}
+          onRestore={() => router.invalidate()}
         />
       )}
     </div>

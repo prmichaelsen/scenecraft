@@ -4,11 +4,17 @@ import { Timeline } from '@/components/editor/Timeline'
 import {
   fetchKeyframes,
   fetchBeats,
+  fetchBin,
   postUpdateTimestamp,
   postAddKeyframe,
   postDeleteKeyframe,
   postRestoreKeyframe,
   postUpdatePrompt,
+  postDeleteTransition,
+  postRestoreTransition,
+  postGenerateTransitionAction,
+  postUpdateTransitionAction,
+  postUpdateMeta,
 } from '@/lib/beatlab-client'
 
 export type KeyframeContext = {
@@ -44,13 +50,29 @@ export type Section = {
   label: string
 }
 
+export type Transition = {
+  id: string
+  from: string
+  to: string
+  durationSeconds: number
+  slots: number
+  action: string
+  useGlobalPrompt: boolean
+  candidates: string[]
+  selected: string[]
+  remap: { method: string; target_duration: number }
+}
+
 export type EditorData = {
   meta: {
     title: string
     fps: number
     resolution: [number, number]
+    motionPrompt: string
+    defaultTransitionPrompt: string
   }
   keyframes: Keyframe[]
+  transitions: Transition[]
   audioFile: string | null
   projectName: string
   beats: Beat[]
@@ -66,7 +88,13 @@ const getEditorData = createServerFn({ method: 'GET' })
     ])
 
     return {
-      meta: kfData.meta || { title: data.name, fps: 24, resolution: [1920, 1080] },
+      meta: {
+        title: kfData.meta?.title || data.name,
+        fps: kfData.meta?.fps || 24,
+        resolution: kfData.meta?.resolution || [1920, 1080],
+        motionPrompt: kfData.meta?.motionPrompt || '',
+        defaultTransitionPrompt: kfData.meta?.defaultTransitionPrompt || 'Smooth cinematic transition',
+      },
       keyframes: (kfData.keyframes || []).map((kf: Record<string, unknown>) => ({
         id: kf.id as string,
         timestamp: kf.timestamp as string,
@@ -80,6 +108,18 @@ const getEditorData = createServerFn({ method: 'GET' })
               typeof c === 'string' ? c : (c.path as string) || ''
             ).filter(Boolean)
           : [],
+      })),
+      transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => ({
+        id: tr.id as string,
+        from: tr.from as string,
+        to: tr.to as string,
+        durationSeconds: tr.durationSeconds as number,
+        slots: tr.slots as number,
+        action: (tr.action as string) || '',
+        useGlobalPrompt: tr.useGlobalPrompt !== false,
+        candidates: (tr.candidates as string[]) || [],
+        selected: (tr.selected as string[]) || [],
+        remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
       })),
       audioFile: kfData.audioFile || null,
       projectName: data.name,
@@ -127,6 +167,42 @@ export const updateKeyframePrompt = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; prompt: string }) => input)
   .handler(async ({ data }) => {
     return postUpdatePrompt(data.projectName, data.keyframeId, data.prompt)
+  })
+
+export const generateTransitionAction = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string }) => input)
+  .handler(async ({ data }) => {
+    return postGenerateTransitionAction(data.projectName, data.transitionId)
+  })
+
+export const updateTransitionAction = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean }) => input)
+  .handler(async ({ data }) => {
+    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt)
+  })
+
+export const updateMeta = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; fields: Record<string, string> }) => input)
+  .handler(async ({ data }) => {
+    return postUpdateMeta(data.projectName, data.fields)
+  })
+
+export const deleteTransition = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string }) => input)
+  .handler(async ({ data }) => {
+    return postDeleteTransition(data.projectName, data.transitionId)
+  })
+
+export const restoreTransition = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string }) => input)
+  .handler(async ({ data }) => {
+    return postRestoreTransition(data.projectName, data.transitionId)
+  })
+
+export const getBin = createServerFn({ method: 'GET' })
+  .inputValidator((input: { projectName: string }) => input)
+  .handler(async ({ data }) => {
+    return fetchBin(data.projectName)
   })
 
 export const Route = createFileRoute('/project/$name/editor')({
