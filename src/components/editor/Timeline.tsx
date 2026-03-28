@@ -159,11 +159,14 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [])
 
   const handleEffectDrag = useCallback((id: string, newTime: number) => {
-    setUserEffects((prev) => {
-      const updated = prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx)
-      return updated
-    })
+    setUserEffects((prev) => prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx))
   }, [])
+
+  const handleEffectDragEnd = useCallback((id: string, newTime: number) => {
+    const newEffects = userEffects.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx)
+    setUserEffects(newEffects)
+    persistEffects(newEffects, suppressions)
+  }, [userEffects, suppressions, persistEffects])
 
   const handleEffectUpdate = useCallback((updated: UserEffect) => {
     const newEffects = userEffects.map((fx) => fx.id === updated.id ? updated : fx)
@@ -515,6 +518,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 onEffectClick={handleEffectClick}
                 onAddEffect={handleAddEffect}
                 onEffectDrag={handleEffectDrag}
+                onEffectDragEnd={handleEffectDragEnd}
               />
             </div>
 

@@ -25,6 +25,7 @@ type EffectsTrackProps = {
   onEffectClick: (effect: UserEffect) => void
   onAddEffect: (time: number) => void
   onEffectDrag: (id: string, newTime: number) => void
+  onEffectDragEnd: (id: string, newTime: number) => void
 }
 
 export function EffectsTrack({
@@ -35,6 +36,7 @@ export function EffectsTrack({
   onEffectClick,
   onAddEffect,
   onEffectDrag,
+  onEffectDragEnd,
 }: EffectsTrackProps) {
   const dragState = useRef<{ dragging: boolean; id: string; startX: number; startTime: number } | null>(null)
   const didDrag = useRef(false)
@@ -53,7 +55,12 @@ export function EffectsTrack({
       onEffectDrag(dragState.current.id, newTime)
     }
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (ev: MouseEvent) => {
+      if (didDrag.current && dragState.current) {
+        const deltaX = ev.clientX - dragState.current.startX
+        const newTime = Math.max(0, dragState.current.startTime + deltaX / pxPerSec)
+        onEffectDragEnd(dragState.current.id, newTime)
+      }
       dragState.current = null
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
