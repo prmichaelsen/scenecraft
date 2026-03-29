@@ -399,9 +399,12 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
                     <video
                       src={url}
                       className="w-full aspect-video object-cover"
+                      crossOrigin="anonymous"
                       muted
                       loop
-                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                      preload="metadata"
+                      playsInline
+                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
                       onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
