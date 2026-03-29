@@ -59,6 +59,7 @@ export async function postDeleteKeyframe(project: string, keyframeId: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId }),
   })
+  if (!res.ok) throw new Error(`Failed to delete keyframe: ${res.status} ${await res.text()}`)
   return res.json()
 }
 
@@ -366,13 +367,20 @@ export async function postSetBaseImage(project: string, keyframeId: string, stil
 }
 
 export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
+  console.log(`[beatlab-client] inserting pool item: ${type} ${poolPath} at ${atTime}s`)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, poolPath, atTime }),
   })
-  if (!res.ok) throw new Error(`Failed to insert pool item: ${res.status} ${await res.text()}`)
-  return res.json()
+  if (!res.ok) {
+    const text = await res.text()
+    console.error(`[beatlab-client] insert-pool-item failed: ${res.status} ${text}`)
+    throw new Error(`Failed to insert pool item: ${res.status} ${text}`)
+  }
+  const result = await res.json()
+  console.log('[beatlab-client] insert-pool-item result:', result)
+  return result
 }
 
 export type AudioDescription = {

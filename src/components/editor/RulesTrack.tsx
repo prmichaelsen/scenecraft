@@ -25,9 +25,11 @@ type RuleSection = {
 function groupRulesBySections(rules: AudioRule[]): RuleSection[] {
   const map = new Map<string, RuleSection>()
   for (const r of rules) {
-    const key = `${r._start}-${r._end}`
+    const start = r._start ?? 0
+    const end = r._end ?? 0
+    const key = `${start}-${end}`
     if (!map.has(key)) {
-      map.set(key, { start: r._start, end: r._end, rules: [] })
+      map.set(key, { start, end, rules: [] })
     }
     map.get(key)!.rules.push(r)
   }

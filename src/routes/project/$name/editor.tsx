@@ -122,7 +122,7 @@ const getEditorData = createServerFn({ method: 'GET' })
       fetchEffects(data.name).catch((e) => { console.error('[editor] fetchEffects failed:', e); return { effects: [], suppressions: [] } }),
       fetchNarrative(data.name).catch((e) => { console.error('[editor] fetchNarrative failed:', e); return { sections: [] } }),
       fetchTimelines(data.name).catch(() => null),
-      fetchAudioIntelligence(data.name).catch((e) => { console.error('[editor] fetchAudioIntelligence failed:', e); return { activeFile: null, events: [], sections: [], ruleCount: 0 } }),
+      fetchAudioIntelligence(data.name).catch((e) => { console.error('[editor] fetchAudioIntelligence failed:', e); return { activeFile: null, events: [], sections: [], rules: [], ruleCount: 0 } }),
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
       fetchDescriptions(data.name).catch(() => [] as AudioDescription[]),
     ])
@@ -230,7 +230,15 @@ export const addKeyframe = createServerFn({ method: 'POST' })
 export const deleteKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string }) => input)
   .handler(async ({ data }) => {
-    return postDeleteKeyframe(data.projectName, data.keyframeId)
+    console.log('[deleteKeyframe] projectName:', data.projectName, 'keyframeId:', data.keyframeId)
+    try {
+      const result = await postDeleteKeyframe(data.projectName, data.keyframeId)
+      console.log('[deleteKeyframe] result:', JSON.stringify(result))
+      return result
+    } catch (e) {
+      console.error('[deleteKeyframe] ERROR:', e)
+      throw e
+    }
   })
 
 export const restoreKeyframe = createServerFn({ method: 'POST' })
