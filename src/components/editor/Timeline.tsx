@@ -533,14 +533,13 @@ export function Timeline({ data }: { data: EditorData }) {
     router.invalidate()
   }, [data.projectName, router])
 
-  const handleRetryRender = useCallback((tr: Transition) => {
+  const handleRetryRender = useCallback(async (tr: Transition) => {
     const numSlots = tr.slots || 1
-    // Immediately reset progress bar to 0 for visual feedback
     setRenderProgress((prev) => ({ ...prev, [tr.id]: 0 }))
     for (let s = 0; s < numSlots; s++) {
       const selectedVariant = tr.selected?.[s] ?? 'none'
       const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
-      invalidateEntry(key)
+      await invalidateEntry(key)
       preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
     }
   }, [data.projectName])

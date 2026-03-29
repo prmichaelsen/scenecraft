@@ -214,48 +214,35 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
           {slotActions.map((sa, idx) => (
             <div key={idx}>
               <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-0.5">Slot {idx}</div>
-              {sa || generating ? (
-                <textarea
-                  value={sa}
-                  onChange={(e) => updateSlotAction(idx, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
-                    if (e.key === 'Escape') { setSlotActions(transition.slotActions.length > 0 ? [...transition.slotActions] : Array(transition.slots).fill('')) }
-                  }}
-                  onBlur={save}
-                  className="w-full bg-gray-800 text-xs text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[60px] leading-relaxed"
-                  disabled={saving || generating}
-                  placeholder={generating ? 'Generating...' : `Describe what happens in slot ${idx}...`}
-                />
-              ) : (
-                <div className="text-xs text-gray-500 italic bg-gray-800/50 rounded p-1.5">
-                  No prompt yet
-                </div>
-              )}
+              <textarea
+                value={sa}
+                onChange={(e) => updateSlotAction(idx, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
+                  if (e.key === 'Escape') { setSlotActions(transition.slotActions.length > 0 ? [...transition.slotActions] : Array(transition.slots).fill('')) }
+                }}
+                onBlur={save}
+                className="w-full bg-gray-800 text-xs text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[60px] leading-relaxed"
+                disabled={saving || generating}
+                placeholder={generating ? 'Generating...' : `Describe what happens in slot ${idx}...`}
+              />
             </div>
           ))}
         </div>
       ) : (
         // Single action prompt
-        <>
-          {action ? (
-            <textarea
-              value={action}
-              onChange={(e) => setAction(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
-                if (e.key === 'Escape') { setAction(transition.action) }
-              }}
-              onBlur={save}
-              className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
-              disabled={saving || generating}
-            />
-          ) : (
-            <div className="text-sm text-gray-500 italic bg-gray-800/50 rounded p-2">
-              {generating ? 'Analyzing keyframe images with Claude...' : 'No action prompt yet. Click Generate to create one from the keyframe images.'}
-            </div>
-          )}
-        </>
+        <textarea
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
+            if (e.key === 'Escape') { setAction(transition.action) }
+          }}
+          onBlur={save}
+          className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
+          disabled={saving || generating}
+          placeholder={generating ? 'Analyzing keyframe images with Claude...' : 'Enter a transition action prompt...'}
+        />
       )}
       <div className="text-[9px] text-gray-600">
         {hasAnyAction ? 'Ctrl+Enter to save, Esc to revert. ' : ''}Sent to Veo for video generation.
@@ -510,7 +497,7 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
             disabled={generatingSlotKfs}
             className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-1.5 rounded transition-colors"
           >
-            {generatingSlotKfs ? slotKfStatus || 'Generating...' : Object.keys(slotKfCandidates).length > 0 ? 'Regenerate Slot Keyframes' : 'Generate Slot Keyframes'}
+            {generatingSlotKfs ? slotKfStatus || 'Generating...' : Object.keys(slotKfCandidates).length > 0 ? 'Generate Additional Slot Keyframes' : 'Generate Slot Keyframes'}
           </button>
 
           {/* Slot keyframe candidate images */}

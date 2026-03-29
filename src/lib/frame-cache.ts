@@ -326,20 +326,26 @@ export function getActivePreloads(): PreloadStatus[] {
 }
 
 /**
- * Invalidate a cache entry — clears memory synchronously, IndexedDB in background.
+ * Invalidate a cache entry — clears memory and IndexedDB.
+ * Returns a promise that resolves when IndexedDB deletion is complete.
+ * Await this before re-preloading to prevent restoring stale data.
  */
-export function invalidateEntry(key: string) {
+export async function invalidateEntry(key: string): Promise<void> {
   cacheDelete(key)
   persistedKeys.delete(key)
   loadingKeys.delete(key)
   loadProgress.delete(key)
-  // Freeing memory may unblock queued preloads
+  deferredRetries.delete(key)
   drainQueue()
-  // Remove from IndexedDB in background (doesn't block callers)
-  openDb().then((db) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).delete(dbKey(key))
-  }).catch(() => {})
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      tx.objectStore(STORE_NAME).delete(dbKey(key))
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {}
 }
 
 /**
@@ -375,8 +381,7 @@ async function restoreFromDb(key: string, resolvedDbKey: string, startGen: numbe
     }
     console.log('[frame-cache] HIT', resolvedDbKey, cached.length, 'blobs')
     persistedKeys.add(key)
-    if (startGen !== cacheGeneration) return true // stale but don't re-decode
-    loadProgress.set(key, 1)
+    if (startGen !== cacheGeneration) return true
     const frames = await blobsToBitmaps(cached)
     if (startGen !== cacheGeneration) { frames.forEach((f) => f.close()); return true }
     cacheSet(key, {
@@ -385,7 +390,6 @@ async function restoreFromDb(key: string, resolvedDbKey: string, startGen: numbe
       duration: frames.length / TARGET_FPS,
       bytes: estimateEntryBytes(frames),
     })
-    loadProgress.delete(key)
     deferredRetries.delete(key)
     return true
   } catch {
