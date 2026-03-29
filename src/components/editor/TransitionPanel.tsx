@@ -407,11 +407,33 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
   )
 }
 
+const videoBlobCache = new Map<string, string>() // url -> blob URL
+
 function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect }: {
   videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
 }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
+  const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
   const url = beatlabFileUrl(projectName, videoPath)
+
+  // Download video once into a blob URL on first mount
+  useEffect(() => {
+    if (videoBlobCache.has(videoPath)) {
+      setBlobUrl(videoBlobCache.get(videoPath)!)
+      return
+    }
+    setLoading(true)
+    fetch(url)
+      .then((res) => res.blob())
+      .then((blob) => {
+        const bu = URL.createObjectURL(blob)
+        videoBlobCache.set(videoPath, bu)
+        setBlobUrl(bu)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [videoPath, url])
 
   return (
     <div
@@ -422,19 +444,24 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {hovered ? (
+      {blobUrl ? (
         <video
-          src={url}
+          src={blobUrl}
           className="w-full aspect-video object-cover"
-          crossOrigin="anonymous"
           muted
           loop
           playsInline
-          autoPlay
+          preload="metadata"
+          autoPlay={hovered}
+          ref={(el) => {
+            if (!el) return
+            if (hovered) el.play().catch(() => {})
+            else { el.pause(); el.currentTime = 0 }
+          }}
         />
       ) : (
         <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
-          <span className="text-[10px] text-gray-500 font-mono">{label}</span>
+          <span className="text-[10px] text-gray-500 font-mono">{loading ? '...' : label}</span>
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
