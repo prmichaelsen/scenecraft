@@ -17,6 +17,7 @@ import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
+import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 function parseTimestamp(ts: string): number {
@@ -53,6 +54,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showBin, setShowBin] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
+  const [showSections, setShowSections] = useState(false)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, _setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
   const [selectedEffect, setSelectedEffect] = useState<UserEffect | null>(null)
@@ -472,7 +474,15 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
-            onClick={() => { setShowVersions((p) => !p); if (!showVersions) { setShowBin(false) } }}
+            onClick={() => { setShowSections((p) => !p); if (!showSections) { setShowBin(false); setShowVersions(false) } }}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showSections ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
+            title="Edit narrative sections"
+          >
+            Sections
+          </button>
+
+          <button
+            onClick={() => { setShowVersions((p) => !p); if (!showVersions) { setShowBin(false); setShowSections(false) } }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showVersions ? 'bg-green-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Version history — save, restore, branch"
           >
@@ -613,6 +623,19 @@ export function Timeline({ data }: { data: EditorData }) {
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
           socket={socket}
+        />
+      )}
+
+      {/* Narrative sections panel */}
+      {showSections && (
+        <NarrativeSectionPanel
+          sections={data.narrativeSections}
+          projectName={data.projectName}
+          onClose={() => setShowSections(false)}
+          onSeek={(time) => {
+            if (seekFnRef.current) seekFnRef.current(time)
+            else setCurrentTime(time)
+          }}
         />
       )}
 
