@@ -1010,10 +1010,8 @@ export function Timeline({ data }: { data: EditorData }) {
               const { postInsertPoolItem } = await import('@/lib/beatlab-client')
               let insertTime = currentTime
               if (mode === 'after-current-kf' && currentKeyframe) {
-                const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
-                const nextKf = sorted.find((kf) => kf.timeSeconds > currentKeyframe.timeSeconds + 0.01)
-                // Insert at the start of the next keyframe (= end of current keyframe)
-                insertTime = nextKf ? nextKf.timeSeconds : currentKeyframe.timeSeconds + 1
+                // Insert right after the current keyframe's timestamp
+                insertTime = currentKeyframe.timeSeconds + 0.01
               }
               await postInsertPoolItem(data.projectName, selection.type, selection.entry.path, insertTime)
               setPoolSelection(null)
