@@ -26,6 +26,11 @@ type EffectsTrackProps = {
   onAddEffect: (time: number) => void
   onEffectDrag: (id: string, newTime: number) => void
   onEffectDragEnd: (id: string, newTime: number) => void
+  onAddSuppression: (from: number, to: number) => void
+  onDeleteSuppression: (id: string) => void
+  onResizeSuppression: (id: string, from: number, to: number) => void
+  selectedSuppressionId: string | null
+  onSuppressionClick: (id: string) => void
 }
 
 export function EffectsTrack({
@@ -37,6 +42,11 @@ export function EffectsTrack({
   onAddEffect,
   onEffectDrag,
   onEffectDragEnd,
+  onAddSuppression,
+  onDeleteSuppression: _onDeleteSuppression,
+  onResizeSuppression,
+  selectedSuppressionId,
+  onSuppressionClick,
 }: EffectsTrackProps) {
   const dragState = useRef<{ dragging: boolean; id: string; startX: number; startTime: number } | null>(null)
   const didDrag = useRef(false)
@@ -70,6 +80,40 @@ export function EffectsTrack({
     document.addEventListener('mouseup', handleMouseUp)
   }, [pxPerSec, onEffectDrag])
 
+  // Shift+drag to create suppression zone
+  const suppressionDragRef = useRef<{ startTime: number; rect: DOMRect } | null>(null)
+
+  const handleTrackMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!e.shiftKey) return
+    e.preventDefault()
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const startTime = x / pxPerSec
+    suppressionDragRef.current = { startTime, rect }
+
+    const handleMouseMove = (_ev: MouseEvent) => {
+      // Visual feedback could be added here with a temp overlay
+    }
+
+    const handleMouseUp = (ev: MouseEvent) => {
+      if (suppressionDragRef.current) {
+        const endX = ev.clientX - suppressionDragRef.current.rect.left
+        const endTime = endX / pxPerSec
+        const from = Math.min(suppressionDragRef.current.startTime, endTime)
+        const to = Math.max(suppressionDragRef.current.startTime, endTime)
+        if (to - from > 0.1) {
+          onAddSuppression(from, to)
+        }
+        suppressionDragRef.current = null
+      }
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [pxPerSec, onAddSuppression])
+
   const handleTrackDoubleClick = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
@@ -81,19 +125,66 @@ export function EffectsTrack({
     <div
       className="relative h-full overflow-visible"
       onDoubleClick={handleTrackDoubleClick}
+      onMouseDown={handleTrackMouseDown}
     >
       {/* Suppression zones */}
-      {suppressions.map((s) => (
-        <div
-          key={s.id}
-          className="absolute top-0 h-full bg-red-900/15 border-l border-r border-red-800/30"
-          style={{
-            left: s.from * pxPerSec,
-            width: (s.to - s.from) * pxPerSec,
-          }}
-          title={`Suppressed: ${s.from.toFixed(1)}s - ${s.to.toFixed(1)}s`}
-        />
-      ))}
+      {suppressions.map((s) => {
+        const isSelected = s.id === selectedSuppressionId
+        return (
+          <div
+            key={s.id}
+            className={`absolute top-0 h-full pointer-events-auto cursor-pointer ${isSelected ? 'bg-red-900/30 border-l-2 border-r-2 border-red-500' : 'bg-red-900/15 border-l border-r border-red-800/30 hover:bg-red-900/25'}`}
+            style={{
+              left: s.from * pxPerSec,
+              width: (s.to - s.from) * pxPerSec,
+            }}
+            title={`Suppressed: ${s.from.toFixed(1)}s - ${s.to.toFixed(1)}s (Shift+drag to create, click to select, Delete to remove)`}
+            onClick={(e) => { e.stopPropagation(); onSuppressionClick(s.id) }}
+          >
+            {/* Resize handles */}
+            <div
+              className="absolute top-0 left-0 w-2 h-full cursor-col-resize hover:bg-red-500/40 z-10"
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                const startX = e.clientX
+                const origFrom = s.from
+                const handleMove = (ev: MouseEvent) => {
+                  const delta = (ev.clientX - startX) / pxPerSec
+                  const newFrom = Math.max(0, Math.min(s.to - 0.1, origFrom + delta))
+                  onResizeSuppression(s.id, newFrom, s.to)
+                }
+                const handleUp = () => {
+                  document.removeEventListener('mousemove', handleMove)
+                  document.removeEventListener('mouseup', handleUp)
+                }
+                document.addEventListener('mousemove', handleMove)
+                document.addEventListener('mouseup', handleUp)
+              }}
+            />
+            <div
+              className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-red-500/40 z-10"
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                const startX = e.clientX
+                const origTo = s.to
+                const handleMove = (ev: MouseEvent) => {
+                  const delta = (ev.clientX - startX) / pxPerSec
+                  const newTo = Math.max(s.from + 0.1, origTo + delta)
+                  onResizeSuppression(s.id, s.from, newTo)
+                }
+                const handleUp = () => {
+                  document.removeEventListener('mousemove', handleMove)
+                  document.removeEventListener('mouseup', handleUp)
+                }
+                document.addEventListener('mousemove', handleMove)
+                document.addEventListener('mouseup', handleUp)
+              }}
+            />
+          </div>
+        )
+      })}
 
       {/* Effect markers */}
       {effects.map((fx) => {

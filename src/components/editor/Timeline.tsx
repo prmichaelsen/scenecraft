@@ -56,7 +56,9 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
-  const [suppressions, _setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
+  const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
+  const [selectedSuppressionId, setSelectedSuppressionId] = useState<string | null>(null)
+  const nextSupId = useRef(data.beatSuppressions.length + 1)
   const [selectedEffect, setSelectedEffect] = useState<UserEffect | null>(null)
   const nextFxId = useRef(data.userEffects.length + 1)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
@@ -234,6 +236,34 @@ export function Timeline({ data }: { data: EditorData }) {
     persistEffects(newEffects, suppressions)
   }, [userEffects, suppressions, persistEffects])
 
+  // Suppression handlers
+  const handleAddSuppression = useCallback((from: number, to: number) => {
+    const id = `sup_${String(nextSupId.current++).padStart(3, '0')}`
+    const newSup: BeatSuppression = { id, from, to }
+    const updated = [...suppressions, newSup]
+    setSuppressions(updated)
+    setSelectedSuppressionId(id)
+    persistEffects(userEffects, updated)
+  }, [suppressions, userEffects, persistEffects])
+
+  const handleDeleteSuppression = useCallback((id: string) => {
+    const updated = suppressions.filter((s) => s.id !== id)
+    setSuppressions(updated)
+    setSelectedSuppressionId(null)
+    persistEffects(userEffects, updated)
+  }, [suppressions, userEffects, persistEffects])
+
+  const handleResizeSuppression = useCallback((id: string, from: number, to: number) => {
+    const updated = suppressions.map((s) => s.id === id ? { ...s, from, to } : s)
+    setSuppressions(updated)
+    persistEffects(userEffects, updated)
+  }, [suppressions, userEffects, persistEffects])
+
+  const handleSuppressionClick = useCallback((id: string) => {
+    setSelectedSuppressionId((prev) => prev === id ? null : id)
+    setSelectedEffect(null)
+  }, [])
+
   // Keyframe boundary drag — updates local state during drag, persists to YAML on release
   const handleKeyframeDrag = useCallback((id: string, newTimeSeconds: number) => {
     setDragOverrides((prev) => ({ ...prev, [id]: newTimeSeconds }))
@@ -285,8 +315,9 @@ export function Timeline({ data }: { data: EditorData }) {
   // Delete key shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' && selectedKeyframe && !(e.target as HTMLElement).closest('input, textarea')) {
-        handleDeleteKeyframe(selectedKeyframe.id)
+      if (e.key === 'Delete' && !(e.target as HTMLElement).closest('input, textarea')) {
+        if (selectedKeyframe) handleDeleteKeyframe(selectedKeyframe.id)
+        else if (selectedSuppressionId) handleDeleteSuppression(selectedSuppressionId)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -590,6 +621,11 @@ export function Timeline({ data }: { data: EditorData }) {
                 onAddEffect={handleAddEffect}
                 onEffectDrag={handleEffectDrag}
                 onEffectDragEnd={handleEffectDragEnd}
+                onAddSuppression={handleAddSuppression}
+                onDeleteSuppression={handleDeleteSuppression}
+                onResizeSuppression={handleResizeSuppression}
+                selectedSuppressionId={selectedSuppressionId}
+                onSuppressionClick={handleSuppressionClick}
               />
             </div>
 
