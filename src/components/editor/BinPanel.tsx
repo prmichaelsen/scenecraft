@@ -9,15 +9,20 @@ export type PoolSelection = {
   entry: PoolEntry
 }
 
+type ActiveKeyframe = { id: string; timestamp: string; section: string; prompt: string; hasSelectedImage: boolean }
+type ActiveTransition = { id: string; from: string; to: string; durationSeconds: number; hasSelectedVideo: boolean }
+
 type BinPanelProps = {
   projectName: string
   onClose: () => void
   onRestore: () => void
   onPoolSelect: (selection: PoolSelection | null) => void
   poolSelection: PoolSelection | null
+  activeKeyframes: ActiveKeyframe[]
+  activeTransitions: ActiveTransition[]
 }
 
-export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSelection }: BinPanelProps) {
+export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSelection, activeKeyframes, activeTransitions }: BinPanelProps) {
   const socket = useBeatlabSocket()
   const [keyframeEntries, setKeyframeEntries] = useState<BinEntry[]>([])
   const [transitionEntries, setTransitionEntries] = useState<TransitionBinEntry[]>([])
@@ -73,8 +78,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSe
     onRestore()
   }, [projectName, onRestore])
 
-  const kfCount = keyframeEntries.length
-  const trCount = transitionEntries.length
+  const allKfCount = activeKeyframes.length + keyframeEntries.length
+  const allTrCount = activeTransitions.length + transitionEntries.length
   const poolCount = poolKeyframes.length + poolSegments.length
 
   return (
@@ -113,13 +118,13 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSe
           onClick={() => setTab('keyframes')}
           className={`flex-1 text-xs py-2 transition-colors ${tab === 'keyframes' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
         >
-          KFs{kfCount > 0 ? ` (${kfCount})` : ''}
+          KFs{allKfCount > 0 ? ` (${allKfCount})` : ''}
         </button>
         <button
           onClick={() => setTab('transitions')}
           className={`flex-1 text-xs py-2 transition-colors ${tab === 'transitions' ? 'text-gray-200 border-b-2 border-orange-500' : 'text-gray-500 hover:text-gray-400'}`}
         >
-          TRs{trCount > 0 ? ` (${trCount})` : ''}
+          TRs{allTrCount > 0 ? ` (${allTrCount})` : ''}
         </button>
         <button
           onClick={() => setTab('pool')}
@@ -133,64 +138,98 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSe
         {loading ? (
           <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
         ) : tab === 'keyframes' ? (
-          kfCount === 0 ? (
+          allKfCount === 0 ? (
             <div className="p-4 text-center text-sm text-gray-600">Empty</div>
           ) : (
-            <div className="divide-y divide-gray-800">
-              {keyframeEntries.map((entry) => (
-                <div key={entry.id} className="p-2">
-                  <div className="flex items-start gap-2">
-                    {entry.hasSelectedImage ? (
+            <div className="p-2 space-y-1">
+              {/* Active keyframes */}
+              <div className="grid grid-cols-3 gap-1">
+                {activeKeyframes.map((kf) => (
+                  <div key={kf.id} className="relative group rounded overflow-hidden">
+                    {kf.hasSelectedImage ? (
                       <img
-                        src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
-                        alt={entry.id}
-                        className="w-16 h-10 object-cover rounded shrink-0"
+                        src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
+                        alt={kf.id}
+                        className="w-full aspect-video object-cover"
                         loading="lazy"
                       />
                     ) : (
-                      <div className="w-16 h-10 bg-gray-800 rounded shrink-0 flex items-center justify-center">
-                        <span className="text-[8px] text-gray-600">{entry.id}</span>
+                      <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
+                        <span className="text-[8px] text-gray-600">{kf.id}</span>
                       </div>
                     )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-gray-300 font-mono">{entry.id}</div>
-                      <div className="text-[10px] text-gray-500">{entry.timestamp} — {entry.section}</div>
-                      {entry.prompt && (
-                        <div className="text-[10px] text-gray-600 truncate mt-0.5">{entry.prompt}</div>
-                      )}
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="text-[7px] text-gray-300 truncate">{kf.id} @ {kf.timestamp}</div>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleRestoreKeyframe(entry.id)}
-                    className="mt-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
-                  >
-                    Restore to timeline
-                  </button>
-                </div>
-              ))}
+                ))}
+              </div>
+              {/* Binned keyframes */}
+              {keyframeEntries.length > 0 && (
+                <>
+                  <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {keyframeEntries.map((entry) => (
+                      <div key={entry.id} className="relative group rounded overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-pointer" onClick={() => handleRestoreKeyframe(entry.id)}>
+                        {entry.hasSelectedImage ? (
+                          <img
+                            src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
+                            alt={entry.id}
+                            className="w-full aspect-video object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
+                            <span className="text-[8px] text-gray-600">{entry.id}</span>
+                          </div>
+                        )}
+                        <div className="absolute bottom-0 left-0 right-0 bg-red-900/70 px-1 py-0.5">
+                          <div className="text-[7px] text-red-300 truncate">{entry.id} — click to restore</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )
         ) : tab === 'transitions' ? (
-          trCount === 0 ? (
+          allTrCount === 0 ? (
             <div className="p-4 text-center text-sm text-gray-600">Empty</div>
           ) : (
-            <div className="divide-y divide-gray-800">
-              {transitionEntries.map((entry) => (
-                <div key={entry.id} className="p-2">
-                  <div className="flex-1">
-                    <div className="text-xs text-gray-300 font-mono">{entry.id}</div>
-                    <div className="text-[10px] text-gray-500">
-                      {entry.from} → {entry.to} ({entry.durationSeconds.toFixed(1)}s)
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleRestoreTransition(entry.id)}
-                    className="mt-1 text-[10px] text-orange-400 hover:text-orange-300 transition-colors"
-                  >
-                    Restore to timeline
-                  </button>
+            <div className="p-2 space-y-1">
+              {/* Active transitions as video grid */}
+              <div className="grid grid-cols-2 gap-1">
+                {activeTransitions.filter((tr) => tr.hasSelectedVideo).map((tr) => (
+                  <PoolVideoCard
+                    key={tr.id}
+                    entry={{ name: `${tr.id} (${tr.from}→${tr.to})`, path: `selected_transitions/${tr.id}_slot_0.mp4`, size: 0 }}
+                    projectName={projectName}
+                    isSelected={false}
+                    onSelect={() => {}}
+                  />
+                ))}
+              </div>
+              {/* Transitions without video */}
+              {activeTransitions.filter((tr) => !tr.hasSelectedVideo).length > 0 && (
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mt-2">No Video</div>
+              )}
+              {activeTransitions.filter((tr) => !tr.hasSelectedVideo).map((tr) => (
+                <div key={tr.id} className="px-2 py-1 bg-gray-800/30 rounded text-[10px] text-gray-500">
+                  {tr.id}: {tr.from} → {tr.to} ({tr.durationSeconds.toFixed(1)}s)
                 </div>
               ))}
+              {/* Binned transitions */}
+              {transitionEntries.length > 0 && (
+                <>
+                  <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
+                  {transitionEntries.map((entry) => (
+                    <div key={entry.id} className="px-2 py-1 bg-red-900/20 rounded text-[10px] text-gray-400 cursor-pointer hover:bg-red-900/30" onClick={() => handleRestoreTransition(entry.id)}>
+                      {entry.id}: {entry.from} → {entry.to} — click to restore
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )
         ) : (
@@ -257,7 +296,63 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSe
   )
 }
 
+// Pool blob cache: in-memory + IndexedDB persistence
 const poolBlobCache = new Map<string, string>()
+const POOL_DB_NAME = 'beatlab-pool-cache'
+const POOL_STORE = 'blobs'
+
+function openPoolDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(POOL_DB_NAME, 1)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(POOL_STORE)) db.createObjectStore(POOL_STORE)
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function getPoolBlob(key: string): Promise<Blob | null> {
+  try {
+    const db = await openPoolDb()
+    return new Promise((resolve) => {
+      const tx = db.transaction(POOL_STORE, 'readonly')
+      const req = tx.objectStore(POOL_STORE).get(key)
+      req.onsuccess = () => resolve(req.result ?? null)
+      req.onerror = () => resolve(null)
+    })
+  } catch { return null }
+}
+
+async function putPoolBlob(key: string, blob: Blob): Promise<void> {
+  try {
+    const db = await openPoolDb()
+    const tx = db.transaction(POOL_STORE, 'readwrite')
+    tx.objectStore(POOL_STORE).put(blob, key)
+  } catch {}
+}
+
+async function loadPoolBlobUrl(path: string, fetchUrl: string): Promise<string> {
+  // In-memory hit
+  if (poolBlobCache.has(path)) return poolBlobCache.get(path)!
+
+  // IndexedDB hit
+  const cached = await getPoolBlob(path)
+  if (cached) {
+    const bu = URL.createObjectURL(cached)
+    poolBlobCache.set(path, bu)
+    return bu
+  }
+
+  // Network fetch + persist
+  const res = await fetch(fetchUrl)
+  const blob = await res.blob()
+  const bu = URL.createObjectURL(blob)
+  poolBlobCache.set(path, bu)
+  putPoolBlob(path, blob) // fire and forget
+  return bu
+}
 
 function PoolVideoCard({ entry, projectName, isSelected, onSelect }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => poolBlobCache.get(entry.path) ?? null)
@@ -266,17 +361,12 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect }: { entry: Po
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const url = beatlabFileUrl(projectName, entry.path)
 
-  // Lazy-load blob on first hover
+  // Lazy-load blob on first hover (checks IndexedDB before network)
   useEffect(() => {
     if (!hovered || blobUrl || loading) return
     setLoading(true)
-    fetch(url)
-      .then((res) => res.blob())
-      .then((blob) => {
-        const bu = URL.createObjectURL(blob)
-        poolBlobCache.set(entry.path, bu)
-        setBlobUrl(bu)
-      })
+    loadPoolBlobUrl(entry.path, url)
+      .then((bu) => setBlobUrl(bu))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [hovered, blobUrl, loading, url, entry.path])

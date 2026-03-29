@@ -118,6 +118,22 @@ export type AudioSection = {
   description: string
 }
 
+export type AudioRule = {
+  stem: string
+  band: string
+  min_strength: number
+  max_strength: number
+  effect: string
+  intensity_scale: number
+  duration: number
+  sustain_from_rms: boolean
+  layer_with: string[]
+  layer_threshold: number
+  rationale: string
+  _start: number
+  _end: number
+}
+
 export async function fetchAudioIntelligence(project: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/audio-intelligence`)
   if (!res.ok) throw new Error(`Failed to fetch audio intelligence: ${res.status}`)
@@ -126,6 +142,7 @@ export async function fetchAudioIntelligence(project: string) {
     availableFiles?: string[]
     events: AudioEvent[]
     sections: AudioSection[]
+    rules: AudioRule[]
     ruleCount: number
   }>
 }
@@ -187,20 +204,20 @@ export async function postGenerateKeyframeCandidates(project: string, keyframeId
   return res.json() as Promise<{ jobId: string; keyframeId: string; candidates?: string[] }>
 }
 
-export async function postGenerateTransitionAction(project: string, transitionId: string) {
+export async function postGenerateTransitionAction(project: string, transitionId: string, sectionContext?: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId }),
+    body: JSON.stringify({ transitionId, ...(sectionContext && { sectionContext }) }),
   })
   return res.json() as Promise<{ success: boolean; action: string; slotActions?: string[] }>
 }
 
-export async function postEnhanceTransitionAction(project: string, transitionId: string, action: string) {
+export async function postEnhanceTransitionAction(project: string, transitionId: string, action: string, sectionContext?: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, action }),
+    body: JSON.stringify({ transitionId, action, ...(sectionContext && { sectionContext }) }),
   })
   return res.json() as Promise<{ success: boolean; action: string }>
 }
@@ -356,6 +373,21 @@ export async function postInsertPoolItem(project: string, type: 'keyframe' | 'se
   })
   if (!res.ok) throw new Error(`Failed to insert pool item: ${res.status} ${await res.text()}`)
   return res.json()
+}
+
+export type AudioDescription = {
+  sectionIndex: number
+  label: string
+  startTime: number
+  endTime: number
+  content: string
+}
+
+export async function fetchDescriptions(project: string): Promise<AudioDescription[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/descriptions`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.sections || []
 }
 
 export async function postSelectKeyframes(project: string, selections: Record<string, number>) {

@@ -26,9 +26,12 @@ import {
   fetchEffects,
   fetchAudioIntelligence,
   type AudioEvent,
+  type AudioRule,
   postUpdateEffects,
   type UserEffect,
   type BeatSuppression,
+  type AudioDescription,
+  fetchDescriptions,
 } from '@/lib/beatlab-client'
 import {
   fetchNarrative,
@@ -101,17 +104,19 @@ export type EditorData = {
   beats: Beat[]
   sections: Section[]
   audioEvents: AudioEvent[]
+  audioRules: AudioRule[]
   narrativeSections: NarrativeSection[]
   timelineInfo: TimelineInfo | null
   userEffects: UserEffect[]
   beatSuppressions: BeatSuppression[]
   previewQuality: number
+  audioDescriptions: AudioDescription[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData, settingsData] = await Promise.all([
+    const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData, settingsData, descriptionsData] = await Promise.all([
       fetchKeyframes(data.name).catch((e) => { console.error('[editor] fetchKeyframes failed:', e); return { meta: null, keyframes: [], transitions: [], audioFile: null } }),
       fetchBeats(data.name).catch((e) => { console.error('[editor] fetchBeats failed:', e); return { beats: [], sections: [] } }),
       fetchEffects(data.name).catch((e) => { console.error('[editor] fetchEffects failed:', e); return { effects: [], suppressions: [] } }),
@@ -119,6 +124,7 @@ const getEditorData = createServerFn({ method: 'GET' })
       fetchTimelines(data.name).catch(() => null),
       fetchAudioIntelligence(data.name).catch((e) => { console.error('[editor] fetchAudioIntelligence failed:', e); return { activeFile: null, events: [], sections: [], ruleCount: 0 } }),
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
+      fetchDescriptions(data.name).catch(() => [] as AudioDescription[]),
     ])
 
     return {
@@ -188,11 +194,13 @@ const getEditorData = createServerFn({ method: 'GET' })
       beats: Array.isArray(beatsData.beats) ? beatsData.beats : [],
       sections: Array.isArray(beatsData.sections) ? beatsData.sections : [],
       audioEvents: aiData.events || [],
+      audioRules: aiData.rules || [],
       narrativeSections: narrativeData.sections || [],
       timelineInfo: timelineData,
       userEffects: effectsData.effects || [],
       beatSuppressions: effectsData.suppressions || [],
       previewQuality: settingsData.preview_quality || 50,
+      audioDescriptions: descriptionsData,
     }
   })
 
@@ -257,16 +265,16 @@ export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
   })
 
 export const generateTransitionAction = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; sectionContext?: string }) => input)
   .handler(async ({ data }) => {
-    return postGenerateTransitionAction(data.projectName, data.transitionId)
+    return postGenerateTransitionAction(data.projectName, data.transitionId, data.sectionContext)
   })
 
 export const enhanceTransitionAction = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; action: string }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; action: string; sectionContext?: string }) => input)
   .handler(async ({ data }) => {
     const { postEnhanceTransitionAction } = await import('@/lib/beatlab-client')
-    return postEnhanceTransitionAction(data.projectName, data.transitionId, data.action)
+    return postEnhanceTransitionAction(data.projectName, data.transitionId, data.action, data.sectionContext)
   })
 
 export const updateTransitionAction = createServerFn({ method: 'POST' })

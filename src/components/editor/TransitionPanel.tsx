@@ -11,10 +11,15 @@ const STORAGE_KEY = 'beatlab-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
+type AudioDescription = { sectionIndex: number; label: string; startTime: number; endTime: number; content: string }
+type KfWithTime = { id: string; timestamp: string; timeSeconds: number }
+
 type TransitionPanelProps = {
   transition: Transition
   projectName: string
   motionPrompt: string
+  audioDescriptions: AudioDescription[]
+  keyframes: KfWithTime[]
   onClose: () => void
   onDelete: () => void
 }
@@ -23,6 +28,8 @@ export function TransitionPanel({
   transition,
   projectName,
   motionPrompt,
+  audioDescriptions,
+  keyframes,
   onClose,
   onDelete,
 }: TransitionPanelProps) {
@@ -70,6 +77,15 @@ export function TransitionPanel({
   const tr = transition
   const totalCandidates = Object.values(tr.candidates).reduce((sum, arr) => sum + arr.length, 0)
 
+  // Resolve the section description for this transition
+  const sectionDescription = (() => {
+    const fromKf = keyframes.find((k) => k.id === tr.from)
+    const toKf = keyframes.find((k) => k.id === tr.to)
+    if (!fromKf || !toKf || audioDescriptions.length === 0) return null
+    const midTime = (fromKf.timeSeconds + toKf.timeSeconds) / 2
+    return audioDescriptions.find((s) => midTime >= s.startTime && midTime <= s.endTime) ?? null
+  })()
+
   return (
     <div className="relative flex shrink-0" style={{ width }}>
       {/* Drag handle */}
@@ -114,13 +130,16 @@ export function TransitionPanel({
 
               {/* Action prompt */}
               <div className="px-3 py-3 border-b border-gray-800">
-                <ActionPromptEditor transition={tr} projectName={projectName} />
+                <ActionPromptEditor transition={tr} projectName={projectName} sectionDescription={sectionDescription} />
               </div>
 
               {/* Motion prompt (global) */}
               <div className="px-3 py-3">
                 <MotionPromptEditor projectName={projectName} motionPrompt={motionPrompt} />
               </div>
+
+              {/* Section description */}
+              <SectionDescription transition={tr} audioDescriptions={audioDescriptions} keyframes={keyframes} />
             </>
           ) : (
             <CandidatesTab transition={tr} projectName={projectName} />
@@ -131,13 +150,14 @@ export function TransitionPanel({
   )
 }
 
-function ActionPromptEditor({ transition, projectName }: { transition: Transition; projectName: string }) {
+function ActionPromptEditor({ transition, projectName, sectionDescription }: { transition: Transition; projectName: string; sectionDescription: AudioDescription | null }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:action`
   const job = useJobState(entityKey)
 
   const [action, setAction] = useState(transition.action)
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
+  const [useSectionDesc, setUseSectionDesc] = useState(!!sectionDescription)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -180,7 +200,7 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
     jobCtx.startJob(entityKey, jobId)
     try {
       const result = await generateTransitionAction({
-        data: { projectName, transitionId: transition.id },
+        data: { projectName, transitionId: transition.id, sectionContext: useSectionDesc && sectionDescription ? sectionDescription.content : undefined },
       })
       // Manually complete the job since this isn't a WebSocket-tracked job
       if (result.action) {
@@ -204,7 +224,7 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
     jobCtx.startJob(entityKey, jobId)
     try {
       const result = await enhanceTransitionAction({
-        data: { projectName, transitionId: transition.id, action },
+        data: { projectName, transitionId: transition.id, action, sectionContext: useSectionDesc && sectionDescription ? sectionDescription.content : undefined },
       })
       if (result.action) {
         setAction(result.action)
@@ -277,6 +297,38 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
         />
         <span className="text-xs text-gray-400">Append global motion prompt</span>
       </label>
+
+      {sectionDescription && (
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={useSectionDesc}
+            onChange={(e) => setUseSectionDesc(e.target.checked)}
+            className="rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
+          />
+          <span className="text-xs text-gray-400">Include section description in generation</span>
+        </label>
+      )}
+    </div>
+  )
+}
+
+function SectionDescription({ transition, audioDescriptions, keyframes }: { transition: Transition; audioDescriptions: AudioDescription[]; keyframes: KfWithTime[] }) {
+  // Find the transition's midpoint time
+  const fromKf = keyframes.find((k) => k.id === transition.from)
+  const toKf = keyframes.find((k) => k.id === transition.to)
+  if (!fromKf || !toKf || audioDescriptions.length === 0) return null
+
+  const midTime = (fromKf.timeSeconds + toKf.timeSeconds) / 2
+  const section = audioDescriptions.find((s) => midTime >= s.startTime && midTime <= s.endTime)
+  if (!section) return null
+
+  return (
+    <div className="px-3 py-3 border-t border-gray-800">
+      <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">{section.label}</div>
+      <div className="text-[11px] text-gray-400 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">
+        {section.content.replace(/\*\*/g, '').replace(/\*Time\*:.*\n?/, '').trim()}
+      </div>
     </div>
   )
 }
