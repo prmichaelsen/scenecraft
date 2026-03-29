@@ -385,43 +385,66 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
             <div className="grid grid-cols-2 gap-2">
               {candidates[slotKey].map((videoPath, idx) => {
                 const variantNum = idx + 1
-                const url = beatlabFileUrl(projectName, videoPath)
                 const label = videoPath.split('/').pop() || `v${variantNum}`
                 const isSelected = selectedMap[slotKey] === variantNum
                 return (
-                  <div
+                  <LazyVideoCard
                     key={videoPath}
-                    className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors group ${
-                      isSelected ? 'border-orange-500' : 'border-transparent hover:border-gray-600'
-                    } ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
-                    onClick={() => handleSelect(slotKey, variantNum)}
-                  >
-                    <video
-                      src={url}
-                      className="w-full aspect-video object-cover"
-                      crossOrigin="anonymous"
-                      muted
-                      loop
-                      preload="metadata"
-                      playsInline
-                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
-                      onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
-                    />
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-300 font-mono">{label}</span>
-                        {isSelected && (
-                          <span className="text-[9px] bg-orange-500 text-white px-1 rounded">selected</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                    videoPath={videoPath}
+                    projectName={projectName}
+                    label={label}
+                    isSelected={isSelected}
+                    disabled={selecting}
+                    onSelect={() => handleSelect(slotKey, variantNum)}
+                  />
                 )
               })}
             </div>
           </div>
         ))
       )}
+    </div>
+  )
+}
+
+function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect }: {
+  videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const url = beatlabFileUrl(projectName, videoPath)
+
+  return (
+    <div
+      className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors group ${
+        isSelected ? 'border-orange-500' : 'border-transparent hover:border-gray-600'
+      } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
+      onClick={onSelect}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {hovered ? (
+        <video
+          src={url}
+          className="w-full aspect-video object-cover"
+          crossOrigin="anonymous"
+          muted
+          loop
+          playsInline
+          autoPlay
+        />
+      ) : (
+        <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
+          <span className="text-[10px] text-gray-500 font-mono">{label}</span>
+        </div>
+      )}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-gray-300 font-mono">{label}</span>
+          {isSelected && (
+            <span className="text-[9px] bg-orange-500 text-white px-1 rounded">selected</span>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
