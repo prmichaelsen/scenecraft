@@ -1,6 +1,6 @@
 project:
   name: beatlab-synthesizer
-  version: 0.1.0
+  version: 0.3.0
   started: 2026-03-25
   status: in_progress
   description: |
@@ -8,25 +8,55 @@ project:
     AI effect direction, candidate selection, image generation, and DaVinci Resolve
     integration via headless backend
 
-milestones: []
+milestones:
+  - id: milestone_1
+    name: Audio Intelligence Integration
+    status: in_progress
+    started: 2026-03-29
+    tasks_total: 1
+    tasks_completed: 0
+    tasks:
+      - id: task-1
+        name: Audio Intelligence Integration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-1-audio-intelligence/task-1-audio-intelligence-integration.md
+        estimated_hours: 10
+        actual_hours: null
+        completed_date: null
+        notes: |
+          Replace beats.json with rule-processed audio intelligence events.
+          File selector, WebGL integration, beat marker updates.
 
 documentation:
-  design_documents: 0
+  design_documents: 5
   milestone_documents: 0
   pattern_documents: 0
-  task_documents: 0
+  task_documents: 1
 
 progress:
-  planning: 0
-  implementation: 0
-  overall: 0
+  planning: 80
+  implementation: 60
+  overall: 65
 
-recent_work: []
+recent_work:
+  - "REST API migration from filesystem to beatlab server"
+  - "WebGL beat-reactive preview with frame buffer cache"
+  - "Transition track, panel, video generation (Veo), selection"
+  - "Keyframe panel, candidate generation (Imagen), selection"
+  - "Effects track with suppression zones"
+  - "Version history panel (git-based)"
+  - "Timeline switcher (multi-timeline)"
+  - "Narrative section editor"
+  - "Import dialog with file browser and folder watching (inotify)"
+  - "WebSocket job progress for async generation"
+  - "HTTP caching with ETag and 304 support"
+  - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
-  - Define project requirements in agent/design/requirements.md
-  - Plan milestones and tasks with @acp.plan
-  - Start development with @acp.proceed
+  - Implement audio intelligence integration (Task 1)
+  - Add editor settings panel
+  - Per-section beat source selection
 
 notes: []
 

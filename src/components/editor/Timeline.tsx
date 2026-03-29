@@ -19,6 +19,7 @@ import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
+import { SettingsPanel } from './SettingsPanel'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 function parseTimestamp(ts: string): number {
@@ -56,6 +57,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showImport, setShowImport] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
   const [selectedSuppressionId, setSelectedSuppressionId] = useState<string | null>(null)
@@ -577,6 +579,14 @@ export function Timeline({ data }: { data: EditorData }) {
 
           <TimelineSwitcher projectName={data.projectName} onSwitch={() => router.invalidate()} />
 
+          <button
+            onClick={() => { setShowSettings((p) => !p); if (!showSettings) { setShowBin(false); setShowVersions(false); setShowSections(false) } }}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showSettings ? 'bg-gray-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
+            title="Project settings"
+          >
+            Settings
+          </button>
+
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
           </div>
@@ -735,8 +745,18 @@ export function Timeline({ data }: { data: EditorData }) {
         />
       )}
 
+      {/* Settings panel */}
+      {showSettings && (
+        <SettingsPanel
+          data={data}
+          projectName={data.projectName}
+          onClose={() => setShowSettings(false)}
+          onSave={() => router.invalidate()}
+        />
+      )}
+
       {/* Version history panel */}
-      {showVersions && (
+      {showVersions && !showSettings && (
         <VersionHistoryPanel
           projectName={data.projectName}
           onClose={() => setShowVersions(false)}

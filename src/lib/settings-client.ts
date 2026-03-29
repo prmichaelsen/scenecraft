@@ -1,0 +1,23 @@
+const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'
+
+export type ProjectSettings = {
+  preview_quality: 'low' | 'medium' | 'high'
+  audio_intelligence_file: string | null
+  render_preview_fps: number
+  available_audio_intelligence_files: string[]
+}
+
+export async function fetchSettings(project: string): Promise<ProjectSettings> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/settings`)
+  if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`)
+  return res.json()
+}
+
+export async function postUpdateSettings(project: string, fields: Partial<Omit<ProjectSettings, 'available_audio_intelligence_files'>>) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  })
+  return res.json()
+}
