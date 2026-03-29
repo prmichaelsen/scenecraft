@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Timeline } from '@/components/editor/Timeline'
+import { StatusBar } from '@/components/editor/StatusBar'
 import {
   fetchKeyframes,
   fetchBeats,
@@ -87,6 +88,7 @@ export type Transition = {
   remap: { method: string; target_duration: number }
   slotKeyframeCandidates: Record<string, string[]>  // "tr_006_slot_0": ["path/v1.png", ...]
   selectedSlotKeyframes: Record<string, number | null>  // "tr_006_slot_0": 1 (1-based variant)
+  slotActions: string[]  // per-slot action prompts for multi-slot transitions
 }
 
 export type EditorData = {
@@ -160,6 +162,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
         slotKeyframeCandidates: (tr.slotKeyframeCandidates as Record<string, string[]>) || {},
         selectedSlotKeyframes: (tr.selectedSlotKeyframes as Record<string, number | null>) || {},
+        slotActions: (tr.slotActions as string[]) || [],
       })),
       audioFile: kfData.audioFile || null,
       projectName: data.name,
@@ -246,9 +249,9 @@ export const generateTransitionAction = createServerFn({ method: 'POST' })
   })
 
 export const updateTransitionAction = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean; slotActions?: string[] }) => input)
   .handler(async ({ data }) => {
-    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt)
+    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt, data.slotActions)
   })
 
 export const updateMeta = createServerFn({ method: 'POST' })
@@ -270,9 +273,9 @@ export const selectTransitions = createServerFn({ method: 'POST' })
   })
 
 export const generateTransitionCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; count?: number }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number }) => input)
   .handler(async ({ data }) => {
-    return postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count)
+    return postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex)
   })
 
 export const deleteTransition = createServerFn({ method: 'POST' })
@@ -338,6 +341,9 @@ function EditorPage() {
       <div className="flex-1 min-h-0">
         <Timeline data={data} />
       </div>
+
+      {/* Status bar */}
+      <StatusBar />
     </div>
   )
 }

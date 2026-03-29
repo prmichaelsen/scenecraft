@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
-import type { UserEffect, BeatSuppression, AudioEvent } from '@/lib/beatlab-client'
+import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
@@ -12,7 +12,7 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
-import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, evictFarEntries, isLoaded, setPreviewResolution } from '@/lib/frame-cache'
+import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -82,10 +82,9 @@ export function Timeline({ data }: { data: EditorData }) {
   const canvasWidth = Math.round(data.meta.resolution[0] * previewQuality / 100)
   const canvasHeight = Math.round(data.meta.resolution[1] * previewQuality / 100)
 
-  // Keep frame cache resolution in sync
-  useEffect(() => {
-    setPreviewResolution(canvasWidth, canvasHeight)
-  }, [canvasWidth, canvasHeight])
+  // Keep frame cache resolution in sync — called during render (not in effect)
+  // so globals are set before any preload effects read dbKey()
+  setPreviewResolution(canvasWidth, canvasHeight)
   const scrollRef = useRef<HTMLDivElement>(null)
   const seekFnRef = useRef<((time: number) => void) | null>(null)
   const playPauseFnRef = useRef<(() => void) | null>(null)
@@ -119,50 +118,70 @@ export function Timeline({ data }: { data: EditorData }) {
   const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
   const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
 
-  // Preload nearby transition frames and current keyframe image
+  // Preload ALL transition frames and keyframe images eagerly on mount / data change.
+  // Registers timeline positions for proximity-based eviction.
   useEffect(() => {
-    const keepKeys = new Set<string>()
-
-    // Preload current keyframe image
-    if (currentKeyframe?.hasSelectedImage) {
-      const key = `kf:${currentKeyframe.id}`
-      keepKeys.add(key)
-      preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`))
+    // Preload all keyframe images and register their timestamps
+    for (const kf of keyframes) {
+      if (kf.hasSelectedImage) {
+        const key = `kf:${kf.id}`
+        setKeyTimestamp(key, kf.timeSeconds)
+        preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`))
+      }
     }
 
-    // Preload transitions near the playhead (current + next 2)
-    const sorted = [...data.transitions].filter((tr) => {
-      const from = kfMap.get(tr.from)
-      return from && tr.hasSelectedVideos?.some(Boolean)
-    }).sort((a, b) => {
-      const aFrom = kfMap.get(a.from)!.timeSeconds
-      const bFrom = kfMap.get(b.from)!.timeSeconds
-      return aFrom - bFrom
-    })
-
-    const nearby = sorted.filter((tr) => {
-      const from = kfMap.get(tr.from)!
-      const to = kfMap.get(tr.to)
-      if (!to) return false
-      return to.timeSeconds >= currentTime - 5 && from.timeSeconds <= currentTime + 30
-    })
-
-    for (const tr of nearby) {
+    // Preload all transitions with selected videos and register timestamps
+    for (const tr of data.transitions) {
+      if (!tr.hasSelectedVideos?.some(Boolean)) continue
+      const fromKf = kfMap.get(tr.from)
       const numSlots = tr.slots || 1
       for (let s = 0; s < numSlots; s++) {
-        // Include selected variant in key so cache invalidates on re-selection
         const selectedVariant = tr.selected?.[s] ?? 'none'
         const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
-        keepKeys.add(key)
-        if (!isLoaded(key)) {
+        setKeyTimestamp(key, fromKf?.timeSeconds ?? 0)
+        if (!isInMemory(key)) {
           preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
         }
       }
     }
+  }, [data.transitions, data.keyframes, data.projectName, canvasWidth, canvasHeight])
 
-    // Evict frames for transitions far from playhead
-    evictFarEntries(keepKeys)
-  }, [currentTime, data.transitions, data.projectName, currentKeyframe, kfMap, canvasWidth, canvasHeight])
+  // Update playhead position for proximity-based cache eviction
+  useEffect(() => {
+    setPlayheadPosition(currentTime)
+  }, [currentTime])
+
+  // Poll frame decode progress for render bars — unified map for both transitions and keyframes
+  // Keys: tr_001, tr_002 (transition IDs) and kf_001, kf_002 (keyframe IDs) — no collisions
+  const [renderProgress, setRenderProgress] = useState<Record<string, number>>({})
+  const prevProgressRef = useRef<string>('')
+  useEffect(() => {
+    const update = () => {
+      const progress: Record<string, number> = {}
+
+      for (const tr of data.transitions) {
+        if (!tr.hasSelectedVideos?.some(Boolean)) continue
+        const numSlots = tr.slots || 1
+        let total = 0
+        for (let s = 0; s < numSlots; s++) {
+          const selectedVariant = tr.selected?.[s] ?? 'none'
+          const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
+          const p = getLoadProgress(key)
+          total += (p !== null ? p : isLoaded(key) ? 1 : 0)
+        }
+        progress[tr.id] = total / numSlots
+      }
+
+      const serialized = JSON.stringify(progress)
+      if (serialized !== prevProgressRef.current) {
+        prevProgressRef.current = serialized
+        setRenderProgress(progress)
+      }
+    }
+    update()
+    const interval = setInterval(update, 250)
+    return () => clearInterval(interval)
+  }, [data.transitions, keyframes])
 
   // Build adjacency lookup: which transition comes before/after each transition?
   const sortedTransitions = [...data.transitions]
@@ -182,6 +201,12 @@ export function Timeline({ data }: { data: EditorData }) {
   const CROSSFADE_FRAMES = 4 // 4 frames each side = 8 frame overlap at 24fps (~333ms)
   const crossfadeData = (() => {
     if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) {
+      // No transition — show current keyframe from frame cache
+      if (currentKeyframe) {
+        const kfKey = `kf:${currentKeyframe.id}`
+        const kfFrame = getFrameAtProgress(kfKey, 0)
+        if (kfFrame) return { frameA: kfFrame, frameB: null, blendFactor: 0 }
+      }
       return { frameA: null, frameB: null, blendFactor: 0 }
     }
 
@@ -351,12 +376,14 @@ export function Timeline({ data }: { data: EditorData }) {
     setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
     setSelectedTransition(null)
     setSelectedEffect(null)
+    setSelectedSuppressionId(null)
   }, [])
 
   const handleTransitionClick = useCallback((tr: Transition) => {
     setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
     setSelectedKeyframe(null)
     setSelectedEffect(null)
+    setSelectedSuppressionId(null)
   }, [])
 
   // Effects handlers
@@ -379,6 +406,7 @@ export function Timeline({ data }: { data: EditorData }) {
     setSelectedEffect((prev) => prev?.id === fx.id ? null : fx)
     setSelectedKeyframe(null)
     setSelectedTransition(null)
+    setSelectedSuppressionId(null)
   }, [])
 
   const handleEffectDrag = useCallback((id: string, newTime: number) => {
@@ -386,10 +414,12 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [])
 
   const handleEffectDragEnd = useCallback((id: string, newTime: number) => {
-    const newEffects = userEffects.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx)
-    setUserEffects(newEffects)
-    persistEffects(newEffects, suppressions)
-  }, [userEffects, suppressions, persistEffects])
+    setUserEffects((prev) => {
+      const newEffects = prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx)
+      persistEffects(newEffects, suppressions)
+      return newEffects
+    })
+  }, [suppressions, persistEffects])
 
   const handleEffectUpdate = useCallback((updated: UserEffect) => {
     const newEffects = userEffects.map((fx) => fx.id === updated.id ? updated : fx)
@@ -428,9 +458,23 @@ export function Timeline({ data }: { data: EditorData }) {
     persistEffects(userEffects, updated)
   }, [suppressions, userEffects, persistEffects])
 
+  const handleUpdateSuppressionTypes = useCallback((id: string, effectTypes: EffectType[] | undefined) => {
+    const updated = suppressions.map((s) => {
+      if (s.id !== id) return s
+      const next = { ...s }
+      if (effectTypes) next.effectTypes = effectTypes
+      else delete next.effectTypes
+      return next
+    })
+    setSuppressions(updated)
+    persistEffects(userEffects, updated)
+  }, [suppressions, userEffects, persistEffects])
+
   const handleSuppressionClick = useCallback((id: string) => {
     setSelectedSuppressionId((prev) => prev === id ? null : id)
     setSelectedEffect(null)
+    setSelectedKeyframe(null)
+    setSelectedTransition(null)
   }, [])
 
   // Keyframe boundary drag — updates local state during drag, persists to YAML on release
@@ -488,6 +532,18 @@ export function Timeline({ data }: { data: EditorData }) {
     setSelectedTransition(null)
     router.invalidate()
   }, [data.projectName, router])
+
+  const handleRetryRender = useCallback((tr: Transition) => {
+    const numSlots = tr.slots || 1
+    // Immediately reset progress bar to 0 for visual feedback
+    setRenderProgress((prev) => ({ ...prev, [tr.id]: 0 }))
+    for (let s = 0; s < numSlots; s++) {
+      const selectedVariant = tr.selected?.[s] ?? 'none'
+      const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
+      invalidateEntry(key)
+      preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
+    }
+  }, [data.projectName])
 
   // Delete key shortcut
   useEffect(() => {
@@ -654,6 +710,22 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
+            onClick={() => handleAddEffect(currentTime)}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-yellow-400/70 hover:text-yellow-300 px-2 py-1 rounded transition-colors"
+            title="Add effect at playhead position"
+          >
+            + Effect
+          </button>
+
+          <button
+            onClick={() => handleAddSuppression(currentTime, currentTime + 2)}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-red-400/70 hover:text-red-300 px-2 py-1 rounded transition-colors"
+            title="Add suppression zone at playhead (2s default)"
+          >
+            + Suppress
+          </button>
+
+          <button
             onClick={() => setShowBin((prev) => !prev)}
             className={`text-xs px-2 py-1 rounded transition-colors ${showBin ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Show deleted keyframes bin"
@@ -740,6 +812,8 @@ export function Timeline({ data }: { data: EditorData }) {
                 onBoundaryDrag={handleKeyframeDrag}
                 onBoundaryDragEnd={handleKeyframeDragEnd}
                 onRemapChange={handleTransitionRemapChange}
+                onRetryRender={handleRetryRender}
+                renderProgress={renderProgress}
               />
             </div>
 
@@ -789,6 +863,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 onAddSuppression={handleAddSuppression}
                 onDeleteSuppression={handleDeleteSuppression}
                 onResizeSuppression={handleResizeSuppression}
+                onUpdateSuppressionTypes={handleUpdateSuppressionTypes}
                 selectedSuppressionId={selectedSuppressionId}
                 onSuppressionClick={handleSuppressionClick}
               />

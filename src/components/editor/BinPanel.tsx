@@ -22,7 +22,7 @@ export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelPr
     setLoading(true)
     try {
       const [binData, watchData] = await Promise.all([
-        getBin({ data: { projectName } }),
+        getBin({ data: { projectName } }).catch(() => ({ bin: [], transitionBin: [] })),
         fetchWatchedFolders(projectName).catch(() => ({ watchedFolders: [] })),
       ])
       setKeyframeEntries(binData.bin || [])
@@ -115,7 +115,7 @@ export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelPr
           <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
         ) : tab === 'keyframes' ? (
           kfCount === 0 ? (
-            <div className="p-4 text-center text-sm text-gray-600">No deleted keyframes</div>
+            <div className="p-4 text-center text-sm text-gray-600">Empty</div>
           ) : (
             <div className="divide-y divide-gray-800">
               {keyframeEntries.map((entry) => (
@@ -153,7 +153,7 @@ export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelPr
           )
         ) : (
           trCount === 0 ? (
-            <div className="p-4 text-center text-sm text-gray-600">No deleted transitions</div>
+            <div className="p-4 text-center text-sm text-gray-600">Empty</div>
           ) : (
             <div className="divide-y divide-gray-800">
               {transitionEntries.map((entry) => (

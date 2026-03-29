@@ -16,15 +16,15 @@ function dbKey(key: string): string {
   return `${key}@${PREVIEW_WIDTH}x${PREVIEW_HEIGHT}`
 }
 
+let cacheGeneration = 0 // incremented on resolution change to detect stale writes
+
 export function setPreviewResolution(width: number, height: number) {
   if (width === PREVIEW_WIDTH && height === PREVIEW_HEIGHT) return
   PREVIEW_WIDTH = width
   PREVIEW_HEIGHT = height
+  cacheGeneration++
   // Flush in-memory cache — bitmaps are resolution-specific
-  for (const entry of memoryCache.values()) {
-    entry.frames.forEach((f) => f.close())
-  }
-  memoryCache.clear()
+  for (const key of [...memoryCache.keys()]) cacheDelete(key)
   loadingKeys.clear()
   // IndexedDB is NOT cleared — old-resolution entries have different keys
   // and will be ignored. They can be cleaned up later if needed.
@@ -34,10 +34,10 @@ export function setPreviewResolution(width: number, height: number) {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { reject(new Error('indexedDB unavailable')); return }
     const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
-      // Clear old store on version upgrade (v1 keys had no resolution suffix)
       if (db.objectStoreNames.contains(STORE_NAME)) {
         db.deleteObjectStore(STORE_NAME)
       }
@@ -48,13 +48,34 @@ function openDb(): Promise<IDBDatabase> {
   })
 }
 
+// Request persistent storage so browsers don't evict our cache
+if (typeof navigator !== 'undefined') {
+  navigator.storage?.persist?.().catch(() => {})
+
+  // Pre-populate persistedKeys from IndexedDB so isLoaded() is correct before preloads run
+  openDb().then((db) => {
+    const tx = db.transaction(STORE_NAME, 'readonly')
+    const req = tx.objectStore(STORE_NAME).getAllKeys()
+    req.onsuccess = () => {
+      for (const k of req.result as string[]) {
+        const raw = String(k).replace(/@\d+x\d+$/, '')
+        persistedKeys.add(raw)
+      }
+      console.log('[frame-cache] pre-populated', persistedKeys.size, 'persisted keys from IndexedDB')
+    }
+  }).catch(() => {})
+}
+
 async function getFromDb(key: string): Promise<Blob[] | null> {
   const db = await openDb()
   return new Promise((resolve) => {
     const tx = db.transaction(STORE_NAME, 'readonly')
     const req = tx.objectStore(STORE_NAME).get(key)
     req.onsuccess = () => resolve(req.result ?? null)
-    req.onerror = () => resolve(null)
+    req.onerror = () => {
+      console.warn('[frame-cache] IndexedDB read failed:', key, req.error)
+      resolve(null)
+    }
   })
 }
 
@@ -70,7 +91,7 @@ async function putToDb(key: string, blobs: Blob[]): Promise<void> {
 
 // ── Video frame decoder ───────────────────────────────────────────
 
-async function decodeVideoFrames(videoUrl: string): Promise<ImageBitmap[]> {
+async function decodeVideoFrames(videoUrl: string, onProgress?: (progress: number) => void): Promise<ImageBitmap[]> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video')
     video.crossOrigin = 'anonymous'
@@ -107,6 +128,7 @@ async function decodeVideoFrames(videoUrl: string): Promise<ImageBitmap[]> {
         ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT)
         const bitmap = await createImageBitmap(canvas)
         frames.push(bitmap)
+        onProgress?.((i + 1) / frameCount)
       }
 
       video.src = ''
@@ -140,10 +162,126 @@ type CacheEntry = {
   frames: ImageBitmap[]
   fps: number
   duration: number
+  bytes: number // estimated memory: width * height * 4 * frameCount
 }
 
 const memoryCache = new Map<string, CacheEntry>()
 const loadingKeys = new Set<string>()
+const loadProgress = new Map<string, number>() // key -> 0.0 to 1.0
+const persistedKeys = new Set<string>() // raw keys known to exist in IndexedDB (cold tier)
+
+// ── Memory tracking ──────────────────────────────────────────────
+
+let totalMemoryBytes = 0
+
+// ImageBitmaps live in GPU/process memory, not JS heap.
+// 32GB allows ~26 transitions at 1920x1080 (~1.2GB each) in memory.
+const MEMORY_LIMIT = 32 * 1024 * 1024 * 1024
+
+function estimateEntryBytes(frames: ImageBitmap[]): number {
+  if (frames.length === 0) return 0
+  const f = frames[0]
+  return f.width * f.height * 4 * frames.length
+}
+
+// ── Playhead-proximity eviction ─────────────────────────────────
+// Each key is tagged with its timeline position (seconds).
+// Eviction removes the entry farthest from the current playhead.
+
+const keyTimestamps = new Map<string, number>() // key -> timeline position in seconds
+let currentPlayhead = 0
+
+/** Tell the cache where a key lives on the timeline */
+export function setKeyTimestamp(key: string, timeSeconds: number) {
+  keyTimestamps.set(key, timeSeconds)
+}
+
+/** Update the playhead position for proximity-based eviction */
+export function setPlayheadPosition(time: number) {
+  currentPlayhead = time
+}
+
+function evictFarthest(protectKey?: string) {
+  let farthestKey: string | null = null
+  let farthestDist = -1
+  for (const key of memoryCache.keys()) {
+    if (key === protectKey) continue
+    const t = keyTimestamps.get(key) ?? 0
+    const dist = Math.abs(t - currentPlayhead)
+    if (dist > farthestDist) {
+      farthestDist = dist
+      farthestKey = key
+    }
+  }
+  if (farthestKey) cacheDelete(farthestKey)
+}
+
+function cacheSet(key: string, entry: CacheEntry) {
+  const existing = memoryCache.get(key)
+  if (existing) { totalMemoryBytes -= existing.bytes; existing.frames.forEach((f) => f.close()) }
+  memoryCache.set(key, entry)
+  totalMemoryBytes += entry.bytes
+  // Evict farthest entries from playhead until under memory limit
+  while (totalMemoryBytes > MEMORY_LIMIT && memoryCache.size > 1) {
+    evictFarthest(key)
+  }
+}
+
+function cacheDelete(key: string) {
+  const entry = memoryCache.get(key)
+  if (entry) {
+    totalMemoryBytes -= entry.bytes
+    entry.frames.forEach((f) => f.close())
+    memoryCache.delete(key)
+  }
+}
+
+export function getMemoryUsage(): { usedBytes: number; limitBytes: number; pct: number } {
+  return { usedBytes: totalMemoryBytes, limitBytes: MEMORY_LIMIT, pct: Math.round(totalMemoryBytes / MEMORY_LIMIT * 100) }
+}
+
+// ── Concurrency-limited preload queue ────────────────────────────
+
+const MAX_CONCURRENT_PRELOADS = 2
+let activePreloads = 0
+const preloadQueue: Array<() => Promise<void>> = []
+const DEFERRED_RETRY_MS = 5000
+const MAX_DEFERRED_RETRIES = 6 // give up after ~30s of retries
+const deferredRetries = new Map<string, number>() // key -> retry count
+
+function enqueuePreload(fn: () => Promise<void>) {
+  preloadQueue.push(fn)
+  drainQueue()
+}
+
+function deferPreload(key: string, fn: () => Promise<void>) {
+  const retries = deferredRetries.get(key) ?? 0
+  if (retries >= MAX_DEFERRED_RETRIES) {
+    deferredRetries.delete(key)
+    loadingKeys.delete(key)
+    loadProgress.delete(key)
+    return
+  }
+  deferredRetries.set(key, retries + 1)
+  loadingKeys.delete(key)
+  setTimeout(() => {
+    if (!memoryCache.has(key) && !loadingKeys.has(key)) {
+      loadingKeys.add(key)
+      enqueuePreload(fn)
+    }
+  }, DEFERRED_RETRY_MS)
+}
+
+function drainQueue() {
+  while (activePreloads < MAX_CONCURRENT_PRELOADS && preloadQueue.length > 0) {
+    const next = preloadQueue.shift()!
+    activePreloads++
+    next().finally(() => {
+      activePreloads--
+      drainQueue()
+    })
+  }
+}
 
 export function getFrames(key: string): CacheEntry | null {
   return memoryCache.get(key) ?? null
@@ -156,7 +294,13 @@ export function getFrameAtProgress(key: string, progress: number): ImageBitmap |
   return entry.frames[Math.max(0, idx)]
 }
 
+/** True if data is available — either hot (in memory) or cold (in IndexedDB) */
 export function isLoaded(key: string): boolean {
+  return memoryCache.has(key) || persistedKeys.has(key)
+}
+
+/** True if bitmaps are immediately drawable without async reload */
+export function isInMemory(key: string): boolean {
   return memoryCache.has(key)
 }
 
@@ -164,73 +308,164 @@ export function isLoading(key: string): boolean {
   return loadingKeys.has(key)
 }
 
-/**
- * Invalidate a cache entry — forces re-decode on next preload.
- */
-export async function invalidateEntry(key: string) {
-  const entry = memoryCache.get(key)
-  if (entry) {
-    entry.frames.forEach((f) => f.close())
-    memoryCache.delete(key)
+/** Returns 0-1 decode progress for a key, or null if not loading */
+export function getLoadProgress(key: string): number | null {
+  if (memoryCache.has(key)) return 1
+  return loadProgress.get(key) ?? null
+}
+
+export type PreloadStatus = { key: string; progress: number }
+
+/** Returns a snapshot of all in-progress preload items */
+export function getActivePreloads(): PreloadStatus[] {
+  const items: PreloadStatus[] = []
+  for (const [key, progress] of loadProgress) {
+    items.push({ key, progress })
   }
+  return items
+}
+
+/**
+ * Invalidate a cache entry — clears memory synchronously, IndexedDB in background.
+ */
+export function invalidateEntry(key: string) {
+  cacheDelete(key)
+  persistedKeys.delete(key)
   loadingKeys.delete(key)
-  // Also remove from IndexedDB
-  try {
-    const db = await openDb()
+  loadProgress.delete(key)
+  // Freeing memory may unblock queued preloads
+  drainQueue()
+  // Remove from IndexedDB in background (doesn't block callers)
+  openDb().then((db) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
     tx.objectStore(STORE_NAME).delete(dbKey(key))
-  } catch {}
+  }).catch(() => {})
 }
 
 /**
  * Preload a transition's video frames into the cache.
- * First checks IndexedDB, then decodes from the video URL if needed.
+ * IndexedDB restore runs immediately (fast). Video decode is queued (slow).
  */
-export async function preloadTransition(key: string, videoUrl: string): Promise<void> {
+export function preloadTransition(key: string, videoUrl: string): void {
   if (memoryCache.has(key) || loadingKeys.has(key)) return
   loadingKeys.add(key)
 
-  try {
-    // Try IndexedDB first (resolution-keyed)
-    const cached = await getFromDb(dbKey(key))
-    if (cached && cached.length > 0) {
-      const bitmaps = await blobsToBitmaps(cached)
-      memoryCache.set(key, {
-        frames: bitmaps,
-        fps: TARGET_FPS,
-        duration: bitmaps.length / TARGET_FPS,
-      })
+  const resolvedDbKey = dbKey(key)
+  const startGen = cacheGeneration
+
+  // Try IndexedDB restore immediately — don't queue behind slow video decodes
+  restoreFromDb(key, resolvedDbKey, startGen).then((restored) => {
+    if (restored) {
       loadingKeys.delete(key)
+      loadProgress.delete(key)
       return
     }
+    // IndexedDB miss — enqueue the slow video decode path
+    enqueuePreload(() => decodeAndCache(key, videoUrl, resolvedDbKey, startGen))
+  })
+}
 
-    // Decode from video
-    const frames = await decodeVideoFrames(videoUrl)
-    if (frames.length > 0) {
-      memoryCache.set(key, {
-        frames,
-        fps: TARGET_FPS,
-        duration: frames.length / TARGET_FPS,
-      })
-
-      // Persist to IndexedDB in background (resolution-keyed)
-      bitmapsToBlobs(frames).then((blobs) => putToDb(dbKey(key), blobs)).catch(() => {})
+async function restoreFromDb(key: string, resolvedDbKey: string, startGen: number): Promise<boolean> {
+  try {
+    console.log('[frame-cache] lookup', resolvedDbKey)
+    const cached = await getFromDb(resolvedDbKey)
+    if (!cached || cached.length === 0) {
+      console.log('[frame-cache] MISS', resolvedDbKey)
+      return false
     }
+    console.log('[frame-cache] HIT', resolvedDbKey, cached.length, 'blobs')
+    persistedKeys.add(key)
+    if (startGen !== cacheGeneration) return true // stale but don't re-decode
+    loadProgress.set(key, 1)
+    const frames = await blobsToBitmaps(cached)
+    if (startGen !== cacheGeneration) { frames.forEach((f) => f.close()); return true }
+    cacheSet(key, {
+      frames,
+      fps: TARGET_FPS,
+      duration: frames.length / TARGET_FPS,
+      bytes: estimateEntryBytes(frames),
+    })
+    loadProgress.delete(key)
+    deferredRetries.delete(key)
+    return true
   } catch {
-    // Failed to decode — will try again next time
-  } finally {
-    loadingKeys.delete(key)
+    return false
   }
+}
+
+async function decodeAndCache(key: string, videoUrl: string, resolvedDbKey: string, startGen: number): Promise<void> {
+  let frames: ImageBitmap[] = []
+  const work = async () => {
+    try {
+      if (startGen !== cacheGeneration) return
+
+      console.log('[frame-cache] decoding', key)
+      const headRes = await fetch(videoUrl, { method: 'HEAD' }).catch(() => null)
+      if (!headRes || !headRes.ok) {
+        deferPreload(key, work)
+        return
+      }
+
+      if (startGen !== cacheGeneration) return
+
+      loadProgress.set(key, 0)
+      frames = await decodeVideoFrames(videoUrl, (p) => loadProgress.set(key, p))
+      if (startGen !== cacheGeneration) { frames.forEach((f) => f.close()); frames = []; return }
+      if (frames.length > 0) {
+        // Persist to IndexedDB BEFORE cacheSet — LRU eviction closes bitmaps
+        try {
+          const blobs = await bitmapsToBlobs(frames)
+          await putToDb(resolvedDbKey, blobs)
+          persistedKeys.add(key)
+        } catch (err) {
+          console.warn('[frame-cache] IndexedDB persist failed:', key, err)
+        }
+
+        if (startGen !== cacheGeneration) { frames.forEach((f) => f.close()); frames = []; return }
+        cacheSet(key, {
+          frames,
+          fps: TARGET_FPS,
+          duration: frames.length / TARGET_FPS,
+          bytes: estimateEntryBytes(frames),
+        })
+      }
+      frames = []
+      deferredRetries.delete(key)
+    } catch {
+      frames.forEach((f) => f.close())
+      frames = []
+      deferPreload(key, work)
+    } finally {
+      loadingKeys.delete(key)
+      loadProgress.delete(key)
+    }
+  }
+  await work()
 }
 
 /**
  * Preload a keyframe image into the cache (single frame).
+ * Checks IndexedDB first, falls back to fetching from server.
  */
 export async function preloadKeyframeImage(key: string, imageUrl: string): Promise<void> {
   if (memoryCache.has(key) || loadingKeys.has(key)) return
   loadingKeys.add(key)
 
+  const resolvedDbKey = dbKey(key)
+
+  let bitmap: ImageBitmap | null = null
   try {
+    // Try IndexedDB first
+    const cached = await getFromDb(resolvedDbKey)
+    if (cached && cached.length > 0) {
+      persistedKeys.add(key)
+      bitmap = await createImageBitmap(cached[0])
+      cacheSet(key, { frames: [bitmap], fps: 1, duration: Infinity, bytes: estimateEntryBytes([bitmap]) })
+      bitmap = null
+      return
+    }
+
+    // Fetch from server
     const img = new Image()
     img.crossOrigin = 'anonymous'
     await new Promise<void>((resolve, reject) => {
@@ -238,10 +473,17 @@ export async function preloadKeyframeImage(key: string, imageUrl: string): Promi
       img.onerror = () => reject()
       img.src = imageUrl
     })
-    const bitmap = await createImageBitmap(img, { resizeWidth: PREVIEW_WIDTH, resizeHeight: PREVIEW_HEIGHT })
-    memoryCache.set(key, { frames: [bitmap], fps: 1, duration: Infinity })
+    bitmap = await createImageBitmap(img, { resizeWidth: PREVIEW_WIDTH, resizeHeight: PREVIEW_HEIGHT })
+
+    // Persist to IndexedDB BEFORE cacheSet (LRU eviction may close bitmaps)
+    const blobs = await bitmapsToBlobs([bitmap])
+    await putToDb(resolvedDbKey, blobs)
+    persistedKeys.add(key)
+
+    cacheSet(key, { frames: [bitmap], fps: 1, duration: Infinity, bytes: estimateEntryBytes([bitmap]) })
+    bitmap = null
   } catch {
-    // Failed to load
+    bitmap?.close()
   } finally {
     loadingKeys.delete(key)
   }
@@ -251,11 +493,13 @@ export async function preloadKeyframeImage(key: string, imageUrl: string): Promi
  * Evict entries far from the current playhead to free memory.
  */
 export function evictFarEntries(keepKeys: Set<string>) {
-  for (const key of memoryCache.keys()) {
+  let evicted = false
+  for (const key of [...memoryCache.keys()]) {
     if (!keepKeys.has(key)) {
-      const entry = memoryCache.get(key)
-      entry?.frames.forEach((f) => f.close())
-      memoryCache.delete(key)
+      cacheDelete(key)
+      evicted = true
     }
   }
+  // Freeing memory may unblock queued preloads
+  if (evicted) drainQueue()
 }

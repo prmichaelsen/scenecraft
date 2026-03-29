@@ -17,6 +17,16 @@ const EFFECT_LABEL_COLORS: Record<EffectType, string> = {
   flash: 'text-gray-200',
 }
 
+const EFFECT_DOT_COLORS: Record<EffectType, string> = {
+  pulse: 'bg-yellow-500',
+  zoom: 'bg-blue-500',
+  shake: 'bg-red-500',
+  glow: 'bg-purple-500',
+  flash: 'bg-white',
+}
+
+const ALL_EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash']
+
 type EffectsTrackProps = {
   effects: UserEffect[]
   suppressions: BeatSuppression[]
@@ -29,6 +39,7 @@ type EffectsTrackProps = {
   onAddSuppression: (from: number, to: number) => void
   onDeleteSuppression: (id: string) => void
   onResizeSuppression: (id: string, from: number, to: number) => void
+  onUpdateSuppressionTypes: (id: string, effectTypes: EffectType[] | undefined) => void
   selectedSuppressionId: string | null
   onSuppressionClick: (id: string) => void
 }
@@ -45,6 +56,7 @@ export function EffectsTrack({
   onAddSuppression,
   onDeleteSuppression: _onDeleteSuppression,
   onResizeSuppression,
+  onUpdateSuppressionTypes,
   selectedSuppressionId,
   onSuppressionClick,
 }: EffectsTrackProps) {
@@ -130,17 +142,69 @@ export function EffectsTrack({
       {/* Suppression zones */}
       {suppressions.map((s) => {
         const isSelected = s.id === selectedSuppressionId
+        const widthPx = (s.to - s.from) * pxPerSec
+        const hasTypeFilter = s.effectTypes && s.effectTypes.length > 0
         return (
           <div
             key={s.id}
             className={`absolute top-0 h-full pointer-events-auto cursor-pointer ${isSelected ? 'bg-red-900/30 border-l-2 border-r-2 border-red-500' : 'bg-red-900/15 border-l border-r border-red-800/30 hover:bg-red-900/25'}`}
             style={{
               left: s.from * pxPerSec,
-              width: (s.to - s.from) * pxPerSec,
+              width: widthPx,
             }}
-            title={`Suppressed: ${s.from.toFixed(1)}s - ${s.to.toFixed(1)}s (Shift+drag to create, click to select, Delete to remove)`}
+            title={`Suppressed: ${s.from.toFixed(1)}s - ${s.to.toFixed(1)}s${hasTypeFilter ? ` (${s.effectTypes!.join(', ')})` : ' (all)'}`}
             onClick={(e) => { e.stopPropagation(); onSuppressionClick(s.id) }}
           >
+            {/* Type indicator dots */}
+            {widthPx > 30 && (
+              <div className="absolute top-0.5 left-1/2 -translate-x-1/2 flex gap-0.5 pointer-events-none">
+                {hasTypeFilter ? (
+                  s.effectTypes!.map((t) => (
+                    <div key={t} className={`w-1.5 h-1.5 rounded-full ${EFFECT_DOT_COLORS[t]} opacity-70`} />
+                  ))
+                ) : (
+                  <span className="text-[7px] text-red-400/60 font-mono">ALL</span>
+                )}
+              </div>
+            )}
+
+            {/* Type toggle editor (shown when selected) */}
+            {isSelected && (
+              <div
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex gap-0.5 bg-gray-900/90 border border-red-500/50 rounded px-1 py-0.5 z-50 pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {ALL_EFFECT_TYPES.map((t) => {
+                  const active = !hasTypeFilter || s.effectTypes!.includes(t)
+                  return (
+                    <button
+                      key={t}
+                      className={`text-[8px] px-1 py-0.5 rounded transition-colors ${active ? `${EFFECT_DOT_COLORS[t]} text-black font-bold` : 'bg-gray-800 text-gray-500'}`}
+                      title={`${active ? 'Unsuppress' : 'Suppress'} ${t}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!hasTypeFilter) {
+                          // Currently suppressing all — switch to suppressing all except this one
+                          onUpdateSuppressionTypes(s.id, ALL_EFFECT_TYPES.filter((et) => et !== t))
+                        } else {
+                          const current = s.effectTypes!
+                          if (current.includes(t)) {
+                            const next = current.filter((et) => et !== t)
+                            onUpdateSuppressionTypes(s.id, next.length === 0 ? undefined : next)
+                          } else {
+                            const next = [...current, t]
+                            onUpdateSuppressionTypes(s.id, next.length === ALL_EFFECT_TYPES.length ? undefined : next)
+                          }
+                        }
+                      }}
+                    >
+                      {t[0].toUpperCase()}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
             {/* Resize handles */}
             <div
               className="absolute top-0 left-0 w-2 h-full cursor-col-resize hover:bg-red-500/40 z-10"

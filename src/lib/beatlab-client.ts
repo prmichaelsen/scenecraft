@@ -194,7 +194,7 @@ export async function postGenerateTransitionAction(project: string, transitionId
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId }),
   })
-  return res.json() as Promise<{ success: boolean; action: string }>
+  return res.json() as Promise<{ success: boolean; action: string; slotActions?: string[] }>
 }
 
 export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string) {
@@ -206,11 +206,11 @@ export async function postUpdateTransitionRemap(project: string, transitionId: s
   return res.json()
 }
 
-export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean) {
+export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean, slotActions?: string[]) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, action, useGlobalPrompt }),
+    body: JSON.stringify({ transitionId, action, useGlobalPrompt, ...(slotActions && { slotActions }) }),
   })
   return res.json()
 }
@@ -224,11 +224,11 @@ export async function postUpdateMeta(project: string, fields: Record<string, str
   return res.json()
 }
 
-export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number) {
+export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, count }),
+    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }) }),
   })
   return res.json() as Promise<{ jobId: string; transitionId: string; candidates?: Record<string, string[]> }>
 }
@@ -265,6 +265,7 @@ export type BeatSuppression = {
   id: string
   from: number  // start time in seconds
   to: number    // end time in seconds
+  effectTypes?: EffectType[]  // undefined = suppress all, set = suppress only those types
 }
 
 export async function fetchEffects(project: string) {

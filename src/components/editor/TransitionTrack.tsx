@@ -11,6 +11,8 @@ type TransitionTrackProps = {
   onBoundaryDrag: (keyframeId: string, newTimeSeconds: number) => void
   onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
   onRemapChange: (transitionId: string, targetDuration: number) => void
+  onRetryRender?: (tr: Transition) => void
+  renderProgress?: Record<string, number>
 }
 
 export function TransitionTrack({
@@ -22,6 +24,8 @@ export function TransitionTrack({
   onBoundaryDrag,
   onBoundaryDragEnd,
   onRemapChange,
+  onRetryRender,
+  renderProgress,
 }: TransitionTrackProps) {
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
   const dragState = useRef<{ dragging: boolean; keyframeId: string; transitionId: string; otherKfTime: number; startX: number; startTime: number; minTime: number; maxTime: number } | null>(null)
@@ -89,6 +93,24 @@ export function TransitionTrack({
             className={`absolute top-0 h-full pointer-events-none group ${isSelected ? 'z-20' : 'z-10'}`}
             style={{ left: x, width }}
           >
+            {/* Render progress bar */}
+            {renderProgress?.[tr.id] != null && (() => {
+              const p = renderProgress[tr.id] ?? 0
+              const done = p >= 1
+              return (
+                <div
+                  className={`absolute top-0 left-0 right-0 h-6 ${done ? 'bg-sky-900/30' : 'bg-red-900/30'} rounded overflow-hidden pointer-events-auto cursor-pointer shadow-[0_2px_4px_rgba(0,0,0,0.3)]`}
+                  onClick={(e) => { e.stopPropagation(); onRetryRender?.(tr) }}
+                  title="Click to retry frame decode"
+                >
+                  <div
+                    className={`h-full rounded transition-[width] duration-200 ${done ? 'bg-sky-400/50 shadow-[0_0_6px_rgba(56,189,248,0.4)]' : 'bg-red-500/50 shadow-[0_0_6px_rgba(239,68,68,0.4)]'}`}
+                    style={{ width: `${p * 100}%` }}
+                  />
+                </div>
+              )
+            })()}
+
             {/* Transition bar */}
             <div
               className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer pointer-events-auto transition-colors bg-orange-500/15 hover:bg-orange-500/25 border-t border-orange-500/30 ${

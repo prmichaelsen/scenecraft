@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from 'react'
 import type { Beat } from '@/routes/project/$name/editor'
-import type { UserEffect, BeatSuppression, AudioEvent } from '@/lib/beatlab-client'
+import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
 
 type BeatEffectPreviewProps = {
   src: string
@@ -61,8 +61,12 @@ const FRAGMENT_SHADER = `
   }
 `
 
-function isTimeSuppressed(time: number, suppressions: BeatSuppression[]): boolean {
-  return suppressions.some((s) => time >= s.from && time <= s.to)
+function isTimeSuppressed(time: number, suppressions: BeatSuppression[], effectType?: string): boolean {
+  return suppressions.some((s) => {
+    if (time < s.from || time > s.to) return false
+    if (!s.effectTypes || s.effectTypes.length === 0) return true
+    return effectType ? s.effectTypes.includes(effectType as EffectType) : true
+  })
 }
 
 function findEffectIntensity(
@@ -75,10 +79,8 @@ function findEffectIntensity(
   let bestIntensity = 0
   let bestDecay = 0
 
-  const suppressed = isTimeSuppressed(time, suppressions)
-
   // Prefer audio intelligence events over raw beats
-  if (audioEvents.length > 0 && !suppressed) {
+  if (audioEvents.length > 0) {
     // Audio events are sorted by time — binary search for nearby events
     let lo = 0
     let hi = audioEvents.length - 1
@@ -96,6 +98,8 @@ function findEffectIntensity(
       const dist = time - ev.time
       if (dist < 0) continue
       if (dist > ev.duration + 0.1) break
+      // Per-event suppression: check this event's effect type against suppression zones
+      if (isTimeSuppressed(time, suppressions, ev.effect)) continue
       if (dist <= ev.duration) {
         const decay = Math.max(0, 1 - dist / ev.duration)
         const d = decay * decay
@@ -105,8 +109,8 @@ function findEffectIntensity(
         }
       }
     }
-  } else if (beats.length > 0 && !suppressed) {
-    // Fallback to raw beats
+  } else if (beats.length > 0 && !isTimeSuppressed(time, suppressions)) {
+    // Fallback to raw beats (no effect type — global suppression check)
     let lo = 0
     let hi = beats.length - 1
     while (lo <= hi) {
@@ -246,7 +250,13 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
 
   // Load image when src changes
   useEffect(() => {
-    if (!src || src === currentSrc.current) return
+    if (!src) {
+      // No image — clear stale reference so we don't render the wrong keyframe
+      imgRef.current = null
+      currentSrc.current = ''
+      return
+    }
+    if (src === currentSrc.current) return
     currentSrc.current = src
 
     const img = new Image()
@@ -306,14 +316,14 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
     loop()
 
     return () => cancelAnimationFrame(animRef.current)
-  }, [isPlaying, beats, currentTime, render, blendFactor])
+  }, [isPlaying, beats, audioEvents, userEffects, suppressions, currentTime, render, blendFactor])
 
-  // Render on time changes when paused (seeking) or when frame changes
+  // Render on time changes when paused (seeking) or when frame/effects change
   useEffect(() => {
     if (isPlaying) return
     const { intensity, decay } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
     render(intensity, decay, blendFactor)
-  }, [currentTime, isPlaying, beats, render, transitionFrameA, transitionFrameB, blendFactor])
+  }, [currentTime, isPlaying, beats, audioEvents, userEffects, suppressions, render, transitionFrameA, transitionFrameB, blendFactor])
 
   return (
     <canvas

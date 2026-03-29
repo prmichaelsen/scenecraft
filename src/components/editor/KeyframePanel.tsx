@@ -1,9 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
+import { CandidateModal } from './TransitionPanel'
 
 const STORAGE_KEY = 'beatlab-keyframe-panel-width'
 const DEFAULT_WIDTH = 360
@@ -322,6 +324,7 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
     return typeof kf.selected === 'number' ? kf.selected : null
   })
   const [selecting, setSelecting] = useState(false)
+  const [showModal, setShowModal] = useState(false)
 
   const handleSelect = useCallback(async (variantNum: number) => {
     setSelecting(true)
@@ -365,6 +368,33 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
         </div>
       )}
 
+      {candidates.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowModal(true)}
+            className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            Expand
+          </button>
+        </div>
+      )}
+      {showModal && createPortal(
+        <CandidateModal
+          title={`${kf.id} — Keyframe Candidates`}
+          groups={{ [kf.id]: candidates.map((c) => {
+            const parts = c.split('/')
+            const projectIdx = parts.indexOf('.beatlab_work')
+            return projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : c
+          }) }}
+          selectedMap={{ [kf.id]: selectedIdx }}
+          disabled={selecting}
+          projectName={projectName}
+          mediaType="image"
+          onSelect={(_groupKey, variantIndex) => handleSelect(variantIndex)}
+          onClose={() => setShowModal(false)}
+        />,
+        document.body,
+      )}
       {candidates.length === 0 && !generating ? (
         <div className="text-center text-sm text-gray-600 py-4">
           No candidates yet. Add a prompt and click Generate.
