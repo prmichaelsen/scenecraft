@@ -12,7 +12,7 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
-import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, evictFarEntries, isLoaded } from '@/lib/frame-cache'
+import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, evictFarEntries, isLoaded } from '@/lib/frame-cache'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -154,20 +154,68 @@ export function Timeline({ data }: { data: EditorData }) {
     evictFarEntries(keepKeys)
   }, [currentTime, data.transitions, data.projectName, currentKeyframe, kfMap])
 
-  // Get the current frame to render
-  const currentFrame = (() => {
-    if (activeTransition && activeTransitionFrom && activeTransitionTo) {
-      const numSlots = activeTransition.slots || 1
-      const tStart = activeTransitionFrom.timeSeconds
-      const tEnd = activeTransitionTo.timeSeconds
-      const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
-      const slotIdx = Math.floor(progress * numSlots)
-      const slotProgress = (progress * numSlots) % 1
-      const selectedVariant = activeTransition.selected?.[slotIdx] ?? 'none'
-      const key = `tr:${activeTransition.id}:slot_${slotIdx}:v${selectedVariant}`
-      return getFrameAtProgress(key, slotProgress)
+  // Get crossfade frame pair for smooth transitions at all boundaries
+  const CROSSFADE_FRAMES = 4 // 4 frames each side = 8 frame overlap at 24fps (~333ms)
+  const crossfadeData = (() => {
+    if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) {
+      return { frameA: null, frameB: null, blendFactor: 0 }
     }
-    return null
+
+    const numSlots = activeTransition.slots || 1
+    const tStart = activeTransitionFrom.timeSeconds
+    const tEnd = activeTransitionTo.timeSeconds
+    const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+    const slotIdx = Math.floor(progress * numSlots)
+    const slotProgress = (progress * numSlots) % 1
+
+    const selectedVariant = activeTransition.selected?.[slotIdx] ?? 'none'
+    const key = `tr:${activeTransition.id}:slot_${slotIdx}:v${selectedVariant}`
+    const entry = getFrames(key)
+    const totalFrames = entry?.frames.length ?? 0
+    const currentFrameIdx = totalFrames > 0
+      ? Math.min(Math.floor(slotProgress * totalFrames), totalFrames - 1)
+      : 0
+    const frameA = getFrameAtProgress(key, slotProgress)
+
+    // Clamp crossfade zone so start/end don't overlap on very short slots
+    const xfade = Math.min(CROSSFADE_FRAMES, Math.floor(totalFrames / 2))
+    if (xfade <= 0 || totalFrames === 0) {
+      return { frameA, frameB: null, blendFactor: 0 }
+    }
+
+    // Transition start: crossfade from "from" keyframe image
+    if (slotIdx === 0 && currentFrameIdx < xfade) {
+      const blend = currentFrameIdx / xfade
+      const kfKey = `kf:${activeTransition.from}`
+      return { frameA: getFrameAtProgress(kfKey, 0), frameB: frameA, blendFactor: blend }
+    }
+
+    // Transition end: crossfade to "to" keyframe image
+    if (slotIdx === numSlots - 1 && currentFrameIdx >= totalFrames - xfade) {
+      const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
+      const kfKey = `kf:${activeTransition.to}`
+      return { frameA, frameB: getFrameAtProgress(kfKey, 0), blendFactor: blend }
+    }
+
+    // Near end of current slot: crossfade into next slot
+    if (slotIdx < numSlots - 1 && currentFrameIdx >= totalFrames - xfade) {
+      const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
+      const nextVariant = activeTransition.selected?.[slotIdx + 1] ?? 'none'
+      const nextKey = `tr:${activeTransition.id}:slot_${slotIdx + 1}:v${nextVariant}`
+      return { frameA, frameB: getFrameAtProgress(nextKey, 0), blendFactor: blend }
+    }
+
+    // Near start of current slot: crossfade from previous slot
+    if (slotIdx > 0 && currentFrameIdx < xfade) {
+      const blend = currentFrameIdx / xfade
+      const prevVariant = activeTransition.selected?.[slotIdx - 1] ?? 'none'
+      const prevKey = `tr:${activeTransition.id}:slot_${slotIdx - 1}:v${prevVariant}`
+      const prevEntry = getFrames(prevKey)
+      const prevProgress = prevEntry ? (prevEntry.frames.length - 1) / prevEntry.frames.length : 0.999
+      return { frameA: getFrameAtProgress(prevKey, prevProgress), frameB: frameA, blendFactor: blend }
+    }
+
+    return { frameA, frameB: null, blendFactor: 0 }
   })()
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -352,16 +400,20 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [data])
 
   const handleAddKeyframe = useCallback(async () => {
-    const timestamp = secondsToTimestamp(currentTime)
-    await addKeyframe({
-      data: {
-        projectName: data.projectName,
-        timestamp,
-        section: '',
-        prompt: '',
-      },
-    })
-    router.invalidate()
+    try {
+      const timestamp = secondsToTimestamp(currentTime)
+      await addKeyframe({
+        data: {
+          projectName: data.projectName,
+          timestamp,
+          section: '',
+          prompt: '',
+        },
+      })
+      router.invalidate()
+    } catch (e) {
+      console.error('Failed to add keyframe:', e)
+    }
   }, [currentTime, data.projectName, router])
 
   const handleDeleteKeyframe = useCallback(async (id: string) => {
@@ -485,7 +537,7 @@ export function Timeline({ data }: { data: EditorData }) {
           style={{ height: previewHeight }}
         >
           <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden">
-            {currentKeyframe?.hasSelectedImage || currentFrame ? (
+            {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
               <BeatEffectPreview
                 src={currentKeyframe?.hasSelectedImage
                   ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
@@ -496,7 +548,9 @@ export function Timeline({ data }: { data: EditorData }) {
                 currentTime={currentTime}
                 isPlaying={isPlaying}
                 className="w-full h-full object-cover"
-                transitionFrame={currentFrame}
+                transitionFrameA={crossfadeData.frameA}
+                transitionFrameB={crossfadeData.frameB}
+                blendFactor={crossfadeData.blendFactor}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">

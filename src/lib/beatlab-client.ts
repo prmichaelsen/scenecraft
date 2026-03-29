@@ -49,6 +49,7 @@ export async function postAddKeyframe(project: string, timestamp: string, sectio
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ timestamp, section, prompt, source: 'assets/stills/default.png' }),
   })
+  if (!res.ok) throw new Error(`Failed to add keyframe: ${res.status} ${await res.text()}`)
   return res.json()
 }
 

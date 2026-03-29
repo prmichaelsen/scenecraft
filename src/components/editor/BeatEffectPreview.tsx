@@ -10,8 +10,12 @@ type BeatEffectPreviewProps = {
   currentTime: number
   isPlaying: boolean
   className?: string
-  // Pre-decoded frame from the frame cache (replaces video element)
-  transitionFrame?: ImageBitmap | null
+  canvasWidth?: number
+  canvasHeight?: number
+  // Crossfade pair: frameA is outgoing, frameB is incoming, blendFactor controls mix
+  transitionFrameA?: ImageBitmap | null
+  transitionFrameB?: ImageBitmap | null
+  blendFactor?: number // 0.0 = all A, 1.0 = all B
 }
 
 const VERTEX_SHADER = `
@@ -27,7 +31,9 @@ const VERTEX_SHADER = `
 const FRAGMENT_SHADER = `
   precision mediump float;
   varying vec2 v_texCoord;
-  uniform sampler2D u_image;
+  uniform sampler2D u_imageA;
+  uniform sampler2D u_imageB;
+  uniform float u_blend;       // 0.0 = imageA only, 1.0 = imageB only
   uniform float u_intensity;   // 0.0 - 1.0 beat intensity
   uniform float u_decay;       // 0.0 - 1.0 time since beat (1.0 = on beat, decays to 0)
 
@@ -39,7 +45,9 @@ const FRAGMENT_SHADER = `
     float zoom = 1.0 - effect * 0.06;
     vec2 uv = center + (v_texCoord - center) * zoom;
 
-    vec4 color = texture2D(u_image, uv);
+    vec4 colorA = texture2D(u_imageA, uv);
+    vec4 colorB = texture2D(u_imageB, uv);
+    vec4 color = mix(colorA, colorB, u_blend);
 
     // Brightness pulse
     color.rgb *= 1.0 + effect * 0.4;
@@ -106,14 +114,16 @@ function findEffectIntensity(
   return { intensity: bestIntensity, decay: bestDecay }
 }
 
-export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className, transitionFrame }: BeatEffectPreviewProps) {
+export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0 }: BeatEffectPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const glRef = useRef<{
     gl: WebGLRenderingContext
     program: WebGLProgram
-    texture: WebGLTexture
+    textureA: WebGLTexture
+    textureB: WebGLTexture
     intensityLoc: WebGLUniformLocation
     decayLoc: WebGLUniformLocation
+    blendLoc: WebGLUniformLocation
   } | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const animRef = useRef<number>(0)
@@ -160,23 +170,39 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     gl.enableVertexAttribArray(texLoc)
     gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0)
 
-    const texture = gl.createTexture()!
-    gl.bindTexture(gl.TEXTURE_2D, texture)
+    // Create two textures for crossfade blending
+    const textureA = gl.createTexture()!
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, textureA)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
+    const textureB = gl.createTexture()!
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, textureB)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+    // Bind sampler uniforms to texture units
+    gl.uniform1i(gl.getUniformLocation(program, 'u_imageA'), 0)
+    gl.uniform1i(gl.getUniformLocation(program, 'u_imageB'), 1)
+
     return {
       gl,
       program,
-      texture,
+      textureA,
+      textureB,
       intensityLoc: gl.getUniformLocation(program, 'u_intensity')!,
       decayLoc: gl.getUniformLocation(program, 'u_decay')!,
+      blendLoc: gl.getUniformLocation(program, 'u_blend')!,
     }
   }, [])
 
-  // Init WebGL on mount
+  // Init WebGL on mount or when canvas dimensions change
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -184,7 +210,7 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     return () => {
       cancelAnimationFrame(animRef.current)
     }
-  }, [initGL])
+  }, [initGL, canvasWidth, canvasHeight])
 
   // Load image when src changes
   useEffect(() => {
@@ -197,24 +223,31 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
       imgRef.current = img
       const ctx = glRef.current
       if (!ctx) return
-      ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.texture)
+      ctx.gl.activeTexture(ctx.gl.TEXTURE0)
+      ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.textureA)
       ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, img)
       // Draw once immediately
-      render(0, 0)
+      render(0, 0, 0)
     }
     img.src = src
   }, [src])
 
-  const render = useCallback((intensity: number, decay: number) => {
+  const render = useCallback((intensity: number, decay: number, blend: number) => {
     const ctx = glRef.current
     if (!ctx) return
 
-    // Upload transition frame or static image as texture
-    const source = transitionFrame || imgRef.current
-    if (!source) return
+    const sourceA = transitionFrameA || imgRef.current
+    if (!sourceA) return
+    // When no B frame, use A for both so blend has no visual effect
+    const sourceB = transitionFrameB || sourceA
 
-    ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.texture)
-    ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, source)
+    ctx.gl.activeTexture(ctx.gl.TEXTURE0)
+    ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.textureA)
+    ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, sourceA)
+
+    ctx.gl.activeTexture(ctx.gl.TEXTURE1)
+    ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.textureB)
+    ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, sourceB)
 
     const canvas = canvasRef.current
     if (!canvas) return
@@ -222,38 +255,39 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     ctx.gl.viewport(0, 0, canvas.width, canvas.height)
     ctx.gl.uniform1f(ctx.intensityLoc, intensity)
     ctx.gl.uniform1f(ctx.decayLoc, decay)
+    ctx.gl.uniform1f(ctx.blendLoc, blend)
     ctx.gl.drawArrays(ctx.gl.TRIANGLES, 0, 6)
-  }, [transitionFrame])
+  }, [transitionFrameA, transitionFrameB])
 
   // Render loop when playing
   useEffect(() => {
     if (!isPlaying) {
-      render(0, 0)
+      render(0, 0, blendFactor)
       return
     }
 
     const loop = () => {
       const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
-      render(intensity, decay)
+      render(intensity, decay, blendFactor)
       animRef.current = requestAnimationFrame(loop)
     }
     loop()
 
     return () => cancelAnimationFrame(animRef.current)
-  }, [isPlaying, beats, currentTime, render])
+  }, [isPlaying, beats, currentTime, render, blendFactor])
 
   // Render on time changes when paused (seeking) or when frame changes
   useEffect(() => {
     if (isPlaying) return
     const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
-    render(intensity, decay)
-  }, [currentTime, isPlaying, beats, render, transitionFrame])
+    render(intensity, decay, blendFactor)
+  }, [currentTime, isPlaying, beats, render, transitionFrameA, transitionFrameB, blendFactor])
 
   return (
     <canvas
       ref={canvasRef}
-      width={256}
-      height={144}
+      width={canvasWidth}
+      height={canvasHeight}
       className={className}
     />
   )
