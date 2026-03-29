@@ -15,20 +15,23 @@ import { BeatEffectPreview } from './BeatEffectPreview'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
+import { RulesTrack } from './RulesTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
 
-function parseTimestamp(ts: string): number {
-  const parts = ts.split(':')
+function parseTimestamp(ts: string | number): number {
+  if (typeof ts === 'number') return ts
+  const s = String(ts)
+  const parts = s.split(':')
   if (parts.length === 2) {
     const minutes = parseInt(parts[0], 10)
     const seconds = parseFloat(parts[1])
     return minutes * 60 + seconds
   }
-  return 0
+  return parseFloat(s) || 0
 }
 
 export type KeyframeWithTime = Keyframe & { timeSeconds: number }
@@ -521,9 +524,14 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [currentTime, data.projectName, router])
 
   const handleDeleteKeyframe = useCallback(async (id: string) => {
-    await deleteKeyframe({ data: { projectName: data.projectName, keyframeId: id } })
-    setSelectedKeyframe(null)
-    router.invalidate()
+    try {
+      const result = await deleteKeyframe({ data: { projectName: data.projectName, keyframeId: id } })
+      console.log('deleteKeyframe result:', result)
+      setSelectedKeyframe(null)
+      router.invalidate()
+    } catch (e) {
+      console.error('Failed to delete keyframe:', e)
+    }
   }, [data.projectName, router])
 
   const handleTransitionRemapChange = useCallback(async (transitionId: string, targetDuration: number) => {
@@ -773,23 +781,9 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           {poolSelection && (
-            <button
-              onClick={async () => {
-                try {
-                  const { postInsertPoolItem } = await import('@/lib/beatlab-client')
-                  await postInsertPoolItem(data.projectName, poolSelection.type, poolSelection.entry.path, currentTime)
-                  setPoolSelection(null)
-                  router.invalidate()
-                } catch (e) {
-                  console.error('Insert pool item failed:', e)
-                  alert(`Insert failed: ${e}`)
-                }
-              }}
-              className="text-xs bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded transition-colors animate-pulse"
-              title={`Insert ${poolSelection.type} "${poolSelection.entry.name}" at playhead`}
-            >
-              Insert {poolSelection.type === 'keyframe' ? 'KF' : 'Video'}
-            </button>
+            <span className="text-[10px] text-green-400">
+              Selected: {poolSelection.entry.name}
+            </span>
           )}
 
           <button
@@ -952,6 +946,21 @@ export function Timeline({ data }: { data: EditorData }) {
               />
             </div>
 
+            {/* Rules track */}
+            {data.audioRules.length > 0 && (
+              <div className="relative shrink-0 border-t border-gray-800">
+                <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+                  Rules
+                </div>
+                <RulesTrack
+                  rules={data.audioRules}
+                  pxPerSec={pxPerSec}
+                  scrollLeft={scrollLeft}
+                  viewportWidth={viewportWidth}
+                />
+              </div>
+            )}
+
             {/* Playhead overlay */}
             <Playhead
               currentTime={currentTime}
@@ -996,6 +1005,16 @@ export function Timeline({ data }: { data: EditorData }) {
           onRestore={() => router.invalidate()}
           poolSelection={poolSelection}
           onPoolSelect={setPoolSelection}
+          onInsertPoolItem={async (selection) => {
+            try {
+              const { postInsertPoolItem } = await import('@/lib/beatlab-client')
+              await postInsertPoolItem(data.projectName, selection.type, selection.entry.path, currentTime)
+              setPoolSelection(null)
+              router.invalidate()
+            } catch (e) {
+              alert(`Insert failed: ${e}`)
+            }
+          }}
           activeKeyframes={data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
           activeTransitions={data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
         />

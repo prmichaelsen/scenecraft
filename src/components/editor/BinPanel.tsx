@@ -17,12 +17,13 @@ type BinPanelProps = {
   onClose: () => void
   onRestore: () => void
   onPoolSelect: (selection: PoolSelection | null) => void
+  onInsertPoolItem: (selection: PoolSelection) => void
   poolSelection: PoolSelection | null
   activeKeyframes: ActiveKeyframe[]
   activeTransitions: ActiveTransition[]
 }
 
-export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSelection, activeKeyframes, activeTransitions }: BinPanelProps) {
+export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInsertPoolItem, poolSelection, activeKeyframes, activeTransitions }: BinPanelProps) {
   const socket = useBeatlabSocket()
   const [keyframeEntries, setKeyframeEntries] = useState<BinEntry[]>([])
   const [transitionEntries, setTransitionEntries] = useState<TransitionBinEntry[]>([])
@@ -286,6 +287,21 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, poolSe
                       />
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Insert button — only shown when a pool item is selected */}
+              {poolSelection && (
+                <div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-2 space-y-1">
+                  <div className="text-[10px] text-gray-400 truncate mb-1">
+                    Selected: {poolSelection.entry.name}
+                  </div>
+                  <button
+                    onClick={() => onInsertPoolItem(poolSelection)}
+                    className="w-full text-xs bg-green-700 hover:bg-green-600 text-white py-1.5 rounded transition-colors"
+                  >
+                    Insert at Playhead
+                  </button>
                 </div>
               )}
             </div>
