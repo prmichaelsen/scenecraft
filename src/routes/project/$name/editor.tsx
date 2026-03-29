@@ -21,6 +21,8 @@ import {
   postSelectTransitions,
   postSelectKeyframes,
   postUpdateTransitionRemap,
+  postGenerateSlotKeyframeCandidates,
+  postSelectSlotKeyframes,
   fetchEffects,
   postUpdateEffects,
   type UserEffect,
@@ -204,6 +206,18 @@ export const selectKeyframes = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
   .handler(async ({ data }) => {
     return postSelectKeyframes(data.projectName, data.selections)
+  })
+
+export const generateSlotKeyframeCandidates = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId?: string }) => input)
+  .handler(async ({ data }) => {
+    return postGenerateSlotKeyframeCandidates(data.projectName, data.transitionId)
+  })
+
+export const selectSlotKeyframes = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
+  .handler(async ({ data }) => {
+    return postSelectSlotKeyframes(data.projectName, data.selections)
   })
 
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })

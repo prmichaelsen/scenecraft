@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions, generateSlotKeyframeCandidates } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
@@ -356,18 +356,65 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
     }
   }, [projectName, transition.id])
 
+  const [generatingSlotKfs, setGeneratingSlotKfs] = useState(false)
+  const [slotKfStatus, setSlotKfStatus] = useState('')
+
+  const handleGenerateSlotKeyframes = useCallback(async () => {
+    setGeneratingSlotKfs(true)
+    setSlotKfStatus('Generating intermediate keyframes...')
+    const result = await generateSlotKeyframeCandidates({
+      data: { projectName, transitionId: transition.id },
+    })
+    if (result.jobId) {
+      const unsub = socket.subscribeJob(result.jobId, (msg) => {
+        if (msg.type === 'job_progress') {
+          setSlotKfStatus(`${msg.completed}/${msg.total} generated`)
+        } else if (msg.type === 'job_completed') {
+          setGeneratingSlotKfs(false)
+          setSlotKfStatus('')
+          unsub()
+        } else if (msg.type === 'job_failed') {
+          setSlotKfStatus(`Failed: ${msg.error}`)
+          setGeneratingSlotKfs(false)
+          unsub()
+        }
+      })
+    } else {
+      setGeneratingSlotKfs(false)
+      setSlotKfStatus('')
+    }
+  }, [projectName, transition.id, socket])
+
+  const isMultiSlot = transition.slots > 1
   const slotKeys = Object.keys(candidates).sort()
   const totalVideos = slotKeys.reduce((sum, k) => sum + candidates[k].length, 0)
 
   return (
     <div className="p-2 space-y-3">
-      {/* Generate button */}
+      {/* Multi-slot: intermediate keyframe generation step */}
+      {isMultiSlot && (
+        <div className="bg-gray-800/50 rounded p-2 space-y-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Step 1: Intermediate Keyframes</div>
+          <div className="text-[10px] text-gray-400">
+            This transition has {transition.slots} slots. Generate intermediate keyframe images before video candidates.
+          </div>
+          <button
+            onClick={handleGenerateSlotKeyframes}
+            disabled={generatingSlotKfs}
+            className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-1.5 rounded transition-colors"
+          >
+            {generatingSlotKfs ? slotKfStatus || 'Generating...' : 'Generate Slot Keyframes'}
+          </button>
+        </div>
+      )}
+
+      {/* Generate video button */}
       <button
         onClick={handleGenerate}
         disabled={generating}
         className="w-full text-xs bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
       >
-        {generating ? 'Generating with Veo...' : totalVideos > 0 ? 'Generate More Videos' : 'Generate Video Candidates'}
+        {generating ? 'Generating with Veo...' : totalVideos > 0 ? 'Generate More Videos' : isMultiSlot ? 'Step 2: Generate Video Candidates' : 'Generate Video Candidates'}
       </button>
       {generating && (
         <div className="text-[10px] text-gray-500 text-center">
