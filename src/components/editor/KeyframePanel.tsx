@@ -283,7 +283,7 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
     setJobStatus('Starting...')
 
     const result = await generateKeyframeCandidates({
-      data: { projectName, keyframeId: kf.id },
+      data: { projectName, keyframeId: kf.id, count: 1 },
     })
 
     if (result.jobId) {

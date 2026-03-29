@@ -305,7 +305,7 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
     setJobStatus('Starting...')
 
     const result = await generateTransitionCandidates({
-      data: { projectName, transitionId: transition.id },
+      data: { projectName, transitionId: transition.id, count: 1 },
     })
 
     if (result.jobId) {
