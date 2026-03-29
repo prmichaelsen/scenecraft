@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev --port 3400 --host",
     "build": "vite build",
-    "start": "vite preview"
+    "start": "vite preview -- --host"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.132.0",

@@ -16,7 +16,20 @@
       "WebSearch",
       "Bash(find /home/prmichaelsen/.acp/projects/davinci-beat-lab/.beatlab_work/beyond_the_veil -type f -name *.yaml)",
       "WebFetch(domain:wavesurfer.xyz)",
-      "WebFetch(domain:www.npmjs.com)"
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(grep -r \"flask\\\\|fastapi\\\\|uvicorn\\\\|http\\\\.server\\\\|aiohttp\" /home/prmichaelsen/.acp/projects/davinci-beat-lab/src --include=*.py)",
+      "Bash(python3:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "Bash(lsof -ti:8888)",
+      "Bash(xargs kill:*)",
+      "Bash(fuser -k 8888/tcp)",
+      "Bash(python -c \"import websockets; print\\(websockets.__version__\\)\")",
+      "Bash(venv/bin/python -c \"import websockets; print\\(websockets.__version__\\)\")",
+      "Bash(/home/prmichaelsen/.acp/projects/davinci-beat-lab/.venv/bin/python -c \"import websockets; print\\(websockets.__version__\\)\" 2>&1)",
+      "Bash(/home/prmichaelsen/.acp/projects/davinci-beat-lab/.venv/bin/python -c \"import watchdog; print\\(watchdog.__version__\\)\" 2>&1)",
+      "Bash(find /home/prmichaelsen -type d -name *beat* -o -name *davinci*)",
+      "Bash(find /home/prmichaelsen/.acp/projects/davinci-beat-lab/src -name \"*.py\" -type f -exec grep -l \"veo\\\\|Veo\\\\|video.*generation\\\\|generate_transition\" {})"
     ]
   }
 }

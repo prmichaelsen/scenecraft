@@ -12,6 +12,7 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
+import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, evictFarEntries, isLoaded } from '@/lib/frame-cache'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -105,6 +106,64 @@ export function Timeline({ data }: { data: EditorData }) {
   })
   const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
   const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
+
+  // Preload nearby transition frames and current keyframe image
+  useEffect(() => {
+    const keepKeys = new Set<string>()
+
+    // Preload current keyframe image
+    if (currentKeyframe?.hasSelectedImage) {
+      const key = `kf:${currentKeyframe.id}`
+      keepKeys.add(key)
+      preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`))
+    }
+
+    // Preload transitions near the playhead (current + next 2)
+    const sorted = [...data.transitions].filter((tr) => {
+      const from = kfMap.get(tr.from)
+      return from && tr.hasSelectedVideos?.some(Boolean)
+    }).sort((a, b) => {
+      const aFrom = kfMap.get(a.from)!.timeSeconds
+      const bFrom = kfMap.get(b.from)!.timeSeconds
+      return aFrom - bFrom
+    })
+
+    const nearby = sorted.filter((tr) => {
+      const from = kfMap.get(tr.from)!
+      const to = kfMap.get(tr.to)
+      if (!to) return false
+      return to.timeSeconds >= currentTime - 5 && from.timeSeconds <= currentTime + 30
+    })
+
+    for (const tr of nearby) {
+      const numSlots = tr.slots || 1
+      for (let s = 0; s < numSlots; s++) {
+        const key = `tr:${tr.id}:slot_${s}`
+        keepKeys.add(key)
+        if (!isLoaded(key)) {
+          preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
+        }
+      }
+    }
+
+    // Evict frames for transitions far from playhead
+    evictFarEntries(keepKeys)
+  }, [currentTime, data.transitions, data.projectName, currentKeyframe, kfMap])
+
+  // Get the current frame to render
+  const currentFrame = (() => {
+    if (activeTransition && activeTransitionFrom && activeTransitionTo) {
+      const numSlots = activeTransition.slots || 1
+      const tStart = activeTransitionFrom.timeSeconds
+      const tEnd = activeTransitionTo.timeSeconds
+      const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+      const slotIdx = Math.floor(progress * numSlots)
+      const slotProgress = (progress * numSlots) % 1
+      const key = `tr:${activeTransition.id}:slot_${slotIdx}`
+      return getFrameAtProgress(key, slotProgress)
+    }
+    return null
+  })()
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -432,7 +491,7 @@ export function Timeline({ data }: { data: EditorData }) {
           style={{ height: previewHeight }}
         >
           <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden">
-            {currentKeyframe?.hasSelectedImage || activeTransition ? (
+            {currentKeyframe?.hasSelectedImage || currentFrame ? (
               <BeatEffectPreview
                 src={currentKeyframe?.hasSelectedImage
                   ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
@@ -443,27 +502,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 currentTime={currentTime}
                 isPlaying={isPlaying}
                 className="w-full h-full object-cover"
-                videoSrc={activeTransition && activeTransitionFrom && activeTransitionTo
-                  ? (() => {
-                      const numSlots = activeTransition.slots || 1
-                      const tStart = activeTransitionFrom.timeSeconds
-                      const tEnd = activeTransitionTo.timeSeconds
-                      const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
-                      const slotIdx = Math.floor(progress * numSlots)
-                      return beatlabFileUrl(data.projectName, `selected_transitions/${activeTransition.id}_slot_${slotIdx}.mp4`)
-                    })()
-                  : undefined}
-                videoCurrentTime={activeTransition && activeTransitionFrom && activeTransitionTo
-                  ? (() => {
-                      const numSlots = activeTransition.slots || 1
-                      const tStart = activeTransitionFrom.timeSeconds
-                      const tEnd = activeTransitionTo.timeSeconds
-                      const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
-                      const slotProgress = (progress * numSlots) % 1
-                      return slotProgress
-                    })()
-                  : undefined}
-                videoPlaying={!!activeTransition && isPlaying}
+                transitionFrame={currentFrame}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">

@@ -10,11 +10,8 @@ type BeatEffectPreviewProps = {
   currentTime: number
   isPlaying: boolean
   className?: string
-  // Transition video overlay — when set, renders video frames through the shader instead of static image
-  videoSrc?: string
-  videoCurrentTime?: number  // progress 0-1 within the transition
-  videoPlaybackRate?: number // if omitted, auto-computed from video duration / transition span
-  videoPlaying?: boolean
+  // Pre-decoded frame from the frame cache (replaces video element)
+  transitionFrame?: ImageBitmap | null
 }
 
 const VERTEX_SHADER = `
@@ -109,7 +106,7 @@ function findEffectIntensity(
   return { intensity: bestIntensity, decay: bestDecay }
 }
 
-export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className, videoSrc, videoCurrentTime, videoPlaybackRate, videoPlaying }: BeatEffectPreviewProps) {
+export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className, transitionFrame }: BeatEffectPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const glRef = useRef<{
     gl: WebGLRenderingContext
@@ -119,10 +116,8 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     decayLoc: WebGLUniformLocation
   } | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
   const animRef = useRef<number>(0)
   const currentSrc = useRef('')
-  const useVideo = useRef(false)
 
   const initGL = useCallback((canvas: HTMLCanvasElement) => {
     const gl = canvas.getContext('webgl', { premultipliedAlpha: false })
@@ -210,101 +205,16 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     img.src = src
   }, [src])
 
-  // Track video readiness via the DOM ref
-  const handleVideoReady = useCallback(() => {
-    if (videoRef.current && videoRef.current.readyState >= 2) {
-      useVideo.current = true
-    }
-  }, [])
-
-  // Control video playback — handles source changes, play/pause, and seeking
-  const lastVideoSrc = useRef('')
-  const lastVideoPlaying = useRef(false)
-
-  const seekAndPlay = useCallback((video: HTMLVideoElement, progress: number | undefined) => {
-    if (progress !== undefined && isFinite(video.duration)) {
-      video.currentTime = progress * video.duration
-    }
-    video.play().catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || !videoSrc) {
-      useVideo.current = false
-      lastVideoPlaying.current = false
-      return
-    }
-
-    if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
-
-    const srcChanged = videoSrc !== lastVideoSrc.current
-    const playChanged = !!videoPlaying !== lastVideoPlaying.current
-
-    if (srcChanged && videoPlaying) {
-      // Source changed while playing — need to wait for new source to load
-      const onReady = () => {
-        useVideo.current = true
-        seekAndPlay(video, videoCurrentTime)
-        video.removeEventListener('loadeddata', onReady)
-      }
-      if (video.readyState >= 2) {
-        // Already loaded (e.g., browser cache)
-        useVideo.current = true
-        seekAndPlay(video, videoCurrentTime)
-      } else {
-        video.addEventListener('loadeddata', onReady)
-      }
-    } else if (playChanged && videoPlaying) {
-      // Starting playback (same source)
-      if (video.readyState >= 2) {
-        seekAndPlay(video, videoCurrentTime)
-      } else {
-        const onReady = () => {
-          seekAndPlay(video, videoCurrentTime)
-          video.removeEventListener('loadeddata', onReady)
-        }
-        video.addEventListener('loadeddata', onReady)
-      }
-    } else if (playChanged && !videoPlaying) {
-      video.pause()
-    }
-
-    lastVideoSrc.current = videoSrc
-    lastVideoPlaying.current = !!videoPlaying
-  }, [videoSrc, videoPlaying, videoPlaybackRate, videoCurrentTime, seekAndPlay])
-
-  // Seek when paused (user scrubbing)
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || !videoSrc || videoPlaying) return
-    if (video.readyState >= 2 && videoCurrentTime !== undefined && isFinite(video.duration)) {
-      video.currentTime = videoCurrentTime * video.duration
-    }
-  }, [videoCurrentTime, videoSrc, videoPlaying])
-
-  // Clear video mode when videoSrc is removed
-  useEffect(() => {
-    if (!videoSrc) {
-      useVideo.current = false
-    }
-  }, [videoSrc])
-
   const render = useCallback((intensity: number, decay: number) => {
     const ctx = glRef.current
     if (!ctx) return
 
-    // Upload video frame or static image as texture
-    const video = videoRef.current
-    const hasVideo = useVideo.current && video && video.readyState >= 2
-    const source = hasVideo ? video : imgRef.current
+    // Upload transition frame or static image as texture
+    const source = transitionFrame || imgRef.current
     if (!source) return
 
-    if (hasVideo) {
-      // Re-upload video frame every render tick
-      ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.texture)
-      ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, video)
-    }
+    ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.texture)
+    ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, source)
 
     const canvas = canvasRef.current
     if (!canvas) return
@@ -313,12 +223,11 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     ctx.gl.uniform1f(ctx.intensityLoc, intensity)
     ctx.gl.uniform1f(ctx.decayLoc, decay)
     ctx.gl.drawArrays(ctx.gl.TRIANGLES, 0, 6)
-  }, [])
+  }, [transitionFrame])
 
   // Render loop when playing
   useEffect(() => {
     if (!isPlaying) {
-      // When paused, render with no effect
       render(0, 0)
       return
     }
@@ -333,34 +242,19 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     return () => cancelAnimationFrame(animRef.current)
   }, [isPlaying, beats, currentTime, render])
 
-  // Also render on time changes when paused (seeking)
+  // Render on time changes when paused (seeking) or when frame changes
   useEffect(() => {
     if (isPlaying) return
     const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
     render(intensity, decay)
-  }, [currentTime, isPlaying, beats, render])
+  }, [currentTime, isPlaying, beats, render, transitionFrame])
 
   return (
-    <>
-      <canvas
-        ref={canvasRef}
-        width={256}
-        height={144}
-        className={className}
-      />
-      {videoSrc && (
-        <video
-          ref={videoRef}
-          src={videoSrc}
-          crossOrigin="anonymous"
-          muted
-          playsInline
-          preload="auto"
-          onLoadedData={handleVideoReady}
-          onCanPlay={handleVideoReady}
-          style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
-        />
-      )}
-    </>
+    <canvas
+      ref={canvasRef}
+      width={256}
+      height={144}
+      className={className}
+    />
   )
 }
