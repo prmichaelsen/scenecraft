@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Timeline } from '@/components/editor/Timeline'
 import { StatusBar } from '@/components/editor/StatusBar'
+import { JobStateProvider } from '@/contexts/JobStateContext'
 import {
   fetchKeyframes,
   fetchBeats,
@@ -111,12 +112,12 @@ const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
     const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData, settingsData] = await Promise.all([
-      fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null })),
-      fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
-      fetchEffects(data.name).catch(() => ({ effects: [], suppressions: [] })),
-      fetchNarrative(data.name).catch(() => ({ sections: [] })),
+      fetchKeyframes(data.name).catch((e) => { console.error('[editor] fetchKeyframes failed:', e); return { meta: null, keyframes: [], transitions: [], audioFile: null } }),
+      fetchBeats(data.name).catch((e) => { console.error('[editor] fetchBeats failed:', e); return { beats: [], sections: [] } }),
+      fetchEffects(data.name).catch((e) => { console.error('[editor] fetchEffects failed:', e); return { effects: [], suppressions: [] } }),
+      fetchNarrative(data.name).catch((e) => { console.error('[editor] fetchNarrative failed:', e); return { sections: [] } }),
       fetchTimelines(data.name).catch(() => null),
-      fetchAudioIntelligence(data.name).catch(() => ({ activeFile: null, events: [], sections: [], ruleCount: 0 })),
+      fetchAudioIntelligence(data.name).catch((e) => { console.error('[editor] fetchAudioIntelligence failed:', e); return { activeFile: null, events: [], sections: [], ruleCount: 0 } }),
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
     ])
 
@@ -152,6 +153,12 @@ const getEditorData = createServerFn({ method: 'GET' })
           // Legacy slot format: { slot_0: ["v1.mp4", ...] } → flatten
           const slotMap = rawCandidates as Record<string, string[]>
           candidates = slotMap['slot_0'] || Object.values(slotMap)[0] || []
+          // Sort numerically by variant number (v1, v2, ..., v10, v11)
+          candidates.sort((a, b) => {
+            const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
+            const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
+            return na - nb
+          })
         }
         const rawSelected = tr.selected
         let selected: number | string | null = null
@@ -230,6 +237,13 @@ export const updateKeyframePrompt = createServerFn({ method: 'POST' })
     return postUpdatePrompt(data.projectName, data.keyframeId, data.prompt)
   })
 
+export const setBaseImage = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; stillName: string }) => input)
+  .handler(async ({ data }) => {
+    const { postSetBaseImage } = await import('@/lib/beatlab-client')
+    return postSetBaseImage(data.projectName, data.keyframeId, data.stillName)
+  })
+
 export const selectKeyframes = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
   .handler(async ({ data }) => {
@@ -246,6 +260,13 @@ export const generateTransitionAction = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; transitionId: string }) => input)
   .handler(async ({ data }) => {
     return postGenerateTransitionAction(data.projectName, data.transitionId)
+  })
+
+export const enhanceTransitionAction = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string; action: string }) => input)
+  .handler(async ({ data }) => {
+    const { postEnhanceTransitionAction } = await import('@/lib/beatlab-client')
+    return postEnhanceTransitionAction(data.projectName, data.transitionId, data.action)
   })
 
 export const updateTransitionAction = createServerFn({ method: 'POST' })
@@ -273,9 +294,17 @@ export const selectTransitions = createServerFn({ method: 'POST' })
   })
 
 export const generateTransitionCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number; duration?: number }) => input)
   .handler(async ({ data }) => {
-    return postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex)
+    console.log('[serverFn] generateTransitionCandidates:', data.projectName, data.transitionId, data.count, 'duration:', data.duration)
+    try {
+      const result = await postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex, data.duration)
+      console.log('[serverFn] generateTransitionCandidates result:', JSON.stringify(result).slice(0, 200))
+      return result
+    } catch (e) {
+      console.error('[serverFn] generateTransitionCandidates FAILED:', e)
+      throw e
+    }
   })
 
 export const deleteTransition = createServerFn({ method: 'POST' })
@@ -319,6 +348,7 @@ function EditorPage() {
   const { name } = Route.useParams()
 
   return (
+    <JobStateProvider>
     <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
@@ -345,5 +375,6 @@ function EditorPage() {
       {/* Status bar */}
       <StatusBar />
     </div>
+    </JobStateProvider>
   )
 }

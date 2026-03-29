@@ -1,16 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
-import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
+import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
-const STORAGE_KEY = 'beatlab-transition-panel-width'
+const STORAGE_KEY = 'beatlab-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
-const MAX_WIDTH = 800
 
 type TransitionPanelProps = {
   transition: Transition
@@ -18,7 +17,6 @@ type TransitionPanelProps = {
   motionPrompt: string
   onClose: () => void
   onDelete: () => void
-  socket: ReturnType<typeof useBeatlabSocket>
 }
 
 export function TransitionPanel({
@@ -27,12 +25,11 @@ export function TransitionPanel({
   motionPrompt,
   onClose,
   onDelete,
-  socket,
 }: TransitionPanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, parseInt(stored, 10))) : DEFAULT_WIDTH
+    return stored ? Math.max(MIN_WIDTH, parseInt(stored, 10)) : DEFAULT_WIDTH
   })
   const isDragging = useRef(false)
   const startX = useRef(0)
@@ -49,7 +46,7 @@ export function TransitionPanel({
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return
       const delta = startX.current - e.clientX
-      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth.current + delta))
+      const newWidth = Math.max(MIN_WIDTH, startWidth.current + delta)
       setWidth(newWidth)
     }
     const handleMouseUp = () => {
@@ -126,7 +123,7 @@ export function TransitionPanel({
               </div>
             </>
           ) : (
-            <CandidatesTab transition={tr} projectName={projectName} socket={socket} />
+            <CandidatesTab transition={tr} projectName={projectName} />
           )}
         </div>
       </div>
@@ -135,15 +132,36 @@ export function TransitionPanel({
 }
 
 function ActionPromptEditor({ transition, projectName }: { transition: Transition; projectName: string }) {
+  const jobCtx = useJobContext()
+  const entityKey = `tr:${transition.id}:action`
+  const job = useJobState(entityKey)
+
   const [action, setAction] = useState(transition.action)
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
   const [saving, setSaving] = useState(false)
-  const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
     setAction(transition.action)
     setUseGlobal(transition.useGlobalPrompt)
   }, [transition.id, transition.action, transition.useGlobalPrompt])
+
+  // Apply completed job result (persists across panel switches)
+  useEffect(() => {
+    if (job?.status === 'completed' && job.result) {
+      const res = job.result as { action?: string }
+      if (res?.action) {
+        setAction(res.action)
+        transition.action = res.action
+        // Auto-save the generated action
+        updateTransitionAction({
+          data: { projectName, transitionId: transition.id, action: res.action, useGlobalPrompt: useGlobal },
+        })
+      }
+      jobCtx.consumeResult(entityKey)
+    }
+  }, [job?.status, job?.result])
+
+  const generating = job?.status === 'in_progress'
 
   const save = useCallback(async () => {
     setSaving(true)
@@ -156,31 +174,73 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
   }, [action, useGlobal, transition, projectName])
 
   const handleGenerate = useCallback(async () => {
-    setGenerating(true)
+    // Fire-and-forget: the server function calls Claude synchronously and returns the result
+    // We wrap it in a fake job so state persists across panel switches
+    const jobId = `action_${transition.id}_${Date.now()}`
+    jobCtx.startJob(entityKey, jobId)
     try {
       const result = await generateTransitionAction({
         data: { projectName, transitionId: transition.id },
       })
+      // Manually complete the job since this isn't a WebSocket-tracked job
+      if (result.action) {
+        // Directly apply — the job effect will also fire but consumeResult prevents double-apply
+        setAction(result.action)
+        transition.action = result.action
+        updateTransitionAction({
+          data: { projectName, transitionId: transition.id, action: result.action, useGlobalPrompt: useGlobal },
+        })
+      }
+    } catch (e) {
+      console.error('Generate action failed:', e)
+    }
+    // Clear the job entry
+    jobCtx.consumeResult(entityKey)
+  }, [projectName, transition, jobCtx, entityKey, useGlobal])
+
+  const handleEnhance = useCallback(async () => {
+    if (!action) return
+    const jobId = `enhance_${transition.id}_${Date.now()}`
+    jobCtx.startJob(entityKey, jobId)
+    try {
+      const result = await enhanceTransitionAction({
+        data: { projectName, transitionId: transition.id, action },
+      })
       if (result.action) {
         setAction(result.action)
         transition.action = result.action
+        updateTransitionAction({
+          data: { projectName, transitionId: transition.id, action: result.action, useGlobalPrompt: useGlobal },
+        })
       }
-    } finally {
-      setGenerating(false)
+    } catch (e) {
+      console.error('Enhance action failed:', e)
     }
-  }, [projectName, transition])
+    jobCtx.consumeResult(entityKey)
+  }, [projectName, transition, action, jobCtx, entityKey, useGlobal])
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider">Action Prompt</div>
-        <button
-          onClick={handleGenerate}
-          disabled={generating || saving}
-          className="text-[10px] text-orange-400 hover:text-orange-300 disabled:text-gray-600 transition-colors"
-        >
-          {generating ? 'Generating...' : action ? 'Regenerate' : 'Generate'}
-        </button>
+        <div className="flex items-center gap-2">
+          {action && (
+            <button
+              onClick={handleEnhance}
+              disabled={generating || saving}
+              className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+            >
+              {generating ? '...' : 'Enhance'}
+            </button>
+          )}
+          <button
+            onClick={handleGenerate}
+            disabled={generating || saving}
+            className="text-[10px] text-orange-400 hover:text-orange-300 disabled:text-gray-600 transition-colors"
+          >
+            {generating ? 'Generating...' : action ? 'Regenerate' : 'Generate'}
+          </button>
+        </div>
       </div>
 
       <textarea
@@ -269,65 +329,79 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName, socket }: { transition: Transition; projectName: string; socket: ReturnType<typeof useBeatlabSocket> }) {
-  const [generating, setGenerating] = useState(false)
-  const [jobStatus, setJobStatus] = useState('')
+function CandidatesTab({ transition, projectName }: { transition: Transition; projectName: string }) {
+  const jobCtx = useJobContext()
+  const entityKey = `tr:${transition.id}:video`
+  const job = useJobState(entityKey)
+
   const [selecting, setSelecting] = useState(false)
-  const [candidates, setCandidates] = useState(transition.candidates)
+  const [candidates, setCandidates] = useState(() => {
+    console.log(`[CandidatesTab] init ${transition.id}: ${transition.candidates.length} candidates`, transition.candidates)
+    return transition.candidates
+  })
   const [selectedVariant, setSelectedVariant] = useState<number | null>(
     typeof transition.selected === 'number' ? transition.selected : null
   )
   const [showModal, setShowModal] = useState(false)
 
+  // Video generation duration — closest of [4, 6, 8] to transition duration
+  const DURATION_OPTIONS = [4, 6, 8] as const
+  const [generationDuration, setGenerationDuration] = useState<number>(() => {
+    const dur = transition.durationSeconds
+    return DURATION_OPTIONS.reduce((best, opt) => Math.abs(opt - dur) < Math.abs(best - dur) ? opt : best, 8)
+  })
+  const COUNT_OPTIONS = [1, 2, 3, 4] as const
+  const [generationCount, setGenerationCount] = useState<number>(1)
+
   useEffect(() => {
     setCandidates(transition.candidates)
   }, [transition.id, transition.candidates])
+
+  // Apply completed job result (works even if panel was unmounted during generation)
+  useEffect(() => {
+    if (job?.status === 'completed' && job.result) {
+      console.log('[CandidatesTab] job completed, result:', job.result)
+      const res = job.result as { candidates?: Record<string, string[]> }
+      const newCandidates = res?.candidates?.['slot_0'] || Object.values(res?.candidates || {})[0] || []
+      console.log('[CandidatesTab] extracted candidates:', newCandidates)
+      if (newCandidates.length > 0) {
+        setCandidates(newCandidates)
+        transition.candidates = newCandidates
+      }
+      jobCtx.consumeResult(entityKey)
+      autoSave(projectName, `Generated ${transition.id} video candidates`)
+    }
+  }, [job?.status, job?.result])
+
+  const generating = job?.status === 'in_progress'
+  const jobStatus = job?.detail || ''
 
   const handleGenerate = useCallback(async () => {
     if (!transition.action) {
       alert('Generate an action prompt first (Details tab) before generating video candidates.')
       return
     }
-    setGenerating(true)
-    setJobStatus('Starting...')
 
-    const result = await generateTransitionCandidates({
-      data: { projectName, transitionId: transition.id, count: 1 },
-    })
-
-    if (result.jobId) {
-      const unsub = socket.subscribeJob(result.jobId, (msg) => {
-        if (msg.type === 'job_progress') {
-          setJobStatus(msg.detail || `${msg.completed}/${msg.total} generated`)
-        } else if (msg.type === 'job_completed') {
-          const res = msg.result as { candidates?: Record<string, string[]> }
-          // Flatten from legacy slot format if needed
-          const newCandidates = res?.candidates?.['slot_0'] || Object.values(res?.candidates || {})[0] || []
-          if (newCandidates.length > 0) {
-            setCandidates(newCandidates)
-            transition.candidates = newCandidates
-          }
-          setGenerating(false)
-          setJobStatus('')
-          autoSave(projectName, `Generated ${transition.id} video candidates`)
-          unsub()
-        } else if (msg.type === 'job_failed') {
-          setJobStatus(`Failed: ${msg.error}`)
-          setGenerating(false)
-          unsub()
-        }
+    try {
+      const result = await generateTransitionCandidates({
+        data: { projectName, transitionId: transition.id, count: generationCount, duration: generationDuration },
       })
-    } else {
-      // Fallback: flatten result
-      const newCandidates = result.candidates?.['slot_0'] || Object.values(result.candidates || {})[0] || []
-      if (newCandidates.length > 0) {
-        setCandidates(newCandidates)
-        transition.candidates = newCandidates
+      console.log('[TransitionPanel] generate result:', result)
+
+      if (result.jobId) {
+        jobCtx.startJob(entityKey, result.jobId)
+      } else {
+        const newCandidates = result.candidates?.['slot_0'] || Object.values(result.candidates || {})[0] || []
+        if (newCandidates.length > 0) {
+          setCandidates(newCandidates)
+          transition.candidates = newCandidates
+        }
       }
-      setGenerating(false)
-      setJobStatus('')
+    } catch (e) {
+      console.error('Generate transition candidates failed:', e)
+      alert(`Failed to generate: ${e}`)
     }
-  }, [projectName, transition, socket])
+  }, [projectName, transition, jobCtx, entityKey, generationCount, generationDuration])
 
   const handleSelect = useCallback(async (variantIndex: number) => {
     setSelecting(true)
@@ -350,7 +424,39 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
 
   return (
     <div className="p-2 space-y-3">
-      {/* Generate button */}
+      {/* Generation settings */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Duration</span>
+          <div className="flex gap-0.5 flex-1">
+            {DURATION_OPTIONS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setGenerationDuration(d)}
+                className={`flex-1 text-[10px] py-1 rounded transition-colors ${generationDuration === d ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+              >
+                {d}s
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Count</span>
+          <div className="flex gap-0.5 flex-1">
+            {COUNT_OPTIONS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setGenerationCount(c)}
+                className={`flex-1 text-[10px] py-1 rounded transition-colors ${generationCount === c ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Generate button + refresh */}
       <div className="flex items-center justify-between">
         <button
           onClick={handleGenerate}
@@ -359,10 +465,29 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
         >
           {generating ? (jobStatus || 'Generating with Veo...') : candidates.length > 0 ? 'Generate More' : 'Generate Video'}
         </button>
+        <button
+          onClick={async () => {
+            try {
+              const { fetchDirectoryListing } = await import('@/lib/beatlab-client')
+              const files = await fetchDirectoryListing(projectName, `transition_candidates/${transition.id}/slot_0`)
+              const newCandidates = files
+                .filter((f: { name: string; isDirectory: boolean }) => !f.isDirectory && f.name.endsWith('.mp4'))
+                .map((f: { name: string }) => `transition_candidates/${transition.id}/slot_0/${f.name}`)
+                .sort()
+              console.log('[CandidatesTab] refresh got', newCandidates.length, 'candidates')
+              setCandidates(newCandidates)
+              transition.candidates = newCandidates
+            } catch (e) { console.error('Refresh failed:', e) }
+          }}
+          className="ml-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1"
+          title="Refresh candidates from server"
+        >
+          ↻
+        </button>
         {candidates.length > 0 && (
           <button
             onClick={() => setShowModal(true)}
-            className="ml-2 text-[10px] text-orange-400 hover:text-orange-300 transition-colors"
+            className="ml-1 text-[10px] text-orange-400 hover:text-orange-300 transition-colors"
           >
             Expand
           </button>
@@ -388,9 +513,10 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
         <div className="text-center text-sm text-gray-600 py-4">No video candidates yet.</div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          {candidates.map((videoPath, idx) => {
-            const variantNum = idx + 1
-            const label = videoPath.split('/').pop() || `v${variantNum}`
+          {candidates.map((videoPath) => {
+            const filename = videoPath.split('/').pop() || ''
+            const variantNum = parseInt(filename.match(/v(\d+)\./)?.[1] || '0', 10)
+            const label = filename || `v${variantNum}`
             const isSelected = selectedVariant === variantNum
             return (
               <LazyVideoCard

@@ -8,8 +8,8 @@ import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
 import { TransitionTrack } from './TransitionTrack'
 import { Playhead } from './Playhead'
-import { KeyframePanel } from './KeyframePanel'
-import { BinPanel } from './BinPanel'
+import { KeyframePanel, preloadStills } from './KeyframePanel'
+import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
@@ -62,11 +62,16 @@ export function Timeline({ data }: { data: EditorData }) {
   const [selectedSuppressionId, setSelectedSuppressionId] = useState<string | null>(null)
   const nextSupId = useRef(data.beatSuppressions.length + 1)
   const [selectedEffect, setSelectedEffect] = useState<UserEffect | null>(null)
+  const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
+  const [poolSelection, setPoolSelection] = useState<PoolSelection | null>(null)
   const nextFxId = useRef(data.userEffects.length + 1)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
   const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
+  // Viewport state for virtualized rendering
+  const [scrollLeft, setScrollLeft] = useState(0)
+  const [viewportWidth, setViewportWidth] = useState(2000)
 
   // Restore persisted heights from localStorage after mount (SSR-safe)
   useEffect(() => {
@@ -74,6 +79,20 @@ export function Timeline({ data }: { data: EditorData }) {
     if (storedVideo) setVideoTrackHeight(Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(storedVideo, 10))))
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
+  }, [])
+
+  // Preload stills for base image picker
+  useEffect(() => { preloadStills(data.projectName) }, [data.projectName])
+
+  // Measure viewport width for virtualization
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const measure = () => setViewportWidth(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
 
   // Compute canvas resolution from quality percentage and project resolution
@@ -116,30 +135,30 @@ export function Timeline({ data }: { data: EditorData }) {
   const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
   const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
 
-  // Preload ALL transition frames and keyframe images eagerly on mount / data change.
-  // Registers timeline positions for proximity-based eviction.
+  // Preload keyframe images and transition videos near the playhead (±30s window).
+  // Runs on time changes and data changes — avoids enqueuing hundreds of decodes at once.
+  const PRELOAD_WINDOW = 30
   useEffect(() => {
-    // Preload all keyframe images and register their timestamps
     for (const kf of keyframes) {
-      if (kf.hasSelectedImage) {
-        const key = `kf:${kf.id}`
-        setKeyTimestamp(key, kf.timeSeconds)
-        preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`))
-      }
+      if (!kf.hasSelectedImage) continue
+      if (Math.abs(kf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
+      const key = `kf:${kf.id}`
+      setKeyTimestamp(key, kf.timeSeconds)
+      preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`))
     }
 
-    // Preload all transitions with selected videos and register timestamps
     for (const tr of data.transitions) {
       if (!tr.hasSelectedVideo) continue
       const fromKf = kfMap.get(tr.from)
+      if (!fromKf || Math.abs(fromKf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
       const selectedVariant = tr.selected ?? 'none'
       const key = `tr:${tr.id}:v${selectedVariant}`
-      setKeyTimestamp(key, fromKf?.timeSeconds ?? 0)
+      setKeyTimestamp(key, fromKf.timeSeconds)
       if (!isInMemory(key)) {
         preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
       }
     }
-  }, [data.transitions, data.keyframes, data.projectName, canvasWidth, canvasHeight])
+  }, [currentTime, data.transitions, data.keyframes, data.projectName, canvasWidth, canvasHeight])
 
   // Update playhead position for proximity-based cache eviction
   useEffect(() => {
@@ -156,6 +175,8 @@ export function Timeline({ data }: { data: EditorData }) {
 
       for (const tr of data.transitions) {
         if (!tr.hasSelectedVideo) continue
+        const fromKf = kfMap.get(tr.from)
+        if (fromKf && Math.abs(fromKf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
         const selectedVariant = tr.selected ?? 'none'
         const key = `tr:${tr.id}:v${selectedVariant}`
         const p = getLoadProgress(key)
@@ -323,19 +344,28 @@ export function Timeline({ data }: { data: EditorData }) {
     }
   }, [isPlaying, effectiveDuration])
 
-  const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
-    setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
+  const closeAllPanels = useCallback(() => {
+    setSelectedKeyframe(null)
     setSelectedTransition(null)
     setSelectedEffect(null)
+    setSelectedEffectIds(new Set())
     setSelectedSuppressionId(null)
+    setPoolSelection(null)
+    setShowBin(false)
+    setShowVersions(false)
+    setShowSections(false)
+    setShowSettings(false)
   }, [])
 
+  const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
+    closeAllPanels()
+    setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
+  }, [closeAllPanels])
+
   const handleTransitionClick = useCallback((tr: Transition) => {
+    closeAllPanels()
     setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
-    setSelectedKeyframe(null)
-    setSelectedEffect(null)
-    setSelectedSuppressionId(null)
-  }, [])
+  }, [closeAllPanels])
 
   // Effects handlers
   const persistEffects = useCallback((effects: UserEffect[], supps: BeatSuppression[]) => {
@@ -343,22 +373,31 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [data.projectName])
 
   const handleAddEffect = useCallback((time: number) => {
+    closeAllPanels()
     const id = `fx_${String(nextFxId.current++).padStart(3, '0')}`
     const newEffect: UserEffect = { id, time, type: 'pulse', intensity: 0.8, duration: 0.2 }
     const updated = [...userEffects, newEffect].sort((a, b) => a.time - b.time)
     setUserEffects(updated)
     setSelectedEffect(newEffect)
-    setSelectedKeyframe(null)
-    setSelectedTransition(null)
     persistEffects(updated, suppressions)
-  }, [userEffects, suppressions, persistEffects])
+  }, [userEffects, suppressions, persistEffects, closeAllPanels])
 
-  const handleEffectClick = useCallback((fx: UserEffect) => {
+  const handleEffectClick = useCallback((fx: UserEffect, e?: { shiftKey?: boolean }) => {
+    if (e?.shiftKey) {
+      // Shift+click: toggle in multi-select
+      setSelectedEffectIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(fx.id)) next.delete(fx.id)
+        else next.add(fx.id)
+        return next
+      })
+      setSelectedEffect(fx)
+      return
+    }
+    closeAllPanels()
     setSelectedEffect((prev) => prev?.id === fx.id ? null : fx)
-    setSelectedKeyframe(null)
-    setSelectedTransition(null)
-    setSelectedSuppressionId(null)
-  }, [])
+    setSelectedEffectIds(new Set([fx.id]))
+  }, [closeAllPanels])
 
   const handleEffectDrag = useCallback((id: string, newTime: number) => {
     setUserEffects((prev) => prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx))
@@ -422,11 +461,9 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [suppressions, userEffects, persistEffects])
 
   const handleSuppressionClick = useCallback((id: string) => {
+    closeAllPanels()
     setSelectedSuppressionId((prev) => prev === id ? null : id)
-    setSelectedEffect(null)
-    setSelectedKeyframe(null)
-    setSelectedTransition(null)
-  }, [])
+  }, [closeAllPanels])
 
   // Keyframe boundary drag — updates local state during drag, persists to YAML on release
   const handleKeyframeDrag = useCallback((id: string, newTimeSeconds: number) => {
@@ -446,9 +483,13 @@ export function Timeline({ data }: { data: EditorData }) {
       kf.timestamp = newTimestamp
     }
     // Persist to YAML
-    await updateKeyframeTimestamp({
-      data: { projectName: data.projectName, keyframeId: id, newTimestamp },
-    })
+    try {
+      await updateKeyframeTimestamp({
+        data: { projectName: data.projectName, keyframeId: id, newTimestamp },
+      })
+    } catch (err) {
+      console.error('[Timeline] Failed to persist keyframe timestamp:', id, newTimestamp, err)
+    }
   }, [data])
 
   const handleAddKeyframe = useCallback(async () => {
@@ -492,17 +533,65 @@ export function Timeline({ data }: { data: EditorData }) {
     preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
   }, [data.projectName])
 
-  // Delete key shortcut
+  // Effect clipboard for copy/paste (supports multiple)
+  const effectClipboard = useRef<UserEffect[]>([])
+
+  // Delete key shortcut + Ctrl+C/V for effects
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' && !(e.target as HTMLElement).closest('input, textarea')) {
+      if ((e.target as HTMLElement)?.closest('input, textarea')) return
+
+      if (e.key === 'Delete') {
         if (selectedKeyframe) handleDeleteKeyframe(selectedKeyframe.id)
-        else if (selectedSuppressionId) handleDeleteSuppression(selectedSuppressionId)
+        else if (selectedEffectIds.size > 0) {
+          const remaining = userEffects.filter((fx) => !selectedEffectIds.has(fx.id))
+          setUserEffects(remaining)
+          setSelectedEffect(null)
+          setSelectedEffectIds(new Set())
+          persistEffects(remaining, suppressions)
+        } else if (selectedEffect) {
+          handleEffectDelete(selectedEffect.id)
+        } else if (selectedSuppressionId) {
+          handleDeleteSuppression(selectedSuppressionId)
+        }
+      }
+
+      // Ctrl+C: copy selected effects
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedEffectIds.size > 0) {
+        e.preventDefault()
+        const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
+        if (selected.length > 0) {
+          // Store with times relative to the earliest selected effect
+          const minTime = Math.min(...selected.map((fx) => fx.time))
+          effectClipboard.current = selected.map((fx) => ({ ...fx, time: fx.time - minTime }))
+        }
+      }
+
+      // Ctrl+V: paste effects at playhead
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && effectClipboard.current.length > 0) {
+        e.preventDefault()
+        const newIds = new Set<string>()
+        const pasted = effectClipboard.current.map((src) => {
+          const id = `fx_${String(nextFxId.current++).padStart(3, '0')}`
+          newIds.add(id)
+          return { ...src, id, time: currentTime + src.time }
+        })
+        const updated = [...userEffects, ...pasted].sort((a, b) => a.time - b.time)
+        setUserEffects(updated)
+        setSelectedEffectIds(newIds)
+        setSelectedEffect(pasted[0])
+        persistEffects(updated, suppressions)
+      }
+
+      // Ctrl+A: select all effects
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectedEffect) {
+        e.preventDefault()
+        setSelectedEffectIds(new Set(userEffects.map((fx) => fx.id)))
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedKeyframe, handleDeleteKeyframe])
+  }, [selectedKeyframe, selectedEffect, selectedEffectIds, selectedSuppressionId, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, currentTime, userEffects, suppressions, persistEffects])
 
   // Preview divider drag
   const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
@@ -672,8 +761,28 @@ export function Timeline({ data }: { data: EditorData }) {
             + Suppress
           </button>
 
+          {poolSelection && (
+            <button
+              onClick={async () => {
+                try {
+                  const { postInsertPoolItem } = await import('@/lib/beatlab-client')
+                  await postInsertPoolItem(data.projectName, poolSelection.type, poolSelection.entry.path, currentTime)
+                  setPoolSelection(null)
+                  router.invalidate()
+                } catch (e) {
+                  console.error('Insert pool item failed:', e)
+                  alert(`Insert failed: ${e}`)
+                }
+              }}
+              className="text-xs bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded transition-colors animate-pulse"
+              title={`Insert ${poolSelection.type} "${poolSelection.entry.name}" at playhead`}
+            >
+              Insert {poolSelection.type === 'keyframe' ? 'KF' : 'Video'}
+            </button>
+          )}
+
           <button
-            onClick={() => setShowBin((prev) => !prev)}
+            onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showBin ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Show deleted keyframes bin"
           >
@@ -681,7 +790,7 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
-            onClick={() => setShowImport(true)}
+            onClick={() => { closeAllPanels(); setShowImport(true) }}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
             title="Import images/videos from filesystem"
           >
@@ -689,7 +798,7 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
-            onClick={() => { setShowSections((p) => !p); if (!showSections) { setShowBin(false); setShowVersions(false) } }}
+            onClick={() => { const was = showSections; closeAllPanels(); if (!was) setShowSections(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showSections ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Edit narrative sections"
           >
@@ -697,7 +806,7 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
-            onClick={() => { setShowVersions((p) => !p); if (!showVersions) { setShowBin(false); setShowSections(false) } }}
+            onClick={() => { const was = showVersions; closeAllPanels(); if (!was) setShowVersions(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showVersions ? 'bg-green-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Version history — save, restore, branch"
           >
@@ -707,7 +816,7 @@ export function Timeline({ data }: { data: EditorData }) {
           <TimelineSwitcher projectName={data.projectName} onSwitch={() => router.invalidate()} />
 
           <button
-            onClick={() => { setShowSettings((p) => !p); if (!showSettings) { setShowBin(false); setShowVersions(false); setShowSections(false) } }}
+            onClick={() => { const was = showSettings; closeAllPanels(); if (!was) setShowSettings(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showSettings ? 'bg-gray-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Project settings"
           >
@@ -724,6 +833,7 @@ export function Timeline({ data }: { data: EditorData }) {
           ref={scrollRef}
           className="flex-1 overflow-x-auto overflow-y-hidden relative"
           onWheel={handleWheel}
+          onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
         >
           <div style={{ width: Math.max(totalWidth, 800), minHeight: '100%' }} className="relative flex flex-col">
             {/* Time ruler */}
@@ -749,6 +859,8 @@ export function Timeline({ data }: { data: EditorData }) {
                 onKeyframeDrag={handleKeyframeDrag}
                 onKeyframeDragEnd={handleKeyframeDragEnd}
                 scrollRef={scrollRef}
+                scrollLeft={scrollLeft}
+                viewportWidth={viewportWidth}
               />
               <TransitionTrack
                 transitions={data.transitions}
@@ -761,6 +873,8 @@ export function Timeline({ data }: { data: EditorData }) {
                 onRemapChange={handleTransitionRemapChange}
                 onRetryRender={handleRetryRender}
                 renderProgress={renderProgress}
+                scrollLeft={scrollLeft}
+                viewportWidth={viewportWidth}
               />
             </div>
 
@@ -803,7 +917,16 @@ export function Timeline({ data }: { data: EditorData }) {
                 suppressions={suppressions}
                 pxPerSec={pxPerSec}
                 selectedEffectId={selectedEffect?.id ?? null}
+                selectedEffectIds={selectedEffectIds}
                 onEffectClick={handleEffectClick}
+                onSelectEffectsInRange={(from: number, to: number) => {
+                  const ids = new Set(userEffects.filter((fx) => fx.time >= from && fx.time <= to).map((fx) => fx.id))
+                  setSelectedEffectIds(ids)
+                  if (ids.size > 0) {
+                    const first = userEffects.find((fx) => ids.has(fx.id))
+                    if (first) setSelectedEffect(first)
+                  }
+                }}
                 onAddEffect={handleAddEffect}
                 onEffectDrag={handleEffectDrag}
                 onEffectDragEnd={handleEffectDragEnd}
@@ -813,6 +936,8 @@ export function Timeline({ data }: { data: EditorData }) {
                 onUpdateSuppressionTypes={handleUpdateSuppressionTypes}
                 selectedSuppressionId={selectedSuppressionId}
                 onSuppressionClick={handleSuppressionClick}
+                scrollLeft={scrollLeft}
+                viewportWidth={viewportWidth}
               />
             </div>
 
@@ -856,6 +981,8 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
+          poolSelection={poolSelection}
+          onPoolSelect={setPoolSelection}
         />
       )}
 
@@ -892,16 +1019,14 @@ export function Timeline({ data }: { data: EditorData }) {
         />
       )}
 
-      {/* Effect editor popover */}
-      {selectedEffect && (
-        <div className="absolute bottom-12 left-4 z-50">
-          <EffectEditor
-            effect={selectedEffect}
-            onUpdate={handleEffectUpdate}
-            onDelete={handleEffectDelete}
-            onClose={() => setSelectedEffect(null)}
-          />
-        </div>
+      {/* Effect editor side panel */}
+      {selectedEffect && !selectedKeyframe && !selectedTransition && !showBin && !showVersions && !showSections && !showSettings && (
+        <EffectEditor
+          effect={selectedEffect}
+          onUpdate={handleEffectUpdate}
+          onDelete={handleEffectDelete}
+          onClose={() => { setSelectedEffect(null); setSelectedEffectIds(new Set()) }}
+        />
       )}
 
       {/* Import dialog */}

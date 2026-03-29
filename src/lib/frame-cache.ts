@@ -273,6 +273,9 @@ function deferPreload(key: string, fn: () => Promise<void>) {
 }
 
 function drainQueue() {
+  if (preloadQueue.length > 0 && activePreloads >= MAX_CONCURRENT_PRELOADS) {
+    console.log(`[frame-cache] queue blocked: ${preloadQueue.length} queued, ${activePreloads} active`)
+  }
   while (activePreloads < MAX_CONCURRENT_PRELOADS && preloadQueue.length > 0) {
     const next = preloadQueue.shift()!
     activePreloads++
@@ -367,6 +370,7 @@ export function preloadTransition(key: string, videoUrl: string): void {
       return
     }
     // IndexedDB miss — enqueue the slow video decode path
+    console.log('[frame-cache] enqueuing decode', key, 'gen', startGen, 'current', cacheGeneration)
     enqueuePreload(() => decodeAndCache(key, videoUrl, resolvedDbKey, startGen))
   })
 }
@@ -401,7 +405,7 @@ async function decodeAndCache(key: string, videoUrl: string, resolvedDbKey: stri
   let frames: ImageBitmap[] = []
   const work = async () => {
     try {
-      if (startGen !== cacheGeneration) return
+      if (startGen !== cacheGeneration) { console.log('[frame-cache] stale generation, skipping', key); return }
 
       console.log('[frame-cache] decoding', key)
       const headRes = await fetch(videoUrl, { method: 'HEAD' }).catch(() => null)

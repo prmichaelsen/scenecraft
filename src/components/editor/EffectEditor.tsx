@@ -28,83 +28,86 @@ export function EffectEditor({ effect, onUpdate, onDelete, onClose }: EffectEdit
   }, [effect, type, intensity, duration, time, onUpdate])
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 space-y-3 w-64">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-300">{effect.id}</span>
-        <div className="flex items-center gap-3">
+    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('beatlab-side-panel-width') || '360', 10) }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
+        <div className="text-sm font-medium text-yellow-300">{effect.id}</div>
+        <div className="flex items-center gap-4">
           <button
             onClick={() => onDelete(effect.id)}
-            className="text-[10px] text-red-500/70 hover:text-red-400 transition-colors"
+            className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
           >
             Delete
           </button>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-sm leading-none">
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">
             &times;
           </button>
         </div>
       </div>
 
-      <div>
-        <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Type</label>
-        <div className="flex gap-1">
-          {EFFECT_TYPES.map((t) => (
-            <button
-              key={t}
-              onClick={() => { setType(t); onUpdate({ ...effect, type: t, intensity, duration, time }) }}
-              className={`text-[10px] px-2 py-1 rounded transition-colors ${type === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
-            >
-              {t}
-            </button>
-          ))}
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        <div>
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Type</label>
+          <div className="flex gap-1">
+            {EFFECT_TYPES.map((t) => (
+              <button
+                key={t}
+                onClick={() => { setType(t); onUpdate({ ...effect, type: t, intensity, duration, time }) }}
+                className={`flex-1 text-[10px] px-2 py-1.5 rounded transition-colors ${type === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <div>
-        <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
-          Time: {time.toFixed(2)}s
-        </label>
-        <input
-          type="range"
-          min={0}
-          max={600}
-          step={0.01}
-          value={time}
-          onChange={(e) => setTime(parseFloat(e.target.value))}
-          onMouseUp={save}
-          className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-        />
-      </div>
+        <div>
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+            Time: {time.toFixed(2)}s
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={600}
+            step={0.01}
+            value={time}
+            onChange={(e) => setTime(parseFloat(e.target.value))}
+            onMouseUp={save}
+            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+          />
+        </div>
 
-      <div>
-        <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
-          Intensity: {(intensity * 100).toFixed(0)}%
-        </label>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={intensity}
-          onChange={(e) => setIntensity(parseFloat(e.target.value))}
-          onMouseUp={save}
-          className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-        />
-      </div>
+        <div>
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+            Intensity: {(intensity * 100).toFixed(0)}%
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={intensity}
+            onChange={(e) => setIntensity(parseFloat(e.target.value))}
+            onMouseUp={save}
+            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+          />
+        </div>
 
-      <div>
-        <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
-          Duration: {duration.toFixed(2)}s
-        </label>
-        <input
-          type="range"
-          min={0.05}
-          max={2}
-          step={0.01}
-          value={duration}
-          onChange={(e) => setDuration(parseFloat(e.target.value))}
-          onMouseUp={save}
-          className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-        />
+        <div>
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">
+            Duration: {duration.toFixed(2)}s
+          </label>
+          <input
+            type="range"
+            min={0.05}
+            max={2}
+            step={0.01}
+            value={duration}
+            onChange={(e) => setDuration(parseFloat(e.target.value))}
+            onMouseUp={save}
+            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+          />
+        </div>
       </div>
     </div>
   )

@@ -6,6 +6,7 @@ import {
   postImportTimeline,
   type TimelineInfo,
 } from '@/lib/timeline-client'
+import { fetchBrowse, type BrowseEntry } from '@/lib/beatlab-client'
 
 type TimelineSwitcherProps = {
   projectName: string
@@ -163,37 +164,132 @@ export function TimelineSwitcher({ projectName, onSwitch }: TimelineSwitcherProp
             )}
 
             {showImport && (
-              <div className="space-y-1">
-                <input
-                  type="text"
-                  value={importPath}
-                  onChange={(e) => setImportPath(e.target.value)}
-                  placeholder="path/to/timeline.yaml or project"
-                  className="w-full bg-gray-900 text-xs text-gray-300 rounded px-2 py-1 border border-gray-600 focus:border-green-500 focus:outline-none"
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleImport() }}
-                  autoFocus
-                />
-                <div className="flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={importName}
-                    onChange={(e) => setImportName(e.target.value)}
-                    placeholder="name (optional)"
-                    className="flex-1 bg-gray-900 text-[10px] text-gray-400 rounded px-1 py-0.5 border border-gray-600"
-                  />
-                  <button
-                    onClick={handleImport}
-                    disabled={!importPath.trim() || loading}
-                    className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded disabled:bg-gray-700"
-                  >
-                    Import
-                  </button>
-                </div>
-              </div>
+              <TimelineImportBrowser
+                importPath={importPath}
+                setImportPath={setImportPath}
+                importName={importName}
+                setImportName={setImportName}
+                onImport={handleImport}
+                loading={loading}
+              />
             )}
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function TimelineImportBrowser({
+  importPath, setImportPath, importName, setImportName, onImport, loading,
+}: {
+  importPath: string; setImportPath: (v: string) => void
+  importName: string; setImportName: (v: string) => void
+  onImport: () => void; loading: boolean
+}) {
+  const [browsePath, setBrowsePath] = useState('')
+  const [entries, setEntries] = useState<BrowseEntry[]>([])
+  const [browseLoading, setBrowseLoading] = useState(true)
+
+  const loadDir = useCallback(async (path: string) => {
+    setBrowseLoading(true)
+    try {
+      const data = await fetchBrowse(path)
+      setEntries(data.entries)
+      setBrowsePath(data.path)
+    } finally {
+      setBrowseLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadDir('') }, [loadDir])
+
+  const breadcrumbs = browsePath ? browsePath.split('/').filter(Boolean) : []
+  const yamlFiles = entries.filter((e) => !e.isDirectory && e.name.endsWith('.yaml'))
+  const dirs = entries.filter((e) => e.isDirectory)
+
+  return (
+    <div className="space-y-1">
+      {/* Breadcrumbs */}
+      <div className="flex items-center gap-0.5 text-[10px] flex-wrap">
+        <button onClick={() => loadDir('')} className="text-green-400 hover:text-green-300">.beatlab_work</button>
+        {breadcrumbs.map((part, i) => {
+          const pathUpTo = breadcrumbs.slice(0, i + 1).join('/')
+          const isLast = i === breadcrumbs.length - 1
+          return (
+            <span key={pathUpTo} className="flex items-center gap-0.5">
+              <span className="text-gray-600">/</span>
+              {isLast ? (
+                <span className="text-gray-300">{part}</span>
+              ) : (
+                <button onClick={() => loadDir(pathUpTo)} className="text-green-400 hover:text-green-300">{part}</button>
+              )}
+            </span>
+          )
+        })}
+        {browseLoading && <span className="text-gray-600 ml-1">...</span>}
+      </div>
+
+      {/* File list */}
+      <div className="max-h-[120px] overflow-y-auto bg-gray-900 rounded border border-gray-700">
+        {browsePath && (
+          <button
+            onClick={() => { const parts = browsePath.split('/').filter(Boolean); parts.pop(); loadDir(parts.join('/')) }}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] w-full text-left hover:bg-gray-800 text-gray-500"
+          >
+            ..
+          </button>
+        )}
+        {dirs.map((entry) => (
+          <button
+            key={entry.name}
+            onClick={() => loadDir(entry.path)}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] w-full text-left hover:bg-gray-800 text-gray-200"
+          >
+            <span className="text-yellow-500/70 w-3 shrink-0">dir</span>
+            <span className="truncate">{entry.name}</span>
+          </button>
+        ))}
+        {yamlFiles.map((entry) => (
+          <button
+            key={entry.name}
+            onClick={() => setImportPath(entry.path)}
+            className={`flex items-center gap-1 px-2 py-1 text-[10px] w-full text-left hover:bg-gray-800 transition-colors ${importPath === entry.path ? 'bg-green-900/30 text-green-300' : 'text-gray-300'}`}
+          >
+            <span className="text-green-400 w-3 shrink-0">yml</span>
+            <span className="truncate">{entry.name}</span>
+          </button>
+        ))}
+        {entries.filter((e) => !e.isDirectory && !e.name.endsWith('.yaml')).length > 0 && dirs.length === 0 && yamlFiles.length === 0 && (
+          <div className="px-2 py-2 text-[10px] text-gray-600 text-center">No YAML files in this directory</div>
+        )}
+        {entries.length === 0 && !browseLoading && (
+          <div className="px-2 py-2 text-[10px] text-gray-600 text-center">Empty directory</div>
+        )}
+      </div>
+
+      {/* Selected file + name + import button */}
+      {importPath && (
+        <div className="text-[10px] text-green-400 truncate" title={importPath}>
+          Selected: {importPath.split('/').pop()}
+        </div>
+      )}
+      <div className="flex items-center gap-1">
+        <input
+          type="text"
+          value={importName}
+          onChange={(e) => setImportName(e.target.value)}
+          placeholder="name (optional)"
+          className="flex-1 bg-gray-900 text-[10px] text-gray-400 rounded px-1 py-0.5 border border-gray-600"
+        />
+        <button
+          onClick={onImport}
+          disabled={!importPath.trim() || loading}
+          className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded disabled:bg-gray-700"
+        >
+          Import
+        </button>
+      </div>
     </div>
   )
 }

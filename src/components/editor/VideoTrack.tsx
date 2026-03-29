@@ -11,6 +11,8 @@ type VideoTrackProps = {
   onKeyframeDrag: (id: string, newTimeSeconds: number) => void
   onKeyframeDragEnd: (id: string, newTimeSeconds: number) => void
   scrollRef: RefObject<HTMLDivElement | null>
+  scrollLeft: number
+  viewportWidth: number
 }
 
 type DragState = {
@@ -33,6 +35,8 @@ export function VideoTrack({
   onKeyframeDrag,
   onKeyframeDragEnd,
   scrollRef,
+  scrollLeft,
+  viewportWidth,
 }: VideoTrackProps) {
   const dragState = useRef<DragState | null>(null)
   const didDrag = useRef(false)
@@ -100,6 +104,8 @@ export function VideoTrack({
     }
   }, [pxPerSec, onKeyframeDrag, onKeyframeDragEnd, keyframes, scrollRef])
 
+  const BUFFER_PX = 300
+
   return (
     <div className="relative h-full overflow-visible">
       {keyframes.map((kf, i) => {
@@ -107,6 +113,8 @@ export function VideoTrack({
         const nextKf = keyframes[i + 1]
         const nextX = nextKf ? nextKf.timeSeconds * pxPerSec : x + 60
         const width = Math.max(nextX - x, 2)
+        // Viewport culling: skip keyframes outside visible range
+        if (nextX < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
         const isSelected = kf.id === selectedId
         const ds = dragState.current
         const isDraggingEdge = ds?.keyframeId === kf.id && ds?.type === 'edge'
@@ -133,8 +141,8 @@ export function VideoTrack({
               <div className={`w-px h-full ${isSelected ? 'bg-blue-500' : 'bg-gray-700'}`} />
             </div>
 
-            {/* Thumbnail */}
-            {kf.hasSelectedImage ? (
+            {/* Thumbnail — skip when region is too narrow to see it */}
+            {kf.hasSelectedImage && width > 20 ? (
               <img
                 src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
                 alt={kf.id}

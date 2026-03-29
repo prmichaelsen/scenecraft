@@ -160,12 +160,30 @@ export async function fetchBin(project: string) {
   return res.json() as Promise<{ bin: BinEntry[]; transitionBin: TransitionBinEntry[] }>
 }
 
+export type PoolEntry = {
+  name: string
+  path: string
+  size: number
+}
+
+export async function fetchPool(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/pool`)
+  if (!res.ok) throw new Error(`Failed to fetch pool: ${res.status}`)
+  return res.json() as Promise<{ keyframes: PoolEntry[]; segments: PoolEntry[] }>
+}
+
 export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number) {
+  console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, count }),
   })
+  if (!res.ok) {
+    const text = await res.text()
+    console.error('[beatlab-client] generate-keyframe-candidates failed:', res.status, text)
+    throw new Error(`Failed to generate keyframe candidates: ${res.status} ${text}`)
+  }
   return res.json() as Promise<{ jobId: string; keyframeId: string; candidates?: string[] }>
 }
 
@@ -176,6 +194,15 @@ export async function postGenerateTransitionAction(project: string, transitionId
     body: JSON.stringify({ transitionId }),
   })
   return res.json() as Promise<{ success: boolean; action: string; slotActions?: string[] }>
+}
+
+export async function postEnhanceTransitionAction(project: string, transitionId: string, action: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-transition-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, action }),
+  })
+  return res.json() as Promise<{ success: boolean; action: string }>
 }
 
 export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string) {
@@ -205,11 +232,11 @@ export async function postUpdateMeta(project: string, fields: Record<string, str
   return res.json()
 }
 
-export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number) {
+export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number, duration?: number) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }) }),
+    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }) }),
   })
   return res.json() as Promise<{ jobId: string; transitionId: string; candidates?: Record<string, string[]> }>
 }
@@ -307,6 +334,27 @@ export async function postSelectTransitions(project: string, selections: Record<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selections }),
   })
+  if (!res.ok) throw new Error(`Failed to select transitions: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function postSetBaseImage(project: string, keyframeId: string, stillName: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/set-base-image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, stillName }),
+  })
+  if (!res.ok) throw new Error(`Failed to set base image: ${res.status}`)
+  return res.json() as Promise<{ success: boolean; keyframeId: string; still: string }>
+}
+
+export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, poolPath, atTime }),
+  })
+  if (!res.ok) throw new Error(`Failed to insert pool item: ${res.status} ${await res.text()}`)
   return res.json()
 }
 

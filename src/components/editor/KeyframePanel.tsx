@@ -1,30 +1,28 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
-import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes } from '@/routes/project/$name/editor'
+import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes, setBaseImage } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
-import { beatlabFileUrl } from '@/lib/beatlab-client'
-import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
+import { beatlabFileUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
 import { CandidateModal } from './TransitionPanel'
+import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
-const STORAGE_KEY = 'beatlab-keyframe-panel-width'
+const STORAGE_KEY = 'beatlab-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
-const MAX_WIDTH = 800
 
 type KeyframePanelProps = {
   keyframe: KeyframeWithTime
   projectName: string
   onClose: () => void
   onDelete: () => void
-  socket: ReturnType<typeof useBeatlabSocket>
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete, socket }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, parseInt(stored, 10))) : DEFAULT_WIDTH
+    return stored ? Math.max(MIN_WIDTH, parseInt(stored, 10)) : DEFAULT_WIDTH
   })
   const [tab, setTab] = useState<'details' | 'candidates'>('details')
   const isDragging = useRef(false)
@@ -42,7 +40,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, socket
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return
       const delta = startX.current - e.clientX
-      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth.current + delta))
+      const newWidth = Math.max(MIN_WIDTH, startWidth.current + delta)
       setWidth(newWidth)
     }
 
@@ -118,7 +116,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, socket
           {tab === 'details' ? (
             <DetailsTab kf={kf} projectName={projectName} />
           ) : (
-            <CandidatesTab kf={kf} projectName={projectName} socket={socket} />
+            <CandidatesTab kf={kf} projectName={projectName} />
           )}
         </div>
       </div>
@@ -130,12 +128,14 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptText, setPromptText] = useState(kf.prompt)
   const [saving, setSaving] = useState(false)
+  const [hasImage, setHasImage] = useState(kf.hasSelectedImage)
 
   // Sync when keyframe changes
   useEffect(() => {
     setPromptText(kf.prompt)
     setEditingPrompt(false)
-  }, [kf.id, kf.prompt])
+    setHasImage(kf.hasSelectedImage)
+  }, [kf.id, kf.prompt, kf.hasSelectedImage])
 
   const savePrompt = useCallback(async () => {
     if (promptText === kf.prompt) {
@@ -153,8 +153,8 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
 
   return (
     <>
-      {/* Image */}
-      {kf.hasSelectedImage && (
+      {/* Image or base image picker */}
+      {hasImage ? (
         <div className="p-3">
           <img
             src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
@@ -162,6 +162,8 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
             className="w-full rounded"
           />
         </div>
+      ) : (
+        <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true) }} />
       )}
 
       {/* Metadata */}
@@ -267,58 +269,57 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
   )
 }
 
-function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; projectName: string; socket: ReturnType<typeof useBeatlabSocket> }) {
-  const [generating, setGenerating] = useState(false)
-  const [jobStatus, setJobStatus] = useState('')
+function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+  const jobCtx = useJobContext()
+  const entityKey = `kf:${kf.id}:candidates`
+  const job = useJobState(entityKey)
+
   const [candidates, setCandidates] = useState(kf.candidates)
 
   useEffect(() => {
     setCandidates(kf.candidates)
   }, [kf.id, kf.candidates])
 
+  // Apply completed job result
+  useEffect(() => {
+    if (job?.status === 'completed' && job.result) {
+      const res = job.result as { candidates?: string[] }
+      if (res?.candidates) {
+        setCandidates(res.candidates)
+        kf.candidates = res.candidates
+      }
+      jobCtx.consumeResult(entityKey)
+      autoSave(projectName, `Generated ${kf.id} candidates`)
+    }
+  }, [job?.status, job?.result])
+
+  const generating = job?.status === 'in_progress'
+  const jobStatus = job?.detail || ''
+
   const handleGenerate = useCallback(async () => {
     if (!kf.prompt) {
       alert('Add a prompt to this keyframe first (Details tab) before generating candidates.')
       return
     }
-    setGenerating(true)
-    setJobStatus('Starting...')
 
-    const result = await generateKeyframeCandidates({
-      data: { projectName, keyframeId: kf.id, count: 1 },
-    })
-
-    if (result.jobId) {
-      // Subscribe to WebSocket for progress
-      const unsub = socket.subscribeJob(result.jobId, (msg) => {
-        if (msg.type === 'job_progress') {
-          setJobStatus(`${msg.completed}/${msg.total} generated`)
-        } else if (msg.type === 'job_completed') {
-          const res = msg.result as { candidates?: string[] }
-          if (res?.candidates) {
-            setCandidates(res.candidates)
-            kf.candidates = res.candidates
-          }
-          setGenerating(false)
-          setJobStatus('')
-          autoSave(projectName, `Generated ${kf.id} candidates`)
-          unsub()
-        } else if (msg.type === 'job_failed') {
-          setJobStatus(`Failed: ${msg.error}`)
-          setGenerating(false)
-          unsub()
-        }
+    try {
+      const result = await generateKeyframeCandidates({
+        data: { projectName, keyframeId: kf.id, count: 1 },
       })
-    } else {
-      // Fallback: no jobId (old server), treat result as final
-      if (result.candidates) {
-        setCandidates(result.candidates)
-        kf.candidates = result.candidates
+
+      if (result.jobId) {
+        jobCtx.startJob(entityKey, result.jobId)
+      } else {
+        if (result.candidates) {
+          setCandidates(result.candidates)
+          kf.candidates = result.candidates
+        }
       }
-      setGenerating(false)
-      setJobStatus('')
+    } catch (e) {
+      console.error('Generate candidates failed:', e)
+      alert(`Failed to generate candidates: ${e}`)
     }
-  }, [projectName, kf, socket])
+  }, [projectName, kf, jobCtx, entityKey])
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(() => {
     return typeof kf.selected === 'number' ? kf.selected : null
@@ -439,6 +440,97 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+// Module-level stills cache: projectName -> { entries, blobUrls }
+const stillsCache = new Map<string, { entries: FileEntry[]; blobs: Map<string, string> }>()
+const stillsLoading = new Set<string>()
+
+export function preloadStills(projectName: string): Promise<{ entries: FileEntry[]; blobs: Map<string, string> }> {
+  if (stillsCache.has(projectName)) return Promise.resolve(stillsCache.get(projectName)!)
+  if (stillsLoading.has(projectName)) {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (stillsCache.has(projectName)) resolve(stillsCache.get(projectName)!)
+        else setTimeout(check, 100)
+      }
+      check()
+    })
+  }
+  stillsLoading.add(projectName)
+  return fetchDirectoryListing(projectName, 'assets/stills')
+    .then(async (entries) => {
+      const imageEntries = entries.filter((e) => !e.isDirectory && /\.(png|jpg|jpeg|webp)$/i.test(e.name))
+      const blobs = new Map<string, string>()
+      await Promise.all(imageEntries.map(async (entry) => {
+        try {
+          const res = await fetch(beatlabFileUrl(projectName, `assets/stills/${entry.name}`))
+          const blob = await res.blob()
+          blobs.set(entry.name, URL.createObjectURL(blob))
+        } catch {}
+      }))
+      const cached = { entries: imageEntries, blobs }
+      stillsCache.set(projectName, cached)
+      stillsLoading.delete(projectName)
+      return cached
+    })
+    .catch(() => {
+      stillsLoading.delete(projectName)
+      return { entries: [], blobs: new Map() }
+    })
+}
+
+function BaseImagePicker({ keyframeId, projectName, onSet }: { keyframeId: string; projectName: string; onSet: () => void }) {
+  const [stills, setStills] = useState<FileEntry[]>(() => stillsCache.get(projectName)?.entries || [])
+  const [blobs, setBlobs] = useState<Map<string, string>>(() => stillsCache.get(projectName)?.blobs || new Map())
+  const [loading, setLoading] = useState(!stillsCache.has(projectName))
+  const [setting, setSetting] = useState(false)
+
+  useEffect(() => {
+    preloadStills(projectName).then((cached) => {
+      setStills(cached.entries)
+      setBlobs(cached.blobs)
+      setLoading(false)
+    })
+  }, [projectName])
+
+  const handleSelect = useCallback(async (stillName: string) => {
+    setSetting(true)
+    try {
+      await setBaseImage({ data: { projectName, keyframeId, stillName } })
+      onSet()
+    } finally {
+      setSetting(false)
+    }
+  }, [projectName, keyframeId, onSet])
+
+  if (loading) return <div className="p-3 text-[10px] text-gray-600">Loading stills...</div>
+  if (stills.length === 0) return <div className="p-3 text-[10px] text-gray-600">No stills in assets/stills/</div>
+
+  return (
+    <div className="p-3 space-y-1">
+      <div className="text-[10px] text-gray-500 uppercase tracking-wider">Select Base Image</div>
+      <div className="grid grid-cols-2 gap-1">
+        {stills.map((still) => (
+          <button
+            key={still.name}
+            onClick={() => handleSelect(still.name)}
+            disabled={setting}
+            className="relative rounded overflow-hidden border-2 border-transparent hover:border-blue-500 transition-colors disabled:opacity-50"
+          >
+            <img
+              src={blobs.get(still.name) || beatlabFileUrl(projectName, `assets/stills/${still.name}`)}
+              alt={still.name}
+              className="w-full aspect-video object-cover"
+            />
+            <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">
+              <span className="text-[8px] text-gray-300">{still.name.replace(/\.\w+$/, '')}</span>
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

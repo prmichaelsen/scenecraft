@@ -32,7 +32,9 @@ type EffectsTrackProps = {
   suppressions: BeatSuppression[]
   pxPerSec: number
   selectedEffectId: string | null
-  onEffectClick: (effect: UserEffect) => void
+  selectedEffectIds: Set<string>
+  onEffectClick: (effect: UserEffect, e?: { shiftKey?: boolean }) => void
+  onSelectEffectsInRange: (from: number, to: number) => void
   onAddEffect: (time: number) => void
   onEffectDrag: (id: string, newTime: number) => void
   onEffectDragEnd: (id: string, newTime: number) => void
@@ -42,6 +44,8 @@ type EffectsTrackProps = {
   onUpdateSuppressionTypes: (id: string, effectTypes: EffectType[] | undefined) => void
   selectedSuppressionId: string | null
   onSuppressionClick: (id: string) => void
+  scrollLeft: number
+  viewportWidth: number
 }
 
 export function EffectsTrack({
@@ -49,7 +53,9 @@ export function EffectsTrack({
   suppressions,
   pxPerSec,
   selectedEffectId,
+  selectedEffectIds,
   onEffectClick,
+  onSelectEffectsInRange,
   onAddEffect,
   onEffectDrag,
   onEffectDragEnd,
@@ -59,7 +65,10 @@ export function EffectsTrack({
   onUpdateSuppressionTypes,
   selectedSuppressionId,
   onSuppressionClick,
+  scrollLeft,
+  viewportWidth,
 }: EffectsTrackProps) {
+  const BUFFER_PX = 300
   const dragState = useRef<{ dragging: boolean; id: string; startX: number; startTime: number } | null>(null)
   const didDrag = useRef(false)
 
@@ -96,11 +105,27 @@ export function EffectsTrack({
   const suppressionDragRef = useRef<{ startTime: number; rect: DOMRect } | null>(null)
 
   const handleTrackMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!e.shiftKey) return
+    if (!e.shiftKey && !e.altKey) return
     e.preventDefault()
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
     const startTime = x / pxPerSec
+
+    if (e.altKey) {
+      // Alt+drag: select effects in range
+      const handleMouseUp = (ev: MouseEvent) => {
+        const endX = ev.clientX - rect.left
+        const endTime = endX / pxPerSec
+        const from = Math.min(startTime, endTime)
+        const to = Math.max(startTime, endTime)
+        if (to - from > 0.05) onSelectEffectsInRange(from, to)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+      document.addEventListener('mouseup', handleMouseUp)
+      return
+    }
+
+    // Shift+drag: create suppression zone
     suppressionDragRef.current = { startTime, rect }
 
     const handleMouseMove = (_ev: MouseEvent) => {
@@ -141,6 +166,9 @@ export function EffectsTrack({
     >
       {/* Suppression zones */}
       {suppressions.map((s) => {
+        const leftPx = s.from * pxPerSec
+        const rightPx = s.to * pxPerSec
+        if (rightPx < scrollLeft - BUFFER_PX || leftPx > scrollLeft + viewportWidth + BUFFER_PX) return null
         const isSelected = s.id === selectedSuppressionId
         const widthPx = (s.to - s.from) * pxPerSec
         const hasTypeFilter = s.effectTypes && s.effectTypes.length > 0
@@ -254,7 +282,8 @@ export function EffectsTrack({
       {effects.map((fx) => {
         const x = fx.time * pxPerSec
         const w = Math.max(fx.duration * pxPerSec, 4)
-        const isSelected = fx.id === selectedEffectId
+        if (x + w < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
+        const isSelected = fx.id === selectedEffectId || selectedEffectIds.has(fx.id)
         const color = EFFECT_COLORS[fx.type] || 'bg-gray-500'
         const labelColor = EFFECT_LABEL_COLORS[fx.type] || 'text-gray-300'
 
@@ -267,7 +296,7 @@ export function EffectsTrack({
             onClick={(e) => {
               if (didDrag.current) { didDrag.current = false; return }
               e.stopPropagation()
-              onEffectClick(fx)
+              onEffectClick(fx, { shiftKey: e.shiftKey })
             }}
           >
             <div className={`w-full h-full ${color} rounded-sm`} />

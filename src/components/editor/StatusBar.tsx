@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { useBeatlabSocket, type JobMessage } from '@/hooks/useBeatlabSocket'
+import { useState, useEffect, useCallback } from 'react'
+import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 import { getActivePreloads, getMemoryUsage } from '@/lib/frame-cache'
+import { useJobContext } from '@/contexts/JobStateContext'
 
 type QueueItem = {
   id: string
@@ -26,58 +27,13 @@ function parsePreloadKey(key: string): string {
 
 export function StatusBar() {
   const socket = useBeatlabSocket()
+  const jobCtx = useJobContext()
   const [showPanel, setShowPanel] = useState(false)
   const [items, setItems] = useState<QueueItem[]>([])
-  const jobsRef = useRef(new Map<string, QueueItem>())
-  const removalTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
-
-  // Subscribe to WebSocket job events
-  useEffect(() => {
-    const unsub = socket.subscribeAll((msg: JobMessage) => {
-      const jobs = jobsRef.current
-      if (msg.type === 'job_started') {
-        jobs.set(msg.jobId, {
-          id: msg.jobId,
-          type: 'generation',
-          label: msg.jobType || 'Generation',
-          progress: 0,
-          status: 'in_progress',
-          detail: `0/${msg.total}`,
-        })
-      } else if (msg.type === 'job_progress' && jobs.has(msg.jobId)) {
-        const item = jobs.get(msg.jobId)!
-        item.progress = msg.total > 0 ? msg.completed / msg.total : 0
-        item.detail = msg.detail || `${msg.completed}/${msg.total}`
-        item.status = 'in_progress'
-      } else if (msg.type === 'job_completed' && jobs.has(msg.jobId)) {
-        const item = jobs.get(msg.jobId)!
-        item.progress = 1
-        item.status = 'completed'
-        item.detail = 'Complete'
-        // Auto-remove after 3s
-        removalTimers.current.set(msg.jobId, setTimeout(() => {
-          jobs.delete(msg.jobId)
-          removalTimers.current.delete(msg.jobId)
-        }, 3000))
-      } else if (msg.type === 'job_failed' && jobs.has(msg.jobId)) {
-        const item = jobs.get(msg.jobId)!
-        item.status = 'failed'
-        item.detail = msg.error || 'Failed'
-        removalTimers.current.set(msg.jobId, setTimeout(() => {
-          jobs.delete(msg.jobId)
-          removalTimers.current.delete(msg.jobId)
-        }, 5000))
-      }
-    })
-    return () => {
-      unsub()
-      for (const timer of removalTimers.current.values()) clearTimeout(timer)
-    }
-  }, [socket])
 
   const [memoryInfo, setMemoryInfo] = useState({ usedBytes: 0, limitBytes: 1, pct: 0 })
 
-  // Poll for frame cache preloads + rebuild items list + memory
+  // Poll for frame cache preloads + rebuild items list from job context + memory
   useEffect(() => {
     const update = () => {
       const preloads = getActivePreloads()
@@ -90,7 +46,14 @@ export function StatusBar() {
         detail: `${Math.round(p.progress * 100)}%`,
       }))
 
-      const jobItems = Array.from(jobsRef.current.values())
+      const jobItems: QueueItem[] = jobCtx.getAllJobs().map((j) => ({
+        id: j.jobId,
+        type: 'generation' as const,
+        label: j.entityKey,
+        progress: j.progress,
+        status: j.status,
+        detail: j.detail,
+      }))
       setItems([...jobItems, ...preloadItems])
       setMemoryInfo(getMemoryUsage())
     }

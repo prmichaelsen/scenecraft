@@ -13,6 +13,8 @@ type TransitionTrackProps = {
   onRemapChange: (transitionId: string, targetDuration: number) => void
   onRetryRender?: (tr: Transition) => void
   renderProgress?: Record<string, number>
+  scrollLeft: number
+  viewportWidth: number
 }
 
 export function TransitionTrack({
@@ -26,6 +28,8 @@ export function TransitionTrack({
   onRemapChange,
   onRetryRender,
   renderProgress,
+  scrollLeft,
+  viewportWidth,
 }: TransitionTrackProps) {
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
   const dragState = useRef<{ dragging: boolean; keyframeId: string; transitionId: string; otherKfTime: number; startX: number; startTime: number; minTime: number; maxTime: number } | null>(null)
@@ -63,6 +67,8 @@ export function TransitionTrack({
     document.addEventListener('mouseup', handleMouseUp)
   }, [pxPerSec, onBoundaryDrag, onBoundaryDragEnd])
 
+  const BUFFER_PX = 300
+
   return (
     <div className="absolute inset-0 pointer-events-none overflow-visible">
       {transitions.map((tr) => {
@@ -74,6 +80,8 @@ export function TransitionTrack({
         const endX = toKf.timeSeconds * pxPerSec
         const width = endX - x
         if (width <= 0) return null
+        // Viewport culling
+        if (endX < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
 
         const isSelected = tr.id === selectedId
         const hasCandidates = Object.values(tr.candidates).some((arr) => arr.length > 0)
