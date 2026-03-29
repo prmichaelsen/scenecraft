@@ -105,7 +105,7 @@ const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
     const [kfData, beatsData, effectsData, narrativeData, timelineData] = await Promise.all([
-      fetchKeyframes(data.name),
+      fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null })),
       fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
       fetchEffects(data.name).catch(() => ({ effects: [], suppressions: [] })),
       fetchNarrative(data.name).catch(() => ({ sections: [] })),

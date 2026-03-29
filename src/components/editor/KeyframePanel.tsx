@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes } from '@/routes/project/$name/editor'
+import { autoSave } from '@/lib/version-client'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -298,6 +299,7 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
           }
           setGenerating(false)
           setJobStatus('')
+          autoSave(projectName, `Generated ${kf.id} candidates`)
           unsub()
         } else if (msg.type === 'job_failed') {
           setJobStatus(`Failed: ${msg.error}`)
@@ -329,6 +331,7 @@ function CandidatesTab({ kf, projectName, socket }: { kf: KeyframeWithTime; proj
       })
       setSelectedIdx(variantNum)
       kf.selected = variantNum
+      autoSave(projectName, `Selected ${kf.id} candidate v${variantNum}`)
     } finally {
       setSelecting(false)
     }

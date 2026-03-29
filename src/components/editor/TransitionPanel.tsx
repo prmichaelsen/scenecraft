@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Transition } from '@/routes/project/$name/editor'
 import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
+import { autoSave } from '@/lib/version-client'
 import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 const STORAGE_KEY = 'beatlab-transition-panel-width'
@@ -319,6 +320,7 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
           }
           setGenerating(false)
           setJobStatus('')
+          autoSave(projectName, `Generated ${transition.id} video candidates`)
           unsub()
         } else if (msg.type === 'job_failed') {
           setJobStatus(`Failed: ${msg.error}`)
@@ -344,6 +346,7 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
         data: { projectName, selections: { [selectionKey]: variantIndex } },
       })
       setSelectedMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
+      autoSave(projectName, `Selected ${transition.id} ${slotKey} v${variantIndex}`)
     } finally {
       setSelecting(false)
     }

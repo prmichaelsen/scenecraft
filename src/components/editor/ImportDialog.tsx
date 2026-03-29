@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { importAssets } from '@/routes/project/$name/editor'
+import { autoSave } from '@/lib/version-client'
 import { fetchBrowse, postWatchFolder, postUnwatchFolder, type BrowseEntry } from '@/lib/beatlab-client'
 
 type ImportDialogProps = {
@@ -91,6 +92,7 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
       }
 
       setResult(`${totalKf} keyframe(s), ${totalTr} transition(s) imported to bin`)
+      autoSave(projectName, `Imported ${totalKf} keyframe(s), ${totalTr} transition(s)`)
       onImported()
     } catch (e) {
       setError(String(e))

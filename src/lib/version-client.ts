@@ -1,5 +1,10 @@
 const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'
 
+/** Fire-and-forget auto-save after expensive operations. */
+export function autoSave(project: string, description: string) {
+  postVersionCommit(project, `auto: ${description}`).catch(() => {})
+}
+
 export type Commit = {
   sha: string
   message: string
