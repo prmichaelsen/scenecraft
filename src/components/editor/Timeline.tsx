@@ -112,7 +112,7 @@ export function Timeline({ data }: { data: EditorData }) {
     const fromKf = kfMap.get(tr.from)
     const toKf = kfMap.get(tr.to)
     if (!fromKf || !toKf) return false
-    if (!tr.hasSelectedVideos?.some(Boolean)) return false
+    if (!tr.hasSelectedVideo) return false
     return currentTime >= fromKf.timeSeconds && currentTime < toKf.timeSeconds
   })
   const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
@@ -132,16 +132,13 @@ export function Timeline({ data }: { data: EditorData }) {
 
     // Preload all transitions with selected videos and register timestamps
     for (const tr of data.transitions) {
-      if (!tr.hasSelectedVideos?.some(Boolean)) continue
+      if (!tr.hasSelectedVideo) continue
       const fromKf = kfMap.get(tr.from)
-      const numSlots = tr.slots || 1
-      for (let s = 0; s < numSlots; s++) {
-        const selectedVariant = tr.selected?.[s] ?? 'none'
-        const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
-        setKeyTimestamp(key, fromKf?.timeSeconds ?? 0)
-        if (!isInMemory(key)) {
-          preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
-        }
+      const selectedVariant = tr.selected ?? 'none'
+      const key = `tr:${tr.id}:v${selectedVariant}`
+      setKeyTimestamp(key, fromKf?.timeSeconds ?? 0)
+      if (!isInMemory(key)) {
+        preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
       }
     }
   }, [data.transitions, data.keyframes, data.projectName, canvasWidth, canvasHeight])
@@ -160,16 +157,11 @@ export function Timeline({ data }: { data: EditorData }) {
       const progress: Record<string, number> = {}
 
       for (const tr of data.transitions) {
-        if (!tr.hasSelectedVideos?.some(Boolean)) continue
-        const numSlots = tr.slots || 1
-        let total = 0
-        for (let s = 0; s < numSlots; s++) {
-          const selectedVariant = tr.selected?.[s] ?? 'none'
-          const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
-          const p = getLoadProgress(key)
-          total += (p !== null ? p : isLoaded(key) ? 1 : 0)
-        }
-        progress[tr.id] = total / numSlots
+        if (!tr.hasSelectedVideo) continue
+        const selectedVariant = tr.selected ?? 'none'
+        const key = `tr:${tr.id}:v${selectedVariant}`
+        const p = getLoadProgress(key)
+        progress[tr.id] = p !== null ? p : isLoaded(key) ? 1 : 0
       }
 
       const serialized = JSON.stringify(progress)
@@ -185,7 +177,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
   // Build adjacency lookup: which transition comes before/after each transition?
   const sortedTransitions = [...data.transitions]
-    .filter((tr) => tr.hasSelectedVideos?.some(Boolean) && kfMap.has(tr.from) && kfMap.has(tr.to))
+    .filter((tr) => tr.hasSelectedVideo && kfMap.has(tr.from) && kfMap.has(tr.to))
     .sort((a, b) => kfMap.get(a.from)!.timeSeconds - kfMap.get(b.from)!.timeSeconds)
 
   // Map: keyframeId -> transition that ends at it (tr.to === kfId)
@@ -210,78 +202,51 @@ export function Timeline({ data }: { data: EditorData }) {
       return { frameA: null, frameB: null, blendFactor: 0 }
     }
 
-    const numSlots = activeTransition.slots || 1
     const tStart = activeTransitionFrom.timeSeconds
     const tEnd = activeTransitionTo.timeSeconds
     const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
-    const slotIdx = Math.floor(progress * numSlots)
-    const slotProgress = (progress * numSlots) % 1
 
-    const selectedVariant = activeTransition.selected?.[slotIdx] ?? 'none'
-    const key = `tr:${activeTransition.id}:slot_${slotIdx}:v${selectedVariant}`
+    const selectedVariant = activeTransition.selected ?? 'none'
+    const key = `tr:${activeTransition.id}:v${selectedVariant}`
     const entry = getFrames(key)
     const totalFrames = entry?.frames.length ?? 0
     const currentFrameIdx = totalFrames > 0
-      ? Math.min(Math.floor(slotProgress * totalFrames), totalFrames - 1)
+      ? Math.min(Math.floor(progress * totalFrames), totalFrames - 1)
       : 0
-    const frameA = getFrameAtProgress(key, slotProgress)
+    const frameA = getFrameAtProgress(key, progress)
 
-    // Clamp crossfade zone so start/end don't overlap on very short slots
+    // Crossfade at transition boundaries
     const xfade = Math.min(CROSSFADE_FRAMES, Math.floor(totalFrames / 2))
     if (xfade <= 0 || totalFrames === 0) {
       return { frameA, frameB: null, blendFactor: 0 }
     }
 
-    // Transition start: crossfade from previous transition's last frames (or keyframe image)
-    if (slotIdx === 0 && currentFrameIdx < xfade) {
+    // Transition start: crossfade from previous transition or keyframe image
+    if (currentFrameIdx < xfade) {
       const blend = currentFrameIdx / xfade
       const prevTr = trEndingAt.get(activeTransition.from)
       if (prevTr) {
-        // Adjacent transition exists — crossfade from its last slot's last frames
-        const prevNumSlots = prevTr.slots || 1
-        const prevSlot = prevNumSlots - 1
-        const prevVariant = prevTr.selected?.[prevSlot] ?? 'none'
-        const prevKey = `tr:${prevTr.id}:slot_${prevSlot}:v${prevVariant}`
+        const prevVariant = prevTr.selected ?? 'none'
+        const prevKey = `tr:${prevTr.id}:v${prevVariant}`
         const prevEntry = getFrames(prevKey)
         const prevProgress = prevEntry ? (prevEntry.frames.length - 1) / prevEntry.frames.length : 0.999
         return { frameA: getFrameAtProgress(prevKey, prevProgress), frameB: frameA, blendFactor: blend }
       }
-      // No adjacent transition — fall back to keyframe image
       const kfKey = `kf:${activeTransition.from}`
       return { frameA: getFrameAtProgress(kfKey, 0), frameB: frameA, blendFactor: blend }
     }
 
-    // Transition end: crossfade to next transition's first frames (or keyframe image)
-    if (slotIdx === numSlots - 1 && currentFrameIdx >= totalFrames - xfade) {
+    // Transition end: crossfade to next transition or keyframe image
+    if (currentFrameIdx >= totalFrames - xfade) {
       const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
       const nextTr = trStartingAt.get(activeTransition.to)
       if (nextTr) {
-        // Adjacent transition exists — crossfade into its first slot's first frames
-        const nextVariant = nextTr.selected?.[0] ?? 'none'
-        const nextKey = `tr:${nextTr.id}:slot_0:v${nextVariant}`
+        const nextVariant = nextTr.selected ?? 'none'
+        const nextKey = `tr:${nextTr.id}:v${nextVariant}`
         return { frameA, frameB: getFrameAtProgress(nextKey, 0), blendFactor: blend }
       }
-      // No adjacent transition — fall back to keyframe image
       const kfKey = `kf:${activeTransition.to}`
       return { frameA, frameB: getFrameAtProgress(kfKey, 0), blendFactor: blend }
-    }
-
-    // Near end of current slot: crossfade into next slot (intra-transition)
-    if (slotIdx < numSlots - 1 && currentFrameIdx >= totalFrames - xfade) {
-      const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
-      const nextVariant = activeTransition.selected?.[slotIdx + 1] ?? 'none'
-      const nextKey = `tr:${activeTransition.id}:slot_${slotIdx + 1}:v${nextVariant}`
-      return { frameA, frameB: getFrameAtProgress(nextKey, 0), blendFactor: blend }
-    }
-
-    // Near start of current slot: crossfade from previous slot (intra-transition)
-    if (slotIdx > 0 && currentFrameIdx < xfade) {
-      const blend = currentFrameIdx / xfade
-      const prevVariant = activeTransition.selected?.[slotIdx - 1] ?? 'none'
-      const prevKey = `tr:${activeTransition.id}:slot_${slotIdx - 1}:v${prevVariant}`
-      const prevEntry = getFrames(prevKey)
-      const prevProgress = prevEntry ? (prevEntry.frames.length - 1) / prevEntry.frames.length : 0.999
-      return { frameA: getFrameAtProgress(prevKey, prevProgress), frameB: frameA, blendFactor: blend }
     }
 
     return { frameA, frameB: null, blendFactor: 0 }
@@ -290,13 +255,8 @@ export function Timeline({ data }: { data: EditorData }) {
   // Check if the active transition's frames are still loading
   const isTransitionLoading = (() => {
     if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) return false
-    const numSlots = activeTransition.slots || 1
-    const tStart = activeTransitionFrom.timeSeconds
-    const tEnd = activeTransitionTo.timeSeconds
-    const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
-    const slotIdx = Math.floor(progress * numSlots)
-    const selectedVariant = activeTransition.selected?.[slotIdx] ?? 'none'
-    const key = `tr:${activeTransition.id}:slot_${slotIdx}:v${selectedVariant}`
+    const selectedVariant = activeTransition.selected ?? 'none'
+    const key = `tr:${activeTransition.id}:v${selectedVariant}`
     return !isLoaded(key)
   })()
 
@@ -534,14 +494,11 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [data.projectName, router])
 
   const handleRetryRender = useCallback(async (tr: Transition) => {
-    const numSlots = tr.slots || 1
+    const selectedVariant = tr.selected ?? 'none'
+    const key = `tr:${tr.id}:v${selectedVariant}`
     setRenderProgress((prev) => ({ ...prev, [tr.id]: 0 }))
-    for (let s = 0; s < numSlots; s++) {
-      const selectedVariant = tr.selected?.[s] ?? 'none'
-      const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
-      await invalidateEntry(key)
-      preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
-    }
+    await invalidateEntry(key)
+    preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
   }, [data.projectName])
 
   // Delete key shortcut

@@ -152,31 +152,12 @@ export type TransitionBinEntry = {
   from: string
   to: string
   durationSeconds: number
-  slots: number
 }
 
 export async function fetchBin(project: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bin`)
   if (!res.ok) throw new Error(`Failed to fetch bin: ${res.status}`)
   return res.json() as Promise<{ bin: BinEntry[]; transitionBin: TransitionBinEntry[] }>
-}
-
-export async function postGenerateSlotKeyframeCandidates(project: string, transitionId?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-slot-keyframe-candidates`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId }),
-  })
-  return res.json() as Promise<{ jobId: string }>
-}
-
-export async function postSelectSlotKeyframes(project: string, selections: Record<string, number>) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-slot-keyframes`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ selections }),
-  })
-  return res.json()
 }
 
 export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number) {

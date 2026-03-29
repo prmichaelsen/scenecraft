@@ -161,7 +161,7 @@ export function BinPanel({ projectName, onClose, onRestore, socket }: BinPanelPr
                   <div className="flex-1">
                     <div className="text-xs text-gray-300 font-mono">{entry.id}</div>
                     <div className="text-[10px] text-gray-500">
-                      {entry.from} → {entry.to} ({entry.durationSeconds.toFixed(1)}s, {entry.slots} slot{entry.slots !== 1 ? 's' : ''})
+                      {entry.from} → {entry.to} ({entry.durationSeconds.toFixed(1)}s)
                     </div>
                   </div>
                   <button

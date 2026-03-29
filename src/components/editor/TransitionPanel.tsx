@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions, generateSlotKeyframeCandidates, selectSlotKeyframes } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
@@ -112,7 +112,6 @@ export function TransitionPanel({
               <div className="px-3 py-3 space-y-3 border-b border-gray-800">
                 <Field label="From → To" value={`${tr.from} → ${tr.to}`} />
                 <Field label="Duration" value={`${tr.durationSeconds.toFixed(1)}s`} />
-                <Field label="Slots" value={String(tr.slots)} />
                 <Field label="Remap" value={`${tr.remap.method} (${tr.remap.target_duration.toFixed(1)}s)`} />
               </div>
 
@@ -136,37 +135,25 @@ export function TransitionPanel({
 }
 
 function ActionPromptEditor({ transition, projectName }: { transition: Transition; projectName: string }) {
-  const isMultiSlot = transition.slots > 1
   const [action, setAction] = useState(transition.action)
-  const [slotActions, setSlotActions] = useState<string[]>(() =>
-    transition.slotActions.length > 0 ? [...transition.slotActions] : Array(transition.slots).fill('')
-  )
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
     setAction(transition.action)
-    setSlotActions(transition.slotActions.length > 0 ? [...transition.slotActions] : Array(transition.slots).fill(''))
     setUseGlobal(transition.useGlobalPrompt)
-  }, [transition.id, transition.action, transition.slotActions, transition.useGlobalPrompt, transition.slots])
+  }, [transition.id, transition.action, transition.useGlobalPrompt])
 
   const save = useCallback(async () => {
     setSaving(true)
     await updateTransitionAction({
-      data: {
-        projectName,
-        transitionId: transition.id,
-        action: isMultiSlot ? (slotActions[0] || action) : action,
-        useGlobalPrompt: useGlobal,
-        slotActions: isMultiSlot ? slotActions : undefined,
-      },
+      data: { projectName, transitionId: transition.id, action, useGlobalPrompt: useGlobal },
     })
-    transition.action = isMultiSlot ? (slotActions[0] || action) : action
-    if (isMultiSlot) transition.slotActions = [...slotActions]
+    transition.action = action
     transition.useGlobalPrompt = useGlobal
     setSaving(false)
-  }, [action, slotActions, useGlobal, transition, projectName, isMultiSlot])
+  }, [action, useGlobal, transition, projectName])
 
   const handleGenerate = useCallback(async () => {
     setGenerating(true)
@@ -178,74 +165,38 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
         setAction(result.action)
         transition.action = result.action
       }
-      if (result.slotActions?.length) {
-        setSlotActions(result.slotActions)
-        transition.slotActions = result.slotActions
-      }
     } finally {
       setGenerating(false)
     }
   }, [projectName, transition])
 
-  const updateSlotAction = useCallback((idx: number, value: string) => {
-    setSlotActions((prev) => { const next = [...prev]; next[idx] = value; return next })
-  }, [])
-
-  const hasAnyAction = isMultiSlot ? slotActions.some(Boolean) : !!action
-
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider">
-          {isMultiSlot ? 'Slot Action Prompts' : 'Action Prompt'}
-        </div>
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Action Prompt</div>
         <button
           onClick={handleGenerate}
           disabled={generating || saving}
           className="text-[10px] text-orange-400 hover:text-orange-300 disabled:text-gray-600 transition-colors"
         >
-          {generating ? 'Generating...' : hasAnyAction ? 'Regenerate' : 'Generate'}
+          {generating ? 'Generating...' : action ? 'Regenerate' : 'Generate'}
         </button>
       </div>
 
-      {isMultiSlot ? (
-        // Per-slot prompts
-        <div className="space-y-2">
-          {slotActions.map((sa, idx) => (
-            <div key={idx}>
-              <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-0.5">Slot {idx}</div>
-              <textarea
-                value={sa}
-                onChange={(e) => updateSlotAction(idx, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
-                  if (e.key === 'Escape') { setSlotActions(transition.slotActions.length > 0 ? [...transition.slotActions] : Array(transition.slots).fill('')) }
-                }}
-                onBlur={save}
-                className="w-full bg-gray-800 text-xs text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[60px] leading-relaxed"
-                disabled={saving || generating}
-                placeholder={generating ? 'Generating...' : `Describe what happens in slot ${idx}...`}
-              />
-            </div>
-          ))}
-        </div>
-      ) : (
-        // Single action prompt
-        <textarea
-          value={action}
-          onChange={(e) => setAction(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
-            if (e.key === 'Escape') { setAction(transition.action) }
-          }}
-          onBlur={save}
-          className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
-          disabled={saving || generating}
-          placeholder={generating ? 'Analyzing keyframe images with Claude...' : 'Enter a transition action prompt...'}
-        />
-      )}
+      <textarea
+        value={action}
+        onChange={(e) => setAction(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
+          if (e.key === 'Escape') { setAction(transition.action) }
+        }}
+        onBlur={save}
+        className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
+        disabled={saving || generating}
+        placeholder={generating ? 'Analyzing keyframe images with Claude...' : 'Enter a transition action prompt...'}
+      />
       <div className="text-[9px] text-gray-600">
-        {hasAnyAction ? 'Ctrl+Enter to save, Esc to revert. ' : ''}Sent to Veo for video generation.
+        {action ? 'Ctrl+Enter to save, Esc to revert. ' : ''}Sent to Veo for video generation.
       </div>
 
       <label className="flex items-center gap-2 cursor-pointer">
@@ -256,7 +207,7 @@ function ActionPromptEditor({ transition, projectName }: { transition: Transitio
             setUseGlobal(e.target.checked)
             setSaving(true)
             updateTransitionAction({
-              data: { projectName, transitionId: transition.id, action, useGlobalPrompt: e.target.checked, slotActions: isMultiSlot ? slotActions : undefined },
+              data: { projectName, transitionId: transition.id, action, useGlobalPrompt: e.target.checked },
             }).then(() => {
               transition.useGlobalPrompt = e.target.checked
               setSaving(false)
@@ -319,313 +270,142 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
 }
 
 function CandidatesTab({ transition, projectName, socket }: { transition: Transition; projectName: string; socket: ReturnType<typeof useBeatlabSocket> }) {
-  const [generatingSlots, setGeneratingSlots] = useState<Set<number>>(new Set())
-  const [slotJobStatus, setSlotJobStatus] = useState<Record<number, string>>({})
+  const [generating, setGenerating] = useState(false)
+  const [jobStatus, setJobStatus] = useState('')
   const [selecting, setSelecting] = useState(false)
   const [candidates, setCandidates] = useState(transition.candidates)
-  const [selectedMap, setSelectedMap] = useState<Record<string, number>>(() => {
-    // Build map from selected list: [slot_0_variant, slot_1_variant, ...]
-    const map: Record<string, number> = {}
-    transition.selected?.forEach((sel, i) => {
-      if (typeof sel === 'number') map[`slot_${i}`] = sel
-    })
-    return map
-  })
+  const [selectedVariant, setSelectedVariant] = useState<number | null>(
+    typeof transition.selected === 'number' ? transition.selected : null
+  )
+  const [showModal, setShowModal] = useState(false)
 
   useEffect(() => {
     setCandidates(transition.candidates)
   }, [transition.id, transition.candidates])
 
-  const handleGenerate = useCallback(async (slotIndex: number) => {
-    const slotAction = transition.slotActions?.[slotIndex]
-    if (!slotAction && !transition.action) {
+  const handleGenerate = useCallback(async () => {
+    if (!transition.action) {
       alert('Generate an action prompt first (Details tab) before generating video candidates.')
       return
     }
-    setGeneratingSlots((prev) => new Set(prev).add(slotIndex))
-    setSlotJobStatus((prev) => ({ ...prev, [slotIndex]: 'Starting...' }))
+    setGenerating(true)
+    setJobStatus('Starting...')
 
     const result = await generateTransitionCandidates({
-      data: { projectName, transitionId: transition.id, count: 1, slotIndex },
+      data: { projectName, transitionId: transition.id, count: 1 },
     })
 
     if (result.jobId) {
       const unsub = socket.subscribeJob(result.jobId, (msg) => {
         if (msg.type === 'job_progress') {
-          const detail = msg.detail || `${msg.completed}/${msg.total} generated`
-          setSlotJobStatus((prev) => ({ ...prev, [slotIndex]: detail }))
+          setJobStatus(msg.detail || `${msg.completed}/${msg.total} generated`)
         } else if (msg.type === 'job_completed') {
           const res = msg.result as { candidates?: Record<string, string[]> }
-          if (res?.candidates) {
-            setCandidates(res.candidates)
-            transition.candidates = res.candidates
+          // Flatten from legacy slot format if needed
+          const newCandidates = res?.candidates?.['slot_0'] || Object.values(res?.candidates || {})[0] || []
+          if (newCandidates.length > 0) {
+            setCandidates(newCandidates)
+            transition.candidates = newCandidates
           }
-          setGeneratingSlots((prev) => { const next = new Set(prev); next.delete(slotIndex); return next })
-          setSlotJobStatus((prev) => { const next = { ...prev }; delete next[slotIndex]; return next })
-          autoSave(projectName, `Generated ${transition.id} slot_${slotIndex} video candidates`)
+          setGenerating(false)
+          setJobStatus('')
+          autoSave(projectName, `Generated ${transition.id} video candidates`)
           unsub()
         } else if (msg.type === 'job_failed') {
-          setSlotJobStatus((prev) => ({ ...prev, [slotIndex]: `Failed: ${msg.error}` }))
-          setGeneratingSlots((prev) => { const next = new Set(prev); next.delete(slotIndex); return next })
+          setJobStatus(`Failed: ${msg.error}`)
+          setGenerating(false)
           unsub()
         }
       })
     } else {
-      if (result.candidates) {
-        setCandidates(result.candidates)
-        transition.candidates = result.candidates
+      // Fallback: flatten result
+      const newCandidates = result.candidates?.['slot_0'] || Object.values(result.candidates || {})[0] || []
+      if (newCandidates.length > 0) {
+        setCandidates(newCandidates)
+        transition.candidates = newCandidates
       }
-      setGeneratingSlots((prev) => { const next = new Set(prev); next.delete(slotIndex); return next })
-      setSlotJobStatus((prev) => { const next = { ...prev }; delete next[slotIndex]; return next })
+      setGenerating(false)
+      setJobStatus('')
     }
   }, [projectName, transition, socket])
 
-  const handleSelect = useCallback(async (slotKey: string, variantIndex: number) => {
+  const handleSelect = useCallback(async (variantIndex: number) => {
     setSelecting(true)
-    const selectionKey = `${transition.id}_${slotKey}`
-    // Parse slot index from key like "slot_0"
-    const slotIdx = parseInt(slotKey.replace('slot_', ''), 10)
+    const selectionKey = `${transition.id}_slot_0`
     try {
       await selectTransitions({
         data: { projectName, selections: { [selectionKey]: variantIndex } },
       })
-      setSelectedMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
-      // Invalidate old frame cache entry so it re-decodes from the new selected video
-      const oldVariant = selectedMap[slotKey] ?? 'none'
-      invalidateEntry(`tr:${transition.id}:${slotKey}:v${oldVariant}`)
-      // Also invalidate the new key in case stale frames are cached for it
-      invalidateEntry(`tr:${transition.id}:${slotKey}:v${variantIndex}`)
-      // Update the transition's selected array so Timeline preload picks up the new variant
-      if (!isNaN(slotIdx)) {
-        if (!transition.selected) transition.selected = []
-        while (transition.selected.length <= slotIdx) transition.selected.push(null)
-        transition.selected[slotIdx] = variantIndex
-        // Mark as having selected video
-        if (!transition.hasSelectedVideos) transition.hasSelectedVideos = []
-        while (transition.hasSelectedVideos.length <= slotIdx) transition.hasSelectedVideos.push(false)
-        transition.hasSelectedVideos[slotIdx] = true
-      }
-      autoSave(projectName, `Selected ${transition.id} ${slotKey} v${variantIndex}`)
+      const oldVariant = selectedVariant ?? 'none'
+      invalidateEntry(`tr:${transition.id}:v${oldVariant}`)
+      invalidateEntry(`tr:${transition.id}:v${variantIndex}`)
+      setSelectedVariant(variantIndex)
+      transition.selected = variantIndex
+      transition.hasSelectedVideo = true
+      autoSave(projectName, `Selected ${transition.id} v${variantIndex}`)
     } finally {
       setSelecting(false)
     }
-  }, [projectName, transition.id, selectedMap])
-
-  const [generatingSlotKfs, setGeneratingSlotKfs] = useState(false)
-  const [slotKfStatus, setSlotKfStatus] = useState('')
-  const [slotKfCandidates, setSlotKfCandidates] = useState<Record<string, string[]>>(transition.slotKeyframeCandidates || {})
-  const [selectedSlotKfMap, setSelectedSlotKfMap] = useState<Record<string, number | null>>(transition.selectedSlotKeyframes || {})
-  const [selectingSlotKf, setSelectingSlotKf] = useState(false)
-  const [showSlotKfModal, setShowSlotKfModal] = useState(false)
-  const [showVideosModal, setShowVideosModal] = useState(false)
-
-  useEffect(() => {
-    setSlotKfCandidates(transition.slotKeyframeCandidates || {})
-    setSelectedSlotKfMap(transition.selectedSlotKeyframes || {})
-  }, [transition.id, transition.slotKeyframeCandidates, transition.selectedSlotKeyframes])
-
-  const handleGenerateSlotKeyframes = useCallback(async () => {
-    setGeneratingSlotKfs(true)
-    setSlotKfStatus('Generating intermediate keyframes...')
-    const result = await generateSlotKeyframeCandidates({
-      data: { projectName, transitionId: transition.id },
-    })
-    if (result.jobId) {
-      const unsub = socket.subscribeJob(result.jobId, (msg) => {
-        if (msg.type === 'job_progress') {
-          setSlotKfStatus(msg.detail || `${msg.completed}/${msg.total} generated`)
-        } else if (msg.type === 'job_completed') {
-          const res = msg.result as { candidates?: Record<string, string[]> }
-          if (res?.candidates) {
-            setSlotKfCandidates(res.candidates)
-            transition.slotKeyframeCandidates = res.candidates
-          }
-          setGeneratingSlotKfs(false)
-          setSlotKfStatus('')
-          unsub()
-        } else if (msg.type === 'job_failed') {
-          setSlotKfStatus(`Failed: ${msg.error}`)
-          setGeneratingSlotKfs(false)
-          unsub()
-        }
-      })
-    } else {
-      setGeneratingSlotKfs(false)
-      setSlotKfStatus('')
-    }
-  }, [projectName, transition.id, socket])
-
-  const handleSelectSlotKf = useCallback(async (slotKey: string, variantIndex: number) => {
-    setSelectingSlotKf(true)
-    try {
-      await selectSlotKeyframes({
-        data: { projectName, selections: { [slotKey]: variantIndex } },
-      })
-      setSelectedSlotKfMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
-      transition.selectedSlotKeyframes = { ...transition.selectedSlotKeyframes, [slotKey]: variantIndex }
-      autoSave(projectName, `Selected ${slotKey} intermediate keyframe v${variantIndex}`)
-    } finally {
-      setSelectingSlotKf(false)
-    }
-  }, [projectName, transition])
-
-  const isMultiSlot = transition.slots > 1
-  const slotKeys = Object.keys(candidates).sort()
-  const totalVideos = slotKeys.reduce((sum, k) => sum + candidates[k].length, 0)
+  }, [projectName, transition.id, selectedVariant])
 
   return (
     <div className="p-2 space-y-3">
-      {/* Multi-slot: intermediate keyframe generation step */}
-      {isMultiSlot && (
-        <div className="bg-gray-800/50 rounded p-2 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] text-gray-500 uppercase tracking-wider">Step 1: Intermediate Keyframes</div>
-            {Object.keys(slotKfCandidates).length > 0 && (
-              <button
-                onClick={() => setShowSlotKfModal(true)}
-                className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                Expand
-              </button>
-            )}
-          </div>
-          <div className="text-[10px] text-gray-400">
-            This transition has {transition.slots} slots. Generate intermediate keyframe images before video candidates.
-          </div>
+      {/* Generate button */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={handleGenerate}
+          disabled={generating}
+          className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        >
+          {generating ? (jobStatus || 'Generating with Veo...') : candidates.length > 0 ? 'Generate More' : 'Generate Video'}
+        </button>
+        {candidates.length > 0 && (
           <button
-            onClick={handleGenerateSlotKeyframes}
-            disabled={generatingSlotKfs}
-            className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-1.5 rounded transition-colors"
-          >
-            {generatingSlotKfs ? slotKfStatus || 'Generating...' : Object.keys(slotKfCandidates).length > 0 ? 'Generate Additional Slot Keyframes' : 'Generate Slot Keyframes'}
-          </button>
-
-          {/* Slot keyframe candidate images */}
-          {Object.keys(slotKfCandidates).sort().map((slotKey) => (
-            <div key={slotKey} className="space-y-1">
-              <div className="text-[10px] text-gray-500 uppercase tracking-wider flex items-center gap-1">
-                {slotKey.replace(/_/g, ' ')}
-                {selectedSlotKfMap[slotKey] != null && <span className="text-green-400">&#10003;</span>}
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {slotKfCandidates[slotKey].map((imgPath, idx) => {
-                  const variantNum = idx + 1
-                  const isSelected = selectedSlotKfMap[slotKey] === variantNum
-                  return (
-                    <div
-                      key={imgPath}
-                      onClick={() => !selectingSlotKf && handleSelectSlotKf(slotKey, variantNum)}
-                      className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors ${
-                        isSelected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'
-                      } ${selectingSlotKf ? 'opacity-50 pointer-events-none' : ''}`}
-                    >
-                      <img
-                        src={beatlabFileUrl(projectName, imgPath)}
-                        alt={`v${variantNum}`}
-                        className="w-full aspect-video object-cover"
-                        loading="lazy"
-                      />
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] text-gray-300 font-mono">v{variantNum}</span>
-                          {isSelected && (
-                            <span className="text-[9px] bg-blue-500 text-white px-1 rounded">selected</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Slot keyframe candidate modal */}
-      {showSlotKfModal && createPortal(
-        <CandidateModal
-          title={`${transition.id} — Intermediate Keyframes`}
-          groups={slotKfCandidates}
-          selectedMap={selectedSlotKfMap as Record<string, number | null>}
-          disabled={selectingSlotKf}
-          projectName={projectName}
-          mediaType="image"
-          onSelect={handleSelectSlotKf}
-          onClose={() => setShowSlotKfModal(false)}
-        />,
-        document.body,
-      )}
-
-      {/* Video candidates header + expand */}
-      {totalVideos > 0 && (
-        <div className="flex items-center justify-between">
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider">{isMultiSlot ? 'Step 2: Video Candidates' : 'Video Candidates'}</div>
-          <button
-            onClick={() => setShowVideosModal(true)}
-            className="text-[10px] text-orange-400 hover:text-orange-300 transition-colors"
+            onClick={() => setShowModal(true)}
+            className="ml-2 text-[10px] text-orange-400 hover:text-orange-300 transition-colors"
           >
             Expand
           </button>
-        </div>
-      )}
-      {showVideosModal && createPortal(
+        )}
+      </div>
+
+      {showModal && createPortal(
         <CandidateModal
           title={`${transition.id} — Video Candidates`}
-          groups={candidates}
-          selectedMap={selectedMap as Record<string, number | null>}
+          groups={{ videos: candidates }}
+          selectedMap={{ videos: selectedVariant }}
           disabled={selecting}
           projectName={projectName}
           mediaType="video"
-          onSelect={handleSelect}
-          onClose={() => setShowVideosModal(false)}
+          onSelect={(_groupKey, variantIndex) => handleSelect(variantIndex)}
+          onClose={() => setShowModal(false)}
         />,
         document.body,
       )}
-      {/* Candidates by slot — each slot gets its own generate button */}
-      {Array.from({ length: transition.slots }, (_, i) => i).map((slotIdx) => {
-        const slotKey = `slot_${slotIdx}`
-        const slotCandidates = candidates[slotKey] || []
-        const isSlotGenerating = generatingSlots.has(slotIdx)
-        return (
-          <div key={slotKey} className="space-y-1">
-            <div className="flex items-center justify-between">
-              <div className="text-[10px] text-gray-500 uppercase tracking-wider">
-                {slotKey.replace('_', ' ')}
-              </div>
-              <button
-                onClick={() => handleGenerate(slotIdx)}
-                disabled={isSlotGenerating}
-                className="text-[10px] text-orange-400 hover:text-orange-300 disabled:text-gray-600 transition-colors"
-              >
-                {isSlotGenerating ? (slotJobStatus[slotIdx] || 'Generating...') : slotCandidates.length > 0 ? '+ Generate' : 'Generate'}
-              </button>
-            </div>
-            {slotCandidates.length > 0 ? (
-              <div className="grid grid-cols-2 gap-2">
-                {slotCandidates.map((videoPath, idx) => {
-                  const variantNum = idx + 1
-                  const label = videoPath.split('/').pop() || `v${variantNum}`
-                  const isSelected = selectedMap[slotKey] === variantNum
-                  return (
-                    <LazyVideoCard
-                      key={videoPath}
-                      videoPath={videoPath}
-                      projectName={projectName}
-                      label={label}
-                      isSelected={isSelected}
-                      disabled={selecting}
-                      onSelect={() => handleSelect(slotKey, variantNum)}
-                    />
-                  )
-                })}
-              </div>
-            ) : !isSlotGenerating ? (
-              <div className="text-center text-[10px] text-gray-600 py-2">No candidates yet</div>
-            ) : null}
-          </div>
-        )
-      })}
+
+      {/* Candidates grid */}
+      {candidates.length === 0 && !generating ? (
+        <div className="text-center text-sm text-gray-600 py-4">No video candidates yet.</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {candidates.map((videoPath, idx) => {
+            const variantNum = idx + 1
+            const label = videoPath.split('/').pop() || `v${variantNum}`
+            const isSelected = selectedVariant === variantNum
+            return (
+              <LazyVideoCard
+                key={videoPath}
+                videoPath={videoPath}
+                projectName={projectName}
+                label={label}
+                isSelected={isSelected}
+                disabled={selecting}
+                onSelect={() => handleSelect(variantNum)}
+              />
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

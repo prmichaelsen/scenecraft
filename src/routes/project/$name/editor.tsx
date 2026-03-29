@@ -22,8 +22,6 @@ import {
   postSelectTransitions,
   postSelectKeyframes,
   postUpdateTransitionRemap,
-  postGenerateSlotKeyframeCandidates,
-  postSelectSlotKeyframes,
   fetchEffects,
   fetchAudioIntelligence,
   type AudioEvent,
@@ -79,16 +77,12 @@ export type Transition = {
   from: string
   to: string
   durationSeconds: number
-  slots: number
   action: string
   useGlobalPrompt: boolean
-  candidates: Record<string, string[]>  // slot_0: ["path/v1.mp4", ...], slot_1: [...]
-  hasSelectedVideos: boolean[]
-  selected: (number | string | null)[]  // per-slot: variant number (1-based), imported path, or null
+  candidates: string[]  // ["path/v1.mp4", "path/v2.mp4", ...]
+  hasSelectedVideo: boolean
+  selected: number | string | null  // variant number (1-based), imported path, or null
   remap: { method: string; target_duration: number }
-  slotKeyframeCandidates: Record<string, string[]>  // "tr_006_slot_0": ["path/v1.png", ...]
-  selectedSlotKeyframes: Record<string, number | null>  // "tr_006_slot_0": 1 (1-based variant)
-  slotActions: string[]  // per-slot action prompts for multi-slot transitions
 }
 
 export type EditorData = {
@@ -148,22 +142,40 @@ const getEditorData = createServerFn({ method: 'GET' })
             ).filter(Boolean)
           : [],
       })),
-      transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => ({
-        id: tr.id as string,
-        from: tr.from as string,
-        to: tr.to as string,
-        durationSeconds: tr.durationSeconds as number,
-        slots: tr.slots as number,
-        action: (tr.action as string) || '',
-        useGlobalPrompt: tr.useGlobalPrompt !== false,
-        candidates: (tr.candidates as Record<string, string[]>) || {},
-        hasSelectedVideos: (tr.hasSelectedVideos as boolean[]) || [],
-        selected: (tr.selected as (number | string | null)[]) || [],
-        remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
-        slotKeyframeCandidates: (tr.slotKeyframeCandidates as Record<string, string[]>) || {},
-        selectedSlotKeyframes: (tr.selectedSlotKeyframes as Record<string, number | null>) || {},
-        slotActions: (tr.slotActions as string[]) || [],
-      })),
+      transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
+        // Flatten slot-based candidates to a simple list
+        const rawCandidates = tr.candidates
+        let candidates: string[] = []
+        if (Array.isArray(rawCandidates)) {
+          candidates = rawCandidates as string[]
+        } else if (rawCandidates && typeof rawCandidates === 'object') {
+          // Legacy slot format: { slot_0: ["v1.mp4", ...] } → flatten
+          const slotMap = rawCandidates as Record<string, string[]>
+          candidates = slotMap['slot_0'] || Object.values(slotMap)[0] || []
+        }
+        const rawSelected = tr.selected
+        let selected: number | string | null = null
+        if (Array.isArray(rawSelected)) {
+          selected = (rawSelected as (number | string | null)[])[0] ?? null
+        } else {
+          selected = rawSelected as number | string | null
+        }
+        const rawHasSelected = tr.hasSelectedVideos
+        const hasSelectedVideo = Array.isArray(rawHasSelected) ? (rawHasSelected as boolean[])[0] ?? false : !!rawHasSelected
+
+        return {
+          id: tr.id as string,
+          from: tr.from as string,
+          to: tr.to as string,
+          durationSeconds: tr.durationSeconds as number,
+          action: (tr.action as string) || '',
+          useGlobalPrompt: tr.useGlobalPrompt !== false,
+          candidates,
+          hasSelectedVideo,
+          selected,
+          remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
+        }
+      }),
       audioFile: kfData.audioFile || null,
       projectName: data.name,
       beats: Array.isArray(beatsData.beats) ? beatsData.beats : [],
@@ -222,18 +234,6 @@ export const selectKeyframes = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
   .handler(async ({ data }) => {
     return postSelectKeyframes(data.projectName, data.selections)
-  })
-
-export const generateSlotKeyframeCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId?: string }) => input)
-  .handler(async ({ data }) => {
-    return postGenerateSlotKeyframeCandidates(data.projectName, data.transitionId)
-  })
-
-export const selectSlotKeyframes = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
-  .handler(async ({ data }) => {
-    return postSelectSlotKeyframes(data.projectName, data.selections)
   })
 
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
