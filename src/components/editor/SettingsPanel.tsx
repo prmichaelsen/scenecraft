@@ -78,22 +78,12 @@ export function SettingsPanel({ data, projectName, onClose, onSave }: SettingsPa
             <div className="px-3 py-3 space-y-3">
               <div className="text-[10px] text-gray-500 uppercase tracking-wider">Preview</div>
 
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">
-                  Resolution: {settings?.preview_quality || 50}% of {data.meta.resolution[0]}x{data.meta.resolution[1]}
-                  {' '}({Math.round(data.meta.resolution[0] * (Number(settings?.preview_quality) || 50) / 100)}x{Math.round(data.meta.resolution[1] * (Number(settings?.preview_quality) || 50) / 100)})
-                </label>
-                <input
-                  type="number"
-                  min={5}
-                  max={100}
-                  step={5}
-                  value={settings?.preview_quality || 50}
-                  onChange={(e) => handleSettingChange('preview_quality', parseInt(e.target.value) || 50)}
-                  disabled={saving}
-                  className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
+              <PreviewQualityInput
+                value={settings?.preview_quality || 50}
+                resolution={data.meta.resolution}
+                disabled={saving}
+                onCommit={(v) => handleSettingChange('preview_quality', v)}
+              />
 
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Preview FPS</label>
@@ -185,6 +175,36 @@ export function SettingsPanel({ data, projectName, onClose, onSave }: SettingsPa
             </div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function PreviewQualityInput({ value, resolution, disabled, onCommit }: {
+  value: number; resolution: [number, number]; disabled: boolean; onCommit: (v: number) => void
+}) {
+  const [local, setLocal] = useState(String(value))
+  const pct = parseInt(local) || value
+  const w = Math.round(resolution[0] * pct / 100)
+  const h = Math.round(resolution[1] * pct / 100)
+
+  return (
+    <div>
+      <label className="text-xs text-gray-400 block mb-1">Preview Resolution %</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={5}
+          max={100}
+          step={5}
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={() => { const v = Math.max(5, Math.min(100, parseInt(local) || 50)); setLocal(String(v)); onCommit(v) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur() } }}
+          disabled={disabled}
+          className="w-20 bg-gray-800 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none"
+        />
+        <span className="text-[10px] text-gray-500">{w}x{h}</span>
       </div>
     </div>
   )
