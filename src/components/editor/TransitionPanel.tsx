@@ -347,8 +347,9 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
         data: { projectName, selections: { [selectionKey]: variantIndex } },
       })
       setSelectedMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
-      // Invalidate frame cache so preview re-decodes the newly selected video
-      invalidateEntry(`tr:${transition.id}:${slotKey}`)
+      // Invalidate old frame cache entry (old variant key)
+      const oldVariant = selectedMap[slotKey] ?? 'none'
+      invalidateEntry(`tr:${transition.id}:${slotKey}:v${oldVariant}`)
       autoSave(projectName, `Selected ${transition.id} ${slotKey} v${variantIndex}`)
     } finally {
       setSelecting(false)

@@ -138,7 +138,9 @@ export function Timeline({ data }: { data: EditorData }) {
     for (const tr of nearby) {
       const numSlots = tr.slots || 1
       for (let s = 0; s < numSlots; s++) {
-        const key = `tr:${tr.id}:slot_${s}`
+        // Include selected variant in key so cache invalidates on re-selection
+        const selectedVariant = tr.selected?.[s] ?? 'none'
+        const key = `tr:${tr.id}:slot_${s}:v${selectedVariant}`
         keepKeys.add(key)
         if (!isLoaded(key)) {
           preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_${s}.mp4`))
@@ -159,7 +161,8 @@ export function Timeline({ data }: { data: EditorData }) {
       const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
       const slotIdx = Math.floor(progress * numSlots)
       const slotProgress = (progress * numSlots) % 1
-      const key = `tr:${activeTransition.id}:slot_${slotIdx}`
+      const selectedVariant = activeTransition.selected?.[slotIdx] ?? 'none'
+      const key = `tr:${activeTransition.id}:slot_${slotIdx}:v${selectedVariant}`
       return getFrameAtProgress(key, slotProgress)
     }
     return null
