@@ -409,14 +409,23 @@ export function Timeline({ data }: { data: EditorData }) {
                 isPlaying={isPlaying}
                 className="w-full h-full object-cover"
                 videoSrc={activeTransition && activeTransitionFrom && activeTransitionTo
-                  ? beatlabFileUrl(data.projectName, `selected_transitions/${activeTransition.id}_slot_0.mp4`)
+                  ? (() => {
+                      const numSlots = activeTransition.slots || 1
+                      const tStart = activeTransitionFrom.timeSeconds
+                      const tEnd = activeTransitionTo.timeSeconds
+                      const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+                      const slotIdx = Math.floor(progress * numSlots)
+                      return beatlabFileUrl(data.projectName, `selected_transitions/${activeTransition.id}_slot_${slotIdx}.mp4`)
+                    })()
                   : undefined}
                 videoCurrentTime={activeTransition && activeTransitionFrom && activeTransitionTo
                   ? (() => {
+                      const numSlots = activeTransition.slots || 1
                       const tStart = activeTransitionFrom.timeSeconds
                       const tEnd = activeTransitionTo.timeSeconds
-                      const progress = Math.max(0, Math.min(1, (currentTime - tStart) / (tEnd - tStart)))
-                      return progress // Will be multiplied by video.duration in the component — but we don't know it here. Pass progress 0-1 and let component handle it.
+                      const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+                      const slotProgress = (progress * numSlots) % 1
+                      return slotProgress
                     })()
                   : undefined}
                 videoPlaying={!!activeTransition && isPlaying}
