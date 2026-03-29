@@ -144,6 +144,24 @@ export function isLoading(key: string): boolean {
 }
 
 /**
+ * Invalidate a cache entry — forces re-decode on next preload.
+ */
+export async function invalidateEntry(key: string) {
+  const entry = memoryCache.get(key)
+  if (entry) {
+    entry.frames.forEach((f) => f.close())
+    memoryCache.delete(key)
+  }
+  loadingKeys.delete(key)
+  // Also remove from IndexedDB
+  try {
+    const db = await openDb()
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).delete(key)
+  } catch {}
+}
+
+/**
  * Preload a transition's video frames into the cache.
  * First checks IndexedDB, then decodes from the video URL if needed.
  */

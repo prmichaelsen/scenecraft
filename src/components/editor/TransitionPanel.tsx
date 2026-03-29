@@ -3,6 +3,7 @@ import type { Transition } from '@/routes/project/$name/editor'
 import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
+import { invalidateEntry } from '@/lib/frame-cache'
 import type { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 const STORAGE_KEY = 'beatlab-transition-panel-width'
@@ -346,6 +347,8 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
         data: { projectName, selections: { [selectionKey]: variantIndex } },
       })
       setSelectedMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
+      // Invalidate frame cache so preview re-decodes the newly selected video
+      invalidateEntry(`tr:${transition.id}:${slotKey}`)
       autoSave(projectName, `Selected ${transition.id} ${slotKey} v${variantIndex}`)
     } finally {
       setSelecting(false)
