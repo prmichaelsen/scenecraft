@@ -24,6 +24,8 @@ import {
   postGenerateSlotKeyframeCandidates,
   postSelectSlotKeyframes,
   fetchEffects,
+  fetchAudioIntelligence,
+  type AudioEvent,
   postUpdateEffects,
   type UserEffect,
   type BeatSuppression,
@@ -98,6 +100,7 @@ export type EditorData = {
   projectName: string
   beats: Beat[]
   sections: Section[]
+  audioEvents: AudioEvent[]
   narrativeSections: NarrativeSection[]
   timelineInfo: TimelineInfo | null
   userEffects: UserEffect[]
@@ -107,12 +110,13 @@ export type EditorData = {
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const [kfData, beatsData, effectsData, narrativeData, timelineData] = await Promise.all([
+    const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData] = await Promise.all([
       fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null })),
       fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
       fetchEffects(data.name).catch(() => ({ effects: [], suppressions: [] })),
       fetchNarrative(data.name).catch(() => ({ sections: [] })),
       fetchTimelines(data.name).catch(() => null),
+      fetchAudioIntelligence(data.name).catch(() => ({ activeFile: null, events: [], sections: [], ruleCount: 0 })),
     ])
 
     return {
@@ -154,6 +158,7 @@ const getEditorData = createServerFn({ method: 'GET' })
       projectName: data.name,
       beats: Array.isArray(beatsData.beats) ? beatsData.beats : [],
       sections: Array.isArray(beatsData.sections) ? beatsData.sections : [],
+      audioEvents: aiData.events || [],
       narrativeSections: narrativeData.sections || [],
       timelineInfo: timelineData,
       userEffects: effectsData.effects || [],

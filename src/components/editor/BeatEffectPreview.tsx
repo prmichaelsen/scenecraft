@@ -1,10 +1,11 @@
 import { useRef, useEffect, useCallback } from 'react'
 import type { Beat } from '@/routes/project/$name/editor'
-import type { UserEffect, BeatSuppression } from '@/lib/beatlab-client'
+import type { UserEffect, BeatSuppression, AudioEvent } from '@/lib/beatlab-client'
 
 type BeatEffectPreviewProps = {
   src: string
   beats: Beat[]
+  audioEvents?: AudioEvent[]
   userEffects?: UserEffect[]
   suppressions?: BeatSuppression[]
   currentTime: number
@@ -66,6 +67,7 @@ function isTimeSuppressed(time: number, suppressions: BeatSuppression[]): boolea
 
 function findEffectIntensity(
   beats: Beat[],
+  audioEvents: AudioEvent[],
   userEffects: UserEffect[],
   suppressions: BeatSuppression[],
   time: number,
@@ -73,8 +75,38 @@ function findEffectIntensity(
   let bestIntensity = 0
   let bestDecay = 0
 
-  // Check auto-beats (unless suppressed)
-  if (beats.length > 0 && !isTimeSuppressed(time, suppressions)) {
+  const suppressed = isTimeSuppressed(time, suppressions)
+
+  // Prefer audio intelligence events over raw beats
+  if (audioEvents.length > 0 && !suppressed) {
+    // Audio events are sorted by time — binary search for nearby events
+    let lo = 0
+    let hi = audioEvents.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (audioEvents[mid].time <= time) {
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    // Check events near the current time (search backward from hi)
+    for (let i = hi; i >= Math.max(0, hi - 5); i--) {
+      const ev = audioEvents[i]
+      const dist = time - ev.time
+      if (dist < 0) continue
+      if (dist > ev.duration + 0.1) break
+      if (dist <= ev.duration) {
+        const decay = Math.max(0, 1 - dist / ev.duration)
+        const d = decay * decay
+        if (ev.intensity * d > bestIntensity * bestDecay) {
+          bestIntensity = ev.intensity
+          bestDecay = d
+        }
+      }
+    }
+  } else if (beats.length > 0 && !suppressed) {
+    // Fallback to raw beats
     let lo = 0
     let hi = beats.length - 1
     while (lo <= hi) {
@@ -114,7 +146,7 @@ function findEffectIntensity(
   return { intensity: bestIntensity, decay: bestDecay }
 }
 
-export function BeatEffectPreview({ src, beats, userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0 }: BeatEffectPreviewProps) {
+export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0 }: BeatEffectPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const glRef = useRef<{
     gl: WebGLRenderingContext
@@ -267,7 +299,7 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     }
 
     const loop = () => {
-      const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
+      const { intensity, decay } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
       render(intensity, decay, blendFactor)
       animRef.current = requestAnimationFrame(loop)
     }
@@ -279,7 +311,7 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
   // Render on time changes when paused (seeking) or when frame changes
   useEffect(() => {
     if (isPlaying) return
-    const { intensity, decay } = findEffectIntensity(beats, userEffects, suppressions, currentTime)
+    const { intensity, decay } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
     render(intensity, decay, blendFactor)
   }, [currentTime, isPlaying, beats, render, transitionFrameA, transitionFrameB, blendFactor])
 

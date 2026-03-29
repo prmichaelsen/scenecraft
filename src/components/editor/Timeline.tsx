@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
-import type { UserEffect, BeatSuppression } from '@/lib/beatlab-client'
+import type { UserEffect, BeatSuppression, AudioEvent } from '@/lib/beatlab-client'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
@@ -12,7 +12,8 @@ import { KeyframePanel } from './KeyframePanel'
 import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
-import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, evictFarEntries, isLoaded } from '@/lib/frame-cache'
+import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, evictFarEntries, isLoaded, setPreviewResolution } from '@/lib/frame-cache'
+import { fetchSettings } from '@/lib/settings-client'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -58,6 +59,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [previewQuality, setPreviewQuality] = useState(50)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
   const [selectedSuppressionId, setSelectedSuppressionId] = useState<string | null>(null)
@@ -76,6 +78,22 @@ export function Timeline({ data }: { data: EditorData }) {
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
   }, [])
+
+  // Fetch preview quality from project settings
+  useEffect(() => {
+    fetchSettings(data.projectName)
+      .then((s) => setPreviewQuality(Math.max(5, Math.min(100, s.preview_quality || 50))))
+      .catch(() => {})
+  }, [data.projectName])
+
+  // Compute canvas resolution from quality percentage and project resolution
+  const canvasWidth = Math.round(data.meta.resolution[0] * previewQuality / 100)
+  const canvasHeight = Math.round(data.meta.resolution[1] * previewQuality / 100)
+
+  // Keep frame cache resolution in sync
+  useEffect(() => {
+    setPreviewResolution(canvasWidth, canvasHeight)
+  }, [canvasWidth, canvasHeight])
   const scrollRef = useRef<HTMLDivElement>(null)
   const seekFnRef = useRef<((time: number) => void) | null>(null)
   const playPauseFnRef = useRef<(() => void) | null>(null)
@@ -152,7 +170,21 @@ export function Timeline({ data }: { data: EditorData }) {
 
     // Evict frames for transitions far from playhead
     evictFarEntries(keepKeys)
-  }, [currentTime, data.transitions, data.projectName, currentKeyframe, kfMap])
+  }, [currentTime, data.transitions, data.projectName, currentKeyframe, kfMap, canvasWidth, canvasHeight])
+
+  // Build adjacency lookup: which transition comes before/after each transition?
+  const sortedTransitions = [...data.transitions]
+    .filter((tr) => tr.hasSelectedVideos?.some(Boolean) && kfMap.has(tr.from) && kfMap.has(tr.to))
+    .sort((a, b) => kfMap.get(a.from)!.timeSeconds - kfMap.get(b.from)!.timeSeconds)
+
+  // Map: keyframeId -> transition that ends at it (tr.to === kfId)
+  const trEndingAt = new Map<string, Transition>()
+  // Map: keyframeId -> transition that starts at it (tr.from === kfId)
+  const trStartingAt = new Map<string, Transition>()
+  for (const tr of sortedTransitions) {
+    trEndingAt.set(tr.to, tr)
+    trStartingAt.set(tr.from, tr)
+  }
 
   // Get crossfade frame pair for smooth transitions at all boundaries
   const CROSSFADE_FRAMES = 4 // 4 frames each side = 8 frame overlap at 24fps (~333ms)
@@ -183,21 +215,41 @@ export function Timeline({ data }: { data: EditorData }) {
       return { frameA, frameB: null, blendFactor: 0 }
     }
 
-    // Transition start: crossfade from "from" keyframe image
+    // Transition start: crossfade from previous transition's last frames (or keyframe image)
     if (slotIdx === 0 && currentFrameIdx < xfade) {
       const blend = currentFrameIdx / xfade
+      const prevTr = trEndingAt.get(activeTransition.from)
+      if (prevTr) {
+        // Adjacent transition exists — crossfade from its last slot's last frames
+        const prevNumSlots = prevTr.slots || 1
+        const prevSlot = prevNumSlots - 1
+        const prevVariant = prevTr.selected?.[prevSlot] ?? 'none'
+        const prevKey = `tr:${prevTr.id}:slot_${prevSlot}:v${prevVariant}`
+        const prevEntry = getFrames(prevKey)
+        const prevProgress = prevEntry ? (prevEntry.frames.length - 1) / prevEntry.frames.length : 0.999
+        return { frameA: getFrameAtProgress(prevKey, prevProgress), frameB: frameA, blendFactor: blend }
+      }
+      // No adjacent transition — fall back to keyframe image
       const kfKey = `kf:${activeTransition.from}`
       return { frameA: getFrameAtProgress(kfKey, 0), frameB: frameA, blendFactor: blend }
     }
 
-    // Transition end: crossfade to "to" keyframe image
+    // Transition end: crossfade to next transition's first frames (or keyframe image)
     if (slotIdx === numSlots - 1 && currentFrameIdx >= totalFrames - xfade) {
       const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
+      const nextTr = trStartingAt.get(activeTransition.to)
+      if (nextTr) {
+        // Adjacent transition exists — crossfade into its first slot's first frames
+        const nextVariant = nextTr.selected?.[0] ?? 'none'
+        const nextKey = `tr:${nextTr.id}:slot_0:v${nextVariant}`
+        return { frameA, frameB: getFrameAtProgress(nextKey, 0), blendFactor: blend }
+      }
+      // No adjacent transition — fall back to keyframe image
       const kfKey = `kf:${activeTransition.to}`
       return { frameA, frameB: getFrameAtProgress(kfKey, 0), blendFactor: blend }
     }
 
-    // Near end of current slot: crossfade into next slot
+    // Near end of current slot: crossfade into next slot (intra-transition)
     if (slotIdx < numSlots - 1 && currentFrameIdx >= totalFrames - xfade) {
       const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
       const nextVariant = activeTransition.selected?.[slotIdx + 1] ?? 'none'
@@ -205,7 +257,7 @@ export function Timeline({ data }: { data: EditorData }) {
       return { frameA, frameB: getFrameAtProgress(nextKey, 0), blendFactor: blend }
     }
 
-    // Near start of current slot: crossfade from previous slot
+    // Near start of current slot: crossfade from previous slot (intra-transition)
     if (slotIdx > 0 && currentFrameIdx < xfade) {
       const blend = currentFrameIdx / xfade
       const prevVariant = activeTransition.selected?.[slotIdx - 1] ?? 'none'
@@ -543,11 +595,14 @@ export function Timeline({ data }: { data: EditorData }) {
                   ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
                   : ''}
                 beats={data.beats}
+                audioEvents={data.audioEvents}
                 userEffects={userEffects}
                 suppressions={suppressions}
                 currentTime={currentTime}
                 isPlaying={isPlaying}
                 className="w-full h-full object-cover"
+                canvasWidth={canvasWidth}
+                canvasHeight={canvasHeight}
                 transitionFrameA={crossfadeData.frameA}
                 transitionFrameB={crossfadeData.frameB}
                 blendFactor={crossfadeData.blendFactor}
@@ -693,7 +748,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 Audio
               </div>
               {/* Beat markers */}
-              <BeatMarkers beats={data.beats} pxPerSec={pxPerSec} />
+              <BeatMarkers beats={data.beats} audioEvents={data.audioEvents} pxPerSec={pxPerSec} />
               {data.audioFile && (
                 <AudioTrack
                   audioUrl={beatlabFileUrl(data.projectName, data.audioFile)}
@@ -795,6 +850,7 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setShowSettings(false)}
           onSave={() => router.invalidate()}
+          onPreviewQualityChange={(q) => setPreviewQuality(q)}
         />
       )}
 
@@ -860,11 +916,44 @@ function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec
   )
 }
 
-function BeatMarkers({ beats, pxPerSec }: { beats: Beat[]; pxPerSec: number }) {
+const STEM_COLORS: Record<string, string> = {
+  kick: '239, 68, 68',     // red
+  snare: '59, 130, 246',   // blue
+  hh: '156, 163, 175',     // gray
+  crash: '245, 158, 11',   // amber
+  ride: '168, 85, 247',    // purple
+  bass: '34, 197, 94',     // green
+  piano: '236, 72, 153',   // pink
+  guitar: '251, 146, 60',  // orange
+  other: '107, 114, 128',  // gray
+}
+
+function BeatMarkers({ beats, audioEvents, pxPerSec }: { beats: Beat[]; audioEvents?: AudioEvent[]; pxPerSec: number }) {
+  // Prefer audio intelligence events over raw beats
+  if (audioEvents && audioEvents.length > 0) {
+    const step = pxPerSec < 10 ? 4 : pxPerSec < 20 ? 2 : 1
+    return (
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        {audioEvents.map((ev, i) => {
+          if (i % step !== 0) return null
+          const x = ev.time * pxPerSec
+          const w = Math.max(ev.duration * pxPerSec, 1)
+          const color = STEM_COLORS[ev.stem_source] || STEM_COLORS.other
+          const opacity = 0.1 + ev.intensity * 0.35
+          return (
+            <div
+              key={i}
+              className="absolute top-0 h-full"
+              style={{ left: x, width: w, backgroundColor: `rgba(${color}, ${opacity})` }}
+            />
+          )
+        })}
+      </div>
+    )
+  }
+
   if (beats.length === 0) return null
 
-  // Only render visible beats (skip rendering thousands of off-screen markers)
-  // At low zoom levels, thin out to avoid overwhelming the DOM
   const step = pxPerSec < 10 ? 4 : pxPerSec < 20 ? 2 : 1
 
   return (

@@ -102,6 +102,34 @@ export async function fetchBrowse(subpath: string = '') {
   return res.json() as Promise<{ path: string; entries: BrowseEntry[] }>
 }
 
+export type AudioEvent = {
+  time: number
+  duration: number
+  effect: string
+  intensity: number
+  sustain: number
+  stem_source: string
+  rationale?: string
+}
+
+export type AudioSection = {
+  start_time: number
+  end_time: number
+  description: string
+}
+
+export async function fetchAudioIntelligence(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/audio-intelligence`)
+  if (!res.ok) throw new Error(`Failed to fetch audio intelligence: ${res.status}`)
+  return res.json() as Promise<{
+    activeFile: string | null
+    availableFiles?: string[]
+    events: AudioEvent[]
+    sections: AudioSection[]
+    ruleCount: number
+  }>
+}
+
 export async function fetchDirectoryListing(project: string, subpath: string = '') {
   const params = subpath ? `?path=${encodeURIComponent(subpath)}` : ''
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/ls${params}`)
