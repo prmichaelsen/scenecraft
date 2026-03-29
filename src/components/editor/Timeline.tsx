@@ -75,12 +75,16 @@ export function Timeline({ data }: { data: EditorData }) {
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
 
-  const totalWidth = duration * pxPerSec
-
   const keyframes: KeyframeWithTime[] = data.keyframes.map((kf) => ({
     ...kf,
     timeSeconds: dragOverrides[kf.id] ?? parseTimestamp(kf.timestamp),
   }))
+
+  // Use audio duration if available, otherwise estimate from keyframes
+  const effectiveDuration = duration > 0 ? duration : (
+    keyframes.length > 0 ? Math.max(...keyframes.map((kf) => kf.timeSeconds)) + 10 : 60
+  )
+  const totalWidth = effectiveDuration * pxPerSec
 
   const currentKeyframe = [...keyframes]
     .reverse()
@@ -113,16 +117,62 @@ export function Timeline({ data }: { data: EditorData }) {
       const scrollLeft = scrollRef.current.scrollLeft
       const clickX = e.clientX - rect.left + scrollLeft
       const time = clickX / pxPerSec
-      if (time >= 0 && time <= duration) {
-        seekFnRef.current?.(time)
+      if (time >= 0 && time <= effectiveDuration) {
+        if (seekFnRef.current) {
+          seekFnRef.current(time)
+        } else {
+          setCurrentTime(time)
+        }
       }
     },
-    [pxPerSec, duration]
+    [pxPerSec, effectiveDuration]
   )
 
+  // Fallback time driver when audio isn't loaded yet
+  const fallbackTimerRef = useRef<number>(0)
+  const fallbackLastRef = useRef<number>(0)
+  const usingFallbackTimer = useRef(false)
+
+  // Stop fallback timer if audio takes over
+  useEffect(() => {
+    if (!isPlaying && usingFallbackTimer.current) {
+      cancelAnimationFrame(fallbackTimerRef.current)
+      usingFallbackTimer.current = false
+    }
+  }, [isPlaying])
+
   const handlePlayPause = useCallback(() => {
-    playPauseFnRef.current?.()
-  }, [])
+    if (playPauseFnRef.current) {
+      // Cancel any running fallback timer since audio is in control
+      if (usingFallbackTimer.current) {
+        cancelAnimationFrame(fallbackTimerRef.current)
+        usingFallbackTimer.current = false
+      }
+      playPauseFnRef.current()
+    } else {
+      // No audio loaded — toggle fallback timer
+      if (isPlaying) {
+        cancelAnimationFrame(fallbackTimerRef.current)
+        usingFallbackTimer.current = false
+        setIsPlaying(false)
+      } else {
+        fallbackLastRef.current = performance.now()
+        usingFallbackTimer.current = true
+        setIsPlaying(true)
+        const tick = () => {
+          const now = performance.now()
+          const delta = (now - fallbackLastRef.current) / 1000
+          fallbackLastRef.current = now
+          setCurrentTime((prev) => {
+            const next = prev + delta
+            return next <= effectiveDuration ? next : prev
+          })
+          fallbackTimerRef.current = requestAnimationFrame(tick)
+        }
+        fallbackTimerRef.current = requestAnimationFrame(tick)
+      }
+    }
+  }, [isPlaying, effectiveDuration])
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
     setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
@@ -393,7 +443,7 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <div className="text-sm font-mono text-gray-400">
-            {formatTime(currentTime)} / {formatTime(duration)}
+            {formatTime(currentTime)} / {formatTime(effectiveDuration)}
           </div>
 
           {/* Add keyframe at playhead */}
