@@ -59,16 +59,16 @@ export function Timeline({ data }: { data: EditorData }) {
   const nextFxId = useRef(data.userEffects.length + 1)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
-  const [videoTrackHeight, setVideoTrackHeight] = useState(() => {
-    if (typeof window === 'undefined') return DEFAULT_VIDEO_HEIGHT
-    const stored = localStorage.getItem(VIDEO_HEIGHT_KEY)
-    return stored ? Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(stored, 10))) : DEFAULT_VIDEO_HEIGHT
-  })
-  const [previewHeight, setPreviewHeight] = useState(() => {
-    if (typeof window === 'undefined') return DEFAULT_PREVIEW_HEIGHT
-    const stored = localStorage.getItem(PREVIEW_HEIGHT_KEY)
-    return stored ? Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(stored, 10))) : DEFAULT_PREVIEW_HEIGHT
-  })
+  const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
+  const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
+
+  // Restore persisted heights from localStorage after mount (SSR-safe)
+  useEffect(() => {
+    const storedVideo = localStorage.getItem(VIDEO_HEIGHT_KEY)
+    if (storedVideo) setVideoTrackHeight(Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(storedVideo, 10))))
+    const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
+    if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
+  }, [])
   const scrollRef = useRef<HTMLDivElement>(null)
   const seekFnRef = useRef<((time: number) => void) | null>(null)
   const playPauseFnRef = useRef<(() => void) | null>(null)
