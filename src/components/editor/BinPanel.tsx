@@ -17,7 +17,7 @@ type BinPanelProps = {
   onClose: () => void
   onRestore: () => void
   onPoolSelect: (selection: PoolSelection | null) => void
-  onInsertPoolItem: (selection: PoolSelection) => void
+  onInsertPoolItem: (selection: PoolSelection, mode: 'at-playhead' | 'after-current-kf') => void
   poolSelection: PoolSelection | null
   activeKeyframes: ActiveKeyframe[]
   activeTransitions: ActiveTransition[]
@@ -290,18 +290,26 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                 </div>
               )}
 
-              {/* Insert button — only shown when a pool item is selected */}
+              {/* Insert buttons — only shown when a pool item is selected */}
               {poolSelection && (
                 <div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-2 space-y-1">
                   <div className="text-[10px] text-gray-400 truncate mb-1">
                     Selected: {poolSelection.entry.name}
                   </div>
-                  <button
-                    onClick={() => onInsertPoolItem(poolSelection)}
-                    className="w-full text-xs bg-green-700 hover:bg-green-600 text-white py-1.5 rounded transition-colors"
-                  >
-                    Insert at Playhead
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => onInsertPoolItem(poolSelection, 'at-playhead')}
+                      className="flex-1 text-xs bg-green-700 hover:bg-green-600 text-white py-1.5 rounded transition-colors"
+                    >
+                      Insert at Playhead
+                    </button>
+                    <button
+                      onClick={() => onInsertPoolItem(poolSelection, 'after-current-kf')}
+                      className="flex-1 text-xs bg-blue-700 hover:bg-blue-600 text-white py-1.5 rounded transition-colors"
+                    >
+                      Insert After KF
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

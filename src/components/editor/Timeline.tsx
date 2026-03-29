@@ -1005,10 +1005,23 @@ export function Timeline({ data }: { data: EditorData }) {
           onRestore={() => router.invalidate()}
           poolSelection={poolSelection}
           onPoolSelect={setPoolSelection}
-          onInsertPoolItem={async (selection) => {
+          onInsertPoolItem={async (selection, mode) => {
             try {
               const { postInsertPoolItem } = await import('@/lib/beatlab-client')
-              await postInsertPoolItem(data.projectName, selection.type, selection.entry.path, currentTime)
+              let insertTime = currentTime
+              if (mode === 'after-current-kf' && currentKeyframe) {
+                // Find the next keyframe after the current one
+                const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+                const nextKf = sorted.find((kf) => kf.timeSeconds > currentKeyframe.timeSeconds + 0.01)
+                if (nextKf) {
+                  // Insert halfway between current and next keyframe
+                  insertTime = (currentKeyframe.timeSeconds + nextKf.timeSeconds) / 2
+                } else {
+                  // No next keyframe — insert 1 second after current
+                  insertTime = currentKeyframe.timeSeconds + 1
+                }
+              }
+              await postInsertPoolItem(data.projectName, selection.type, selection.entry.path, insertTime)
               setPoolSelection(null)
               router.invalidate()
             } catch (e) {
