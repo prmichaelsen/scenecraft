@@ -85,9 +85,37 @@ export function AudioTrack({
 
       if (destroyed || !containerRef.current) return
 
+      // Create audio element for early playback — browser can play before waveform decodes
+      const audio = new Audio(audioUrl)
+      audio.crossOrigin = 'anonymous'
+      audio.preload = 'auto'
+
+      // Enable playback as soon as audio is buffered (before waveform is ready)
+      audio.addEventListener('canplay', () => {
+        if (destroyed) return
+        playPauseRef.current = () => {
+          if (audio.paused) { audio.play().catch(() => {}); onPlayingChange(true) }
+          else { audio.pause(); onPlayingChange(false) }
+        }
+        seekRef.current = (time: number) => {
+          audio.currentTime = time
+          onTimeUpdate(time)
+        }
+      }, { once: true })
+
+      audio.addEventListener('durationchange', () => {
+        if (audio.duration && isFinite(audio.duration)) {
+          onDurationChange(audio.duration)
+        }
+      })
+
+      audio.addEventListener('timeupdate', () => {
+        onTimeUpdate(audio.currentTime)
+      })
+
       const ws = WaveSurfer.create({
         container: containerRef.current!,
-        url: audioUrl,
+        media: audio,
         waveColor: '#4a5568',
         progressColor: '#3b82f6',
         cursorColor: 'transparent',
@@ -107,6 +135,14 @@ export function AudioTrack({
       ws.on('ready', () => {
         if (destroyed) return
         setLoading(false)
+
+        // Once waveform is decoded, upgrade seek/play to use WaveSurfer for waveform sync
+        seekRef.current = (time: number) => {
+          ws.setTime(time)
+          onTimeUpdate(time)
+        }
+        playPauseRef.current = () => ws.playPause()
+
         const dur = ws.getDuration()
         onDurationChange(dur)
 
@@ -119,12 +155,6 @@ export function AudioTrack({
       ws.on('timeupdate', (time) => onTimeUpdate(time))
       ws.on('play', () => onPlayingChange(true))
       ws.on('pause', () => onPlayingChange(false))
-
-      seekRef.current = (time: number) => {
-        ws.setTime(time)
-        onTimeUpdate(time)
-      }
-      playPauseRef.current = () => ws.playPause()
 
       wsRef.current = ws
     }
