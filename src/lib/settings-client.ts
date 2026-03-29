@@ -1,7 +1,7 @@
 const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'
 
 export type ProjectSettings = {
-  preview_quality: 'low' | 'medium' | 'high'
+  preview_quality: number  // percentage of original resolution (5-100)
   audio_intelligence_file: string | null
   render_preview_fps: number
   available_audio_intelligence_files: string[]
