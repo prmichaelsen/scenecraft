@@ -217,45 +217,68 @@ export function BeatEffectPreview({ src, beats, userEffects = [], suppressions =
     }
   }, [])
 
-  // Start/stop video playback — only runs when play state or source changes
-  const wasPlaying = useRef(false)
+  // Control video playback — handles source changes, play/pause, and seeking
   const lastVideoSrc = useRef('')
+  const lastVideoPlaying = useRef(false)
+
+  const seekAndPlay = useCallback((video: HTMLVideoElement, progress: number | undefined) => {
+    if (progress !== undefined && isFinite(video.duration)) {
+      video.currentTime = progress * video.duration
+    }
+    video.play().catch(() => {})
+  }, [])
+
   useEffect(() => {
     const video = videoRef.current
     if (!video || !videoSrc) {
       useVideo.current = false
+      lastVideoPlaying.current = false
       return
     }
 
     if (videoPlaybackRate) video.playbackRate = Math.max(0.25, Math.min(16, videoPlaybackRate))
 
-    if (videoPlaying && !wasPlaying.current) {
-      // Starting playback — seek to current position then play
-      if (videoCurrentTime !== undefined && isFinite(video.duration)) {
-        video.currentTime = videoCurrentTime * video.duration
+    const srcChanged = videoSrc !== lastVideoSrc.current
+    const playChanged = !!videoPlaying !== lastVideoPlaying.current
+
+    if (srcChanged && videoPlaying) {
+      // Source changed while playing — need to wait for new source to load
+      const onReady = () => {
+        useVideo.current = true
+        seekAndPlay(video, videoCurrentTime)
+        video.removeEventListener('loadeddata', onReady)
       }
-      video.play().catch(() => {})
-    } else if (!videoPlaying && wasPlaying.current) {
-      // Stopping playback
+      if (video.readyState >= 2) {
+        // Already loaded (e.g., browser cache)
+        useVideo.current = true
+        seekAndPlay(video, videoCurrentTime)
+      } else {
+        video.addEventListener('loadeddata', onReady)
+      }
+    } else if (playChanged && videoPlaying) {
+      // Starting playback (same source)
+      if (video.readyState >= 2) {
+        seekAndPlay(video, videoCurrentTime)
+      } else {
+        const onReady = () => {
+          seekAndPlay(video, videoCurrentTime)
+          video.removeEventListener('loadeddata', onReady)
+        }
+        video.addEventListener('loadeddata', onReady)
+      }
+    } else if (playChanged && !videoPlaying) {
       video.pause()
     }
 
-    // Source changed while playing — seek and continue
-    if (videoSrc !== lastVideoSrc.current && videoPlaying) {
-      if (videoCurrentTime !== undefined && isFinite(video.duration)) {
-        video.currentTime = videoCurrentTime * video.duration
-      }
-    }
-
-    wasPlaying.current = !!videoPlaying
     lastVideoSrc.current = videoSrc
-  }, [videoSrc, videoPlaying, videoPlaybackRate])
+    lastVideoPlaying.current = !!videoPlaying
+  }, [videoSrc, videoPlaying, videoPlaybackRate, videoCurrentTime, seekAndPlay])
 
-  // Seek when paused (user scrubbing) — only when NOT playing
+  // Seek when paused (user scrubbing)
   useEffect(() => {
     const video = videoRef.current
     if (!video || !videoSrc || videoPlaying) return
-    if (videoCurrentTime !== undefined && isFinite(video.duration)) {
+    if (video.readyState >= 2 && videoCurrentTime !== undefined && isFinite(video.duration)) {
       video.currentTime = videoCurrentTime * video.duration
     }
   }, [videoCurrentTime, videoSrc, videoPlaying])
