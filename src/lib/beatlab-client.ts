@@ -150,6 +150,15 @@ export async function postGenerateTransitionAction(project: string, transitionId
   return res.json() as Promise<{ success: boolean; action: string }>
 }
 
+export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-remap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, targetDuration, method }),
+  })
+  return res.json()
+}
+
 export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
     method: 'POST',

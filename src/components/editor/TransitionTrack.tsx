@@ -10,6 +10,7 @@ type TransitionTrackProps = {
   onTransitionClick: (tr: Transition) => void
   onBoundaryDrag: (keyframeId: string, newTimeSeconds: number) => void
   onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
+  onRemapChange: (transitionId: string, targetDuration: number) => void
 }
 
 export function TransitionTrack({
@@ -20,15 +21,16 @@ export function TransitionTrack({
   onTransitionClick,
   onBoundaryDrag,
   onBoundaryDragEnd,
+  onRemapChange,
 }: TransitionTrackProps) {
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
-  const dragState = useRef<{ dragging: boolean; keyframeId: string; startX: number; startTime: number; minTime: number; maxTime: number } | null>(null)
+  const dragState = useRef<{ dragging: boolean; keyframeId: string; transitionId: string; otherKfTime: number; startX: number; startTime: number; minTime: number; maxTime: number } | null>(null)
   const didDrag = useRef(false)
 
-  const handleEdgeDown = useCallback((e: React.MouseEvent, keyframeId: string, currentTime: number, minTime: number, maxTime: number) => {
+  const handleEdgeDown = useCallback((e: React.MouseEvent, keyframeId: string, transitionId: string, otherKfTime: number, currentTime: number, minTime: number, maxTime: number) => {
     e.stopPropagation()
     e.preventDefault()
-    dragState.current = { dragging: true, keyframeId, startX: e.clientX, startTime: currentTime, minTime, maxTime }
+    dragState.current = { dragging: true, keyframeId, transitionId, otherKfTime, startX: e.clientX, startTime: currentTime, minTime, maxTime }
     didDrag.current = false
 
     const handleMouseMove = (ev: MouseEvent) => {
@@ -44,6 +46,9 @@ export function TransitionTrack({
         const deltaX = ev.clientX - dragState.current.startX
         const newTime = Math.max(dragState.current.minTime, Math.min(dragState.current.maxTime, dragState.current.startTime + deltaX / pxPerSec))
         onBoundaryDragEnd(dragState.current.keyframeId, newTime)
+        // Compute new timeline duration and update remap
+        const newDuration = Math.abs(newTime - dragState.current.otherKfTime)
+        onRemapChange(dragState.current.transitionId, newDuration)
       }
       dragState.current = null
       document.removeEventListener('mousemove', handleMouseMove)
@@ -100,7 +105,7 @@ export function TransitionTrack({
                 className="absolute top-0 left-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
                 onMouseDown={(e) => {
                   const prevKf = fromIdx > 0 ? sortedKfs[fromIdx - 1] : null
-                  handleEdgeDown(e, tr.from, fromKf.timeSeconds, prevKf ? prevKf.timeSeconds + 0.1 : 0, toKf.timeSeconds - 0.1)
+                  handleEdgeDown(e, tr.from, tr.id, toKf.timeSeconds, fromKf.timeSeconds, prevKf ? prevKf.timeSeconds + 0.1 : 0, toKf.timeSeconds - 0.1)
                 }}
               />
 
@@ -109,7 +114,7 @@ export function TransitionTrack({
                 className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
                 onMouseDown={(e) => {
                   const nextKf = toIdx < sortedKfs.length - 1 ? sortedKfs[toIdx + 1] : null
-                  handleEdgeDown(e, tr.to, toKf.timeSeconds, fromKf.timeSeconds + 0.1, nextKf ? nextKf.timeSeconds - 0.1 : Infinity)
+                  handleEdgeDown(e, tr.to, tr.id, fromKf.timeSeconds, toKf.timeSeconds, fromKf.timeSeconds + 0.1, nextKf ? nextKf.timeSeconds - 0.1 : Infinity)
                 }}
               />
 

@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression } from '@/lib/beatlab-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
@@ -306,6 +306,10 @@ export function Timeline({ data }: { data: EditorData }) {
     router.invalidate()
   }, [data.projectName, router])
 
+  const handleTransitionRemapChange = useCallback(async (transitionId: string, targetDuration: number) => {
+    await updateTransitionRemap({ data: { projectName: data.projectName, transitionId, targetDuration } })
+  }, [data.projectName])
+
   const handleDeleteTransition = useCallback(async (id: string) => {
     await deleteTransition({ data: { projectName: data.projectName, transitionId: id } })
     setSelectedTransition(null)
@@ -575,6 +579,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 onTransitionClick={handleTransitionClick}
                 onBoundaryDrag={handleKeyframeDrag}
                 onBoundaryDragEnd={handleKeyframeDragEnd}
+                onRemapChange={handleTransitionRemapChange}
               />
             </div>
 

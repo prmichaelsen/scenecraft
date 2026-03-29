@@ -20,6 +20,7 @@ import {
   postImport,
   postSelectTransitions,
   postSelectKeyframes,
+  postUpdateTransitionRemap,
   fetchEffects,
   postUpdateEffects,
   type UserEffect,
@@ -227,6 +228,12 @@ export const updateMeta = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; fields: Record<string, string> }) => input)
   .handler(async ({ data }) => {
     return postUpdateMeta(data.projectName, data.fields)
+  })
+
+export const updateTransitionRemap = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string; targetDuration: number }) => input)
+  .handler(async ({ data }) => {
+    return postUpdateTransitionRemap(data.projectName, data.transitionId, data.targetDuration)
   })
 
 export const selectTransitions = createServerFn({ method: 'POST' })
