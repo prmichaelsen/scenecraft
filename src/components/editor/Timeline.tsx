@@ -533,6 +533,8 @@ export function Timeline({ data }: { data: EditorData }) {
                 pxPerSec={pxPerSec}
                 selectedId={selectedTransition?.id ?? null}
                 onTransitionClick={handleTransitionClick}
+                onBoundaryDrag={handleKeyframeDrag}
+                onBoundaryDragEnd={handleKeyframeDragEnd}
               />
             </div>
 
