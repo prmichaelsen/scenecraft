@@ -690,6 +690,7 @@ export function Timeline({ data }: { data: EditorData }) {
       {/* Side panel */}
       {selectedKeyframe && !showBin && !selectedTransition && (
         <KeyframePanel
+          key={selectedKeyframe.id}
           keyframe={selectedKeyframe}
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
@@ -701,6 +702,7 @@ export function Timeline({ data }: { data: EditorData }) {
       {/* Transition panel */}
       {selectedTransition && !showBin && !selectedKeyframe && (
         <TransitionPanel
+          key={selectedTransition.id}
           transition={selectedTransition}
           projectName={data.projectName}
           motionPrompt={data.meta.motionPrompt}
