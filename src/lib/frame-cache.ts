@@ -6,10 +6,29 @@
 
 const DB_NAME = 'beatlab-frame-cache'
 const STORE_NAME = 'frames'
-const DB_VERSION = 1
-const PREVIEW_WIDTH = 256
-const PREVIEW_HEIGHT = 144
+const DB_VERSION = 2 // bumped: keys now include resolution suffix
+let PREVIEW_WIDTH = 256
+let PREVIEW_HEIGHT = 144
 const TARGET_FPS = 24
+
+// Embed resolution in IndexedDB key so different resolutions coexist
+function dbKey(key: string): string {
+  return `${key}@${PREVIEW_WIDTH}x${PREVIEW_HEIGHT}`
+}
+
+export function setPreviewResolution(width: number, height: number) {
+  if (width === PREVIEW_WIDTH && height === PREVIEW_HEIGHT) return
+  PREVIEW_WIDTH = width
+  PREVIEW_HEIGHT = height
+  // Flush in-memory cache — bitmaps are resolution-specific
+  for (const entry of memoryCache.values()) {
+    entry.frames.forEach((f) => f.close())
+  }
+  memoryCache.clear()
+  loadingKeys.clear()
+  // IndexedDB is NOT cleared — old-resolution entries have different keys
+  // and will be ignored. They can be cleaned up later if needed.
+}
 
 // ── IndexedDB helpers ─────────────────────────────────────────────
 
@@ -18,9 +37,11 @@ function openDb(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME)
+      // Clear old store on version upgrade (v1 keys had no resolution suffix)
+      if (db.objectStoreNames.contains(STORE_NAME)) {
+        db.deleteObjectStore(STORE_NAME)
       }
+      db.createObjectStore(STORE_NAME)
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
@@ -157,7 +178,7 @@ export async function invalidateEntry(key: string) {
   try {
     const db = await openDb()
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).delete(key)
+    tx.objectStore(STORE_NAME).delete(dbKey(key))
   } catch {}
 }
 
@@ -170,8 +191,8 @@ export async function preloadTransition(key: string, videoUrl: string): Promise<
   loadingKeys.add(key)
 
   try {
-    // Try IndexedDB first
-    const cached = await getFromDb(key)
+    // Try IndexedDB first (resolution-keyed)
+    const cached = await getFromDb(dbKey(key))
     if (cached && cached.length > 0) {
       const bitmaps = await blobsToBitmaps(cached)
       memoryCache.set(key, {
@@ -192,8 +213,8 @@ export async function preloadTransition(key: string, videoUrl: string): Promise<
         duration: frames.length / TARGET_FPS,
       })
 
-      // Persist to IndexedDB in background
-      bitmapsToBlobs(frames).then((blobs) => putToDb(key, blobs)).catch(() => {})
+      // Persist to IndexedDB in background (resolution-keyed)
+      bitmapsToBlobs(frames).then((blobs) => putToDb(dbKey(key), blobs)).catch(() => {})
     }
   } catch {
     // Failed to decode — will try again next time

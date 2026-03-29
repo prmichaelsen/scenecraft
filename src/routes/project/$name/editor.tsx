@@ -36,6 +36,7 @@ import {
   type NarrativeSection,
   type TimelineInfo,
 } from '@/lib/timeline-client'
+import { fetchSettings } from '@/lib/settings-client'
 
 export type { NarrativeSection, TimelineInfo } from '@/lib/timeline-client'
 
@@ -84,6 +85,8 @@ export type Transition = {
   hasSelectedVideos: boolean[]
   selected: (number | string | null)[]  // per-slot: variant number (1-based), imported path, or null
   remap: { method: string; target_duration: number }
+  slotKeyframeCandidates: Record<string, string[]>  // "tr_006_slot_0": ["path/v1.png", ...]
+  selectedSlotKeyframes: Record<string, number | null>  // "tr_006_slot_0": 1 (1-based variant)
 }
 
 export type EditorData = {
@@ -105,18 +108,20 @@ export type EditorData = {
   timelineInfo: TimelineInfo | null
   userEffects: UserEffect[]
   beatSuppressions: BeatSuppression[]
+  previewQuality: number
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData] = await Promise.all([
+    const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData, settingsData] = await Promise.all([
       fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null })),
       fetchBeats(data.name).catch(() => ({ beats: [], sections: [] })),
       fetchEffects(data.name).catch(() => ({ effects: [], suppressions: [] })),
       fetchNarrative(data.name).catch(() => ({ sections: [] })),
       fetchTimelines(data.name).catch(() => null),
       fetchAudioIntelligence(data.name).catch(() => ({ activeFile: null, events: [], sections: [], ruleCount: 0 })),
+      fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
     ])
 
     return {
@@ -153,6 +158,8 @@ const getEditorData = createServerFn({ method: 'GET' })
         hasSelectedVideos: (tr.hasSelectedVideos as boolean[]) || [],
         selected: (tr.selected as (number | string | null)[]) || [],
         remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
+        slotKeyframeCandidates: (tr.slotKeyframeCandidates as Record<string, string[]>) || {},
+        selectedSlotKeyframes: (tr.selectedSlotKeyframes as Record<string, number | null>) || {},
       })),
       audioFile: kfData.audioFile || null,
       projectName: data.name,
@@ -163,6 +170,7 @@ const getEditorData = createServerFn({ method: 'GET' })
       timelineInfo: timelineData,
       userEffects: effectsData.effects || [],
       beatSuppressions: effectsData.suppressions || [],
+      previewQuality: settingsData.preview_quality || 50,
     }
   })
 

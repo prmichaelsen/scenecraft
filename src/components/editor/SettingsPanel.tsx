@@ -8,9 +8,10 @@ type SettingsPanelProps = {
   projectName: string
   onClose: () => void
   onSave: () => void
+  onPreviewQualityChange?: (quality: number) => void
 }
 
-export function SettingsPanel({ data, projectName, onClose, onSave }: SettingsPanelProps) {
+export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQualityChange }: SettingsPanelProps) {
   const [settings, setSettings] = useState<ProjectSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -27,7 +28,7 @@ export function SettingsPanel({ data, projectName, onClose, onSave }: SettingsPa
     fetchSettings(projectName)
       .then((s) => setSettings(s))
       .catch(() => setSettings({
-        preview_quality: 'medium',
+        preview_quality: 50,
         audio_intelligence_file: null,
         render_preview_fps: 24,
         available_audio_intelligence_files: [],
@@ -82,7 +83,7 @@ export function SettingsPanel({ data, projectName, onClose, onSave }: SettingsPa
                 value={settings?.preview_quality || 50}
                 resolution={data.meta.resolution}
                 disabled={saving}
-                onCommit={(v) => handleSettingChange('preview_quality', v)}
+                onCommit={(v) => { handleSettingChange('preview_quality', v); onPreviewQualityChange?.(v) }}
               />
 
               <div>

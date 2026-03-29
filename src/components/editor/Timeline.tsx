@@ -13,7 +13,6 @@ import { BinPanel } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, evictFarEntries, isLoaded, setPreviewResolution } from '@/lib/frame-cache'
-import { fetchSettings } from '@/lib/settings-client'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { EffectEditor } from './EffectEditor'
@@ -59,7 +58,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [previewQuality, setPreviewQuality] = useState(50)
+  const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
   const [selectedSuppressionId, setSelectedSuppressionId] = useState<string | null>(null)
@@ -78,13 +77,6 @@ export function Timeline({ data }: { data: EditorData }) {
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
   }, [])
-
-  // Fetch preview quality from project settings
-  useEffect(() => {
-    fetchSettings(data.projectName)
-      .then((s) => setPreviewQuality(Math.max(5, Math.min(100, s.preview_quality || 50))))
-      .catch(() => {})
-  }, [data.projectName])
 
   // Compute canvas resolution from quality percentage and project resolution
   const canvasWidth = Math.round(data.meta.resolution[0] * previewQuality / 100)
@@ -268,6 +260,19 @@ export function Timeline({ data }: { data: EditorData }) {
     }
 
     return { frameA, frameB: null, blendFactor: 0 }
+  })()
+
+  // Check if the active transition's frames are still loading
+  const isTransitionLoading = (() => {
+    if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) return false
+    const numSlots = activeTransition.slots || 1
+    const tStart = activeTransitionFrom.timeSeconds
+    const tEnd = activeTransitionTo.timeSeconds
+    const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+    const slotIdx = Math.floor(progress * numSlots)
+    const selectedVariant = activeTransition.selected?.[slotIdx] ?? 'none'
+    const key = `tr:${activeTransition.id}:slot_${slotIdx}:v${selectedVariant}`
+    return !isLoaded(key)
   })()
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -588,7 +593,7 @@ export function Timeline({ data }: { data: EditorData }) {
           className="bg-gray-950 flex items-center justify-center shrink-0 overflow-hidden"
           style={{ height: previewHeight }}
         >
-          <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden">
+          <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
             {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
               <BeatEffectPreview
                 src={currentKeyframe?.hasSelectedImage
@@ -610,6 +615,11 @@ export function Timeline({ data }: { data: EditorData }) {
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
                 No image
+              </div>
+            )}
+            {isTransitionLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
+                <span className="text-white/70 text-xs">Loading frames...</span>
               </div>
             )}
           </div>

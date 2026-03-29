@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions, generateSlotKeyframeCandidates } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, generateTransitionCandidates, selectTransitions, generateSlotKeyframeCandidates, selectSlotKeyframes } from '@/routes/project/$name/editor'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
@@ -358,6 +358,14 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
 
   const [generatingSlotKfs, setGeneratingSlotKfs] = useState(false)
   const [slotKfStatus, setSlotKfStatus] = useState('')
+  const [slotKfCandidates, setSlotKfCandidates] = useState<Record<string, string[]>>(transition.slotKeyframeCandidates || {})
+  const [selectedSlotKfMap, setSelectedSlotKfMap] = useState<Record<string, number | null>>(transition.selectedSlotKeyframes || {})
+  const [selectingSlotKf, setSelectingSlotKf] = useState(false)
+
+  useEffect(() => {
+    setSlotKfCandidates(transition.slotKeyframeCandidates || {})
+    setSelectedSlotKfMap(transition.selectedSlotKeyframes || {})
+  }, [transition.id, transition.slotKeyframeCandidates, transition.selectedSlotKeyframes])
 
   const handleGenerateSlotKeyframes = useCallback(async () => {
     setGeneratingSlotKfs(true)
@@ -370,6 +378,11 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
         if (msg.type === 'job_progress') {
           setSlotKfStatus(`${msg.completed}/${msg.total} generated`)
         } else if (msg.type === 'job_completed') {
+          const res = msg.result as { candidates?: Record<string, string[]> }
+          if (res?.candidates) {
+            setSlotKfCandidates(res.candidates)
+            transition.slotKeyframeCandidates = res.candidates
+          }
           setGeneratingSlotKfs(false)
           setSlotKfStatus('')
           unsub()
@@ -385,6 +398,20 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
     }
   }, [projectName, transition.id, socket])
 
+  const handleSelectSlotKf = useCallback(async (slotKey: string, variantIndex: number) => {
+    setSelectingSlotKf(true)
+    try {
+      await selectSlotKeyframes({
+        data: { projectName, selections: { [slotKey]: variantIndex } },
+      })
+      setSelectedSlotKfMap((prev) => ({ ...prev, [slotKey]: variantIndex }))
+      transition.selectedSlotKeyframes = { ...transition.selectedSlotKeyframes, [slotKey]: variantIndex }
+      autoSave(projectName, `Selected ${slotKey} intermediate keyframe v${variantIndex}`)
+    } finally {
+      setSelectingSlotKf(false)
+    }
+  }, [projectName, transition])
+
   const isMultiSlot = transition.slots > 1
   const slotKeys = Object.keys(candidates).sort()
   const totalVideos = slotKeys.reduce((sum, k) => sum + candidates[k].length, 0)
@@ -393,7 +420,7 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
     <div className="p-2 space-y-3">
       {/* Multi-slot: intermediate keyframe generation step */}
       {isMultiSlot && (
-        <div className="bg-gray-800/50 rounded p-2 space-y-1">
+        <div className="bg-gray-800/50 rounded p-2 space-y-2">
           <div className="text-[10px] text-gray-500 uppercase tracking-wider">Step 1: Intermediate Keyframes</div>
           <div className="text-[10px] text-gray-400">
             This transition has {transition.slots} slots. Generate intermediate keyframe images before video candidates.
@@ -403,8 +430,48 @@ function CandidatesTab({ transition, projectName, socket }: { transition: Transi
             disabled={generatingSlotKfs}
             className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-1.5 rounded transition-colors"
           >
-            {generatingSlotKfs ? slotKfStatus || 'Generating...' : 'Generate Slot Keyframes'}
+            {generatingSlotKfs ? slotKfStatus || 'Generating...' : Object.keys(slotKfCandidates).length > 0 ? 'Regenerate Slot Keyframes' : 'Generate Slot Keyframes'}
           </button>
+
+          {/* Slot keyframe candidate images */}
+          {Object.keys(slotKfCandidates).sort().map((slotKey) => (
+            <div key={slotKey} className="space-y-1">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider flex items-center gap-1">
+                {slotKey.replace(/_/g, ' ')}
+                {selectedSlotKfMap[slotKey] != null && <span className="text-green-400">&#10003;</span>}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {slotKfCandidates[slotKey].map((imgPath, idx) => {
+                  const variantNum = idx + 1
+                  const isSelected = selectedSlotKfMap[slotKey] === variantNum
+                  return (
+                    <div
+                      key={imgPath}
+                      onClick={() => !selectingSlotKf && handleSelectSlotKf(slotKey, variantNum)}
+                      className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors ${
+                        isSelected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'
+                      } ${selectingSlotKf ? 'opacity-50 pointer-events-none' : ''}`}
+                    >
+                      <img
+                        src={beatlabFileUrl(projectName, imgPath)}
+                        alt={`v${variantNum}`}
+                        className="w-full aspect-video object-cover"
+                        loading="lazy"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-gray-300 font-mono">v{variantNum}</span>
+                          {isSelected && (
+                            <span className="text-[9px] bg-blue-500 text-white px-1 rounded">selected</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
