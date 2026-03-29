@@ -274,6 +274,7 @@ export const getBin = createServerFn({ method: 'GET' })
 export const Route = createFileRoute('/project/$name/editor')({
   component: EditorPage,
   loader: ({ params }) => getEditorData({ data: { name: params.name } }),
+  staleTime: Infinity, // Only re-fetch on router.invalidate() (after mutations)
 })
 
 function EditorPage() {

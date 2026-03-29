@@ -5,6 +5,6 @@ export const getRouter = () => {
   return createRouter({
     routeTree,
     scrollRestoration: true,
-    defaultPreloadStaleTime: 30_000,
+    defaultPreloadStaleTime: 300_000, // 5 minutes — loader re-runs on router.invalidate() after mutations
   })
 }
