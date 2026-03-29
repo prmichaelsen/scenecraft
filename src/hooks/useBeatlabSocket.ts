@@ -1,6 +1,9 @@
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 
 const WS_URL = (import.meta.env.VITE_BEATLAB_WS_URL || 'ws://localhost:8889')
+const PING_INTERVAL = 30_000
+const RECONNECT_BASE = 2_000
+const RECONNECT_MAX = 30_000
 
 export type JobMessage =
   | { type: 'job_started'; jobId: string; jobType: string; total: number; meta: Record<string, unknown> }
@@ -13,92 +16,138 @@ export type JobMessage =
 
 type JobListener = (msg: JobMessage) => void
 
-export function useBeatlabSocket() {
-  const wsRef = useRef<WebSocket | null>(null)
-  const listenersRef = useRef<Map<string, Set<JobListener>>>(new Map())
-  const globalListenersRef = useRef<Set<JobListener>>(new Set())
-  const [connected, setConnected] = useState(false)
+// ── Module-level singleton ──────────────────────────────────────────
 
-  useEffect(() => {
-    let ws: WebSocket
-    let reconnectTimer: ReturnType<typeof setTimeout>
+let ws: WebSocket | null = null
+let pingTimer: ReturnType<typeof setInterval> | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let reconnectDelay = RECONNECT_BASE
+let connected = false
 
-    let reconnectDelay = 2000
-    const MAX_RECONNECT_DELAY = 30000
+const jobListeners = new Map<string, Set<JobListener>>()
+const globalListeners = new Set<JobListener>()
+const connectedSubscribers = new Set<() => void>()
 
-    function connect() {
-      try {
-        ws = new WebSocket(WS_URL)
-      } catch {
-        // WebSocket constructor can throw if URL is invalid
-        reconnectTimer = setTimeout(connect, reconnectDelay)
-        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
+function setConnected(value: boolean) {
+  connected = value
+  for (const cb of connectedSubscribers) cb()
+}
+
+function routeMessage(msg: JobMessage) {
+  // Notify global listeners
+  for (const listener of globalListeners) {
+    listener(msg)
+  }
+  // Notify job-specific listeners
+  if ('jobId' in msg) {
+    const listeners = jobListeners.get(msg.jobId)
+    if (listeners) {
+      for (const listener of listeners) {
+        listener(msg)
+      }
+    }
+  }
+}
+
+function handleMessage(event: MessageEvent) {
+  try {
+    const msg = JSON.parse(event.data) as JobMessage
+
+    // Convert job_status responses into the event types listeners expect
+    if (msg.type === 'job_status') {
+      if (msg.status === 'completed') {
+        routeMessage({ type: 'job_completed', jobId: msg.jobId, result: msg.result })
         return
       }
-
-      ws.onopen = () => {
-        wsRef.current = ws
-        setConnected(true)
-        reconnectDelay = 2000 // Reset on successful connect
-      }
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data) as JobMessage
-          // Notify global listeners
-          for (const listener of globalListenersRef.current) {
-            listener(msg)
-          }
-          // Notify job-specific listeners
-          if ('jobId' in msg) {
-            const jobListeners = listenersRef.current.get(msg.jobId)
-            if (jobListeners) {
-              for (const listener of jobListeners) {
-                listener(msg)
-              }
-            }
-          }
-        } catch {}
-      }
-
-      ws.onclose = () => {
-        wsRef.current = null
-        setConnected(false)
-        reconnectTimer = setTimeout(connect, reconnectDelay)
-        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
-      }
-
-      ws.onerror = () => {
-        ws.close()
+      if (msg.status === 'failed') {
+        routeMessage({ type: 'job_failed', jobId: msg.jobId, error: msg.error || 'Unknown error' })
+        return
       }
     }
 
-    connect()
+    routeMessage(msg)
+  } catch {}
+}
 
-    return () => {
-      clearTimeout(reconnectTimer)
-      ws?.close()
+function reQueryActiveJobs() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  for (const jobId of jobListeners.keys()) {
+    ws.send(JSON.stringify({ type: 'get_job', jobId }))
+  }
+}
+
+function connect() {
+  try {
+    const socket = new WebSocket(WS_URL)
+
+    socket.onopen = () => {
+      ws = socket
+      reconnectDelay = RECONNECT_BASE
+      setConnected(true)
+
+      // Start ping keepalive
+      if (pingTimer) clearInterval(pingTimer)
+      pingTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }))
+        }
+      }, PING_INTERVAL)
+
+      // Re-query any jobs that have active listeners (may have completed while disconnected)
+      reQueryActiveJobs()
     }
-  }, [])
 
-  const subscribeJob = useCallback((jobId: string, listener: JobListener) => {
-    if (!listenersRef.current.has(jobId)) {
-      listenersRef.current.set(jobId, new Set())
+    socket.onmessage = handleMessage
+
+    socket.onclose = () => {
+      ws = null
+      setConnected(false)
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
+      reconnectTimer = setTimeout(connect, reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX)
     }
-    listenersRef.current.get(jobId)!.add(listener)
 
-    return () => {
-      listenersRef.current.get(jobId)?.delete(listener)
-      if (listenersRef.current.get(jobId)?.size === 0) {
-        listenersRef.current.delete(jobId)
-      }
+    socket.onerror = () => {
+      socket.close()
     }
-  }, [])
+  } catch {
+    reconnectTimer = setTimeout(connect, reconnectDelay)
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX)
+  }
+}
 
-  const subscribeAll = useCallback((listener: JobListener) => {
-    globalListenersRef.current.add(listener)
-    return () => { globalListenersRef.current.delete(listener) }
-  }, [])
+function subscribeJob(jobId: string, listener: JobListener) {
+  if (!jobListeners.has(jobId)) {
+    jobListeners.set(jobId, new Set())
+  }
+  jobListeners.get(jobId)!.add(listener)
 
-  return { connected, subscribeJob, subscribeAll }
+  return () => {
+    jobListeners.get(jobId)?.delete(listener)
+    if (jobListeners.get(jobId)?.size === 0) {
+      jobListeners.delete(jobId)
+    }
+  }
+}
+
+function subscribeAll(listener: JobListener) {
+  globalListeners.add(listener)
+  return () => { globalListeners.delete(listener) }
+}
+
+// Start connection immediately on import (client-side only)
+if (typeof window !== 'undefined') {
+  connect()
+}
+
+// ── React hook (thin wrapper) ───────────────────────────────────────
+
+export function useBeatlabSocket() {
+  const isConnected = useSyncExternalStore(
+    (cb) => { connectedSubscribers.add(cb); return () => { connectedSubscribers.delete(cb) } },
+    () => connected,
+    () => false, // SSR snapshot
+  )
+
+  return { connected: isConnected, subscribeJob, subscribeAll }
 }
