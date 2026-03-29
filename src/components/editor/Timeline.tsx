@@ -474,17 +474,6 @@ export function Timeline({ data }: { data: EditorData }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [keyframes, currentTime])
 
-  // Keep playhead in view
-  useEffect(() => {
-    if (!scrollRef.current || !isPlaying) return
-    const el = scrollRef.current
-    const playheadX = currentTime * pxPerSec
-    const viewLeft = el.scrollLeft
-    const viewRight = viewLeft + el.clientWidth
-    if (playheadX < viewLeft || playheadX > viewRight - 50) {
-      el.scrollLeft = playheadX - 100
-    }
-  }, [currentTime, pxPerSec, isPlaying])
 
   return (
     <div className="h-full flex">

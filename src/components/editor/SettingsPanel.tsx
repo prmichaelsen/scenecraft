@@ -79,17 +79,20 @@ export function SettingsPanel({ data, projectName, onClose, onSave }: SettingsPa
               <div className="text-[10px] text-gray-500 uppercase tracking-wider">Preview</div>
 
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Quality</label>
-                <select
-                  value={settings?.preview_quality || 'medium'}
-                  onChange={(e) => handleSettingChange('preview_quality', e.target.value)}
+                <label className="text-xs text-gray-400 block mb-1">
+                  Resolution: {settings?.preview_quality || 50}% of {data.meta.resolution[0]}x{data.meta.resolution[1]}
+                  {' '}({Math.round(data.meta.resolution[0] * (Number(settings?.preview_quality) || 50) / 100)}x{Math.round(data.meta.resolution[1] * (Number(settings?.preview_quality) || 50) / 100)})
+                </label>
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={settings?.preview_quality || 50}
+                  onChange={(e) => handleSettingChange('preview_quality', parseInt(e.target.value) || 50)}
                   disabled={saving}
                   className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="low">Low (128x72)</option>
-                  <option value="medium">Medium (256x144)</option>
-                  <option value="high">High (512x288)</option>
-                </select>
+                />
               </div>
 
               <div>
