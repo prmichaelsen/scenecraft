@@ -276,9 +276,20 @@ export function Timeline({ data }: { data: EditorData }) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const factor = e.deltaY > 0 ? 0.85 : 1.18
-      setPxPerSec((prev) => Math.max(0.1, prev * factor))
+      const el = scrollRef.current
+      if (el) {
+        // Zoom around the playhead: keep playhead at the same viewport position
+        const playheadX = currentTime * pxPerSec
+        const viewportOffset = playheadX - el.scrollLeft
+        const newPxPerSec = Math.max(0.1, pxPerSec * factor)
+        const newPlayheadX = currentTime * newPxPerSec
+        el.scrollLeft = newPlayheadX - viewportOffset
+        setPxPerSec(newPxPerSec)
+      } else {
+        setPxPerSec((prev) => Math.max(0.1, prev * factor))
+      }
     }
-  }, [])
+  }, [currentTime, pxPerSec])
 
   const handleTrackClick = useCallback(
     (e: React.MouseEvent) => {
@@ -649,7 +660,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
       if (e.code === 'Space') {
         e.preventDefault()
-        playPauseFnRef.current?.()
+        handlePlayPause()
       }
 
       // Arrow keys: navigate between keyframes
@@ -673,7 +684,7 @@ export function Timeline({ data }: { data: EditorData }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [keyframes, currentTime])
+  }, [keyframes, currentTime, handlePlayPause])
 
 
   return (
@@ -970,6 +981,8 @@ export function Timeline({ data }: { data: EditorData }) {
           transition={selectedTransition}
           projectName={data.projectName}
           motionPrompt={data.meta.motionPrompt}
+          audioDescriptions={data.audioDescriptions}
+          keyframes={keyframes}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
         />
@@ -983,6 +996,8 @@ export function Timeline({ data }: { data: EditorData }) {
           onRestore={() => router.invalidate()}
           poolSelection={poolSelection}
           onPoolSelect={setPoolSelection}
+          activeKeyframes={data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
+          activeTransitions={data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
         />
       )}
 
