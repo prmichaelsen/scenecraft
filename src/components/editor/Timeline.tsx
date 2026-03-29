@@ -20,7 +20,6 @@ import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
-import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
 function parseTimestamp(ts: string): number {
   const parts = ts.split(':')
@@ -46,7 +45,6 @@ const MAX_PREVIEW_HEIGHT = 500
 
 export function Timeline({ data }: { data: EditorData }) {
   const router = useRouter()
-  const socket = useBeatlabSocket()
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [pxPerSec, setPxPerSec] = useState(20)
@@ -221,22 +219,15 @@ export function Timeline({ data }: { data: EditorData }) {
       return { frameA, frameB: null, blendFactor: 0 }
     }
 
-    // Transition start: crossfade from previous transition or keyframe image
-    if (currentFrameIdx < xfade) {
+    // Transition start: crossfade from previous keyframe image (skip if previous is a transition — its end zone handles it)
+    const prevTr = trEndingAt.get(activeTransition.from)
+    if (!prevTr && currentFrameIdx < xfade) {
       const blend = currentFrameIdx / xfade
-      const prevTr = trEndingAt.get(activeTransition.from)
-      if (prevTr) {
-        const prevVariant = prevTr.selected ?? 'none'
-        const prevKey = `tr:${prevTr.id}:v${prevVariant}`
-        const prevEntry = getFrames(prevKey)
-        const prevProgress = prevEntry ? (prevEntry.frames.length - 1) / prevEntry.frames.length : 0.999
-        return { frameA: getFrameAtProgress(prevKey, prevProgress), frameB: frameA, blendFactor: blend }
-      }
       const kfKey = `kf:${activeTransition.from}`
       return { frameA: getFrameAtProgress(kfKey, 0), frameB: frameA, blendFactor: blend }
     }
 
-    // Transition end: crossfade to next transition or keyframe image
+    // Transition end: crossfade to next transition's first frame or keyframe image
     if (currentFrameIdx >= totalFrames - xfade) {
       const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
       const nextTr = trStartingAt.get(activeTransition.to)
@@ -264,7 +255,7 @@ export function Timeline({ data }: { data: EditorData }) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const factor = e.deltaY > 0 ? 0.85 : 1.18
-      setPxPerSec((prev) => Math.max(5, Math.min(200, prev * factor)))
+      setPxPerSec((prev) => Math.max(0.1, prev * factor))
     }
   }, [])
 
@@ -844,7 +835,6 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
           onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
-          socket={socket}
         />
       )}
 
@@ -857,7 +847,6 @@ export function Timeline({ data }: { data: EditorData }) {
           motionPrompt={data.meta.motionPrompt}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
-          socket={socket}
         />
       )}
 
@@ -867,7 +856,6 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setShowBin(false)}
           onRestore={() => router.invalidate()}
-          socket={socket}
         />
       )}
 
