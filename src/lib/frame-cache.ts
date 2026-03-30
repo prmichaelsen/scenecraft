@@ -176,7 +176,7 @@ let totalMemoryBytes = 0
 
 // ImageBitmaps live in GPU/process memory, not JS heap.
 // 32GB allows ~26 transitions at 1920x1080 (~1.2GB each) in memory.
-const MEMORY_LIMIT = 32 * 1024 * 1024 * 1024
+const MEMORY_LIMIT = 2 * 1024 * 1024 * 1024 // 2GB — keep well under browser tab limit
 
 function estimateEntryBytes(frames: ImageBitmap[]): number {
   if (frames.length === 0) return 0

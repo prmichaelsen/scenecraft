@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
@@ -13,6 +14,7 @@ import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview } from './BeatEffectPreview'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
+import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { RulesTrack } from './RulesTrack'
@@ -21,6 +23,7 @@ import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
+import { AudioDescriptionTrack } from './AudioDescriptionTrack'
 
 function parseTimestamp(ts: string | number): number {
   if (typeof ts === 'number') return ts
@@ -59,6 +62,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/beatlab-client').AudioDescription | null>(null)
   const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
@@ -226,7 +230,10 @@ export function Timeline({ data }: { data: EditorData }) {
 
     const tStart = activeTransitionFrom.timeSeconds
     const tEnd = activeTransitionTo.timeSeconds
-    const progress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+    const linearProgress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
+    const progress = activeTransition.remap.method === 'curve'
+      ? evaluateCurve(activeTransition.remap.curve_points, linearProgress)
+      : linearProgress
 
     const selectedVariant = activeTransition.selected ?? 'none'
     const key = `tr:${activeTransition.id}:v${selectedVariant}`
@@ -358,17 +365,18 @@ export function Timeline({ data }: { data: EditorData }) {
     }
   }, [isPlaying, effectiveDuration])
 
-  const closeAllPanels = useCallback(() => {
+  const closeAllPanels = useCallback((opts?: { keepPool?: boolean }) => {
     setSelectedKeyframe(null)
     setSelectedTransition(null)
     setSelectedEffect(null)
     setSelectedEffectIds(new Set())
     setSelectedSuppressionId(null)
-    setPoolSelection(null)
+    if (!opts?.keepPool) setPoolSelection(null)
     setShowBin(false)
     setShowVersions(false)
     setShowSections(false)
     setShowSettings(false)
+    setSelectedAudioDescription(null)
   }, [])
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
@@ -780,11 +788,6 @@ export function Timeline({ data }: { data: EditorData }) {
             + Suppress
           </button>
 
-          {poolSelection && (
-            <span className="text-[10px] text-green-400">
-              Selected: {poolSelection.entry.name}
-            </span>
-          )}
 
           <button
             onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}
@@ -843,6 +846,28 @@ export function Timeline({ data }: { data: EditorData }) {
           <div style={{ width: Math.max(totalWidth, 800), minHeight: '100%' }} className="relative flex flex-col">
             {/* Time ruler */}
             <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
+
+            {/* Audio description track */}
+            {data.audioDescriptions.length > 0 && (
+              <div className="relative shrink-0 border-b border-gray-800">
+                <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+                  Desc
+                </div>
+                <AudioDescriptionTrack
+                  descriptions={data.audioDescriptions}
+                  audioEvents={data.audioEvents}
+                  pxPerSec={pxPerSec}
+                  scrollLeft={scrollLeft}
+                  viewportWidth={viewportWidth}
+                  onSectionClick={(sec) => {
+                    closeAllPanels()
+                    setSelectedAudioDescription((prev) =>
+                      prev?.sectionIndex === sec.sectionIndex ? null : sec
+                    )
+                  }}
+                />
+              </div>
+            )}
 
             {/* Video track */}
             <div
@@ -994,6 +1019,7 @@ export function Timeline({ data }: { data: EditorData }) {
           keyframes={keyframes}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
+          onDataChange={() => router.invalidate()}
         />
       )}
 
@@ -1022,6 +1048,17 @@ export function Timeline({ data }: { data: EditorData }) {
           }}
           activeKeyframes={data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
           activeTransitions={data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
+        />
+      )}
+
+      {/* Audio description panel */}
+      {selectedAudioDescription && !selectedKeyframe && !selectedTransition && !showBin && (
+        <AudioDescriptionPanel
+          section={selectedAudioDescription}
+          audioEvents={data.audioEvents.filter(
+            (ev) => ev.time >= selectedAudioDescription.startTime && ev.time <= selectedAudioDescription.endTime
+          )}
+          onClose={() => setSelectedAudioDescription(null)}
         />
       )}
 
@@ -1203,6 +1240,112 @@ function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: n
           </div>
         )
       })}
+    </div>
+  )
+}
+
+const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
+const DESC_PANEL_DEFAULT_WIDTH = 360
+const DESC_PANEL_MIN_WIDTH = 240
+
+function AudioDescriptionPanel({ section, audioEvents, onClose }: {
+  section: import('@/lib/beatlab-client').AudioDescription
+  audioEvents: AudioEvent[]
+  onClose: () => void
+}) {
+  const [width, setWidth] = useState(() => {
+    if (typeof window === 'undefined') return DESC_PANEL_DEFAULT_WIDTH
+    const stored = localStorage.getItem(DESC_PANEL_WIDTH_KEY)
+    return stored ? Math.max(DESC_PANEL_MIN_WIDTH, parseInt(stored, 10)) : DESC_PANEL_DEFAULT_WIDTH
+  })
+  const isDragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true
+    startX.current = e.clientX
+    startWidth.current = width
+    e.preventDefault()
+  }, [width])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = startX.current - e.clientX
+      const newWidth = Math.max(DESC_PANEL_MIN_WIDTH, startWidth.current + delta)
+      setWidth(newWidth)
+    }
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false
+        setWidth((current) => {
+          localStorage.setItem(DESC_PANEL_WIDTH_KEY, String(current))
+          return current
+        })
+      }
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
+  const STEM_DOT_COLORS: Record<string, string> = {
+    kick: 'bg-red-400', snare: 'bg-blue-400', hh: 'bg-gray-400',
+    crash: 'bg-yellow-400', ride: 'bg-green-400', bass: 'bg-orange-400', vocals: 'bg-purple-400',
+  }
+
+  return (
+    <div className="relative flex shrink-0" style={{ width }}>
+      {/* Drag handle */}
+      <div
+        className="w-1 cursor-col-resize hover:bg-teal-500/50 active:bg-teal-500 transition-colors shrink-0"
+        onMouseDown={handleMouseDown}
+      />
+
+      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
+          <div className="text-sm font-medium text-teal-300 truncate">{section.label}</div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+            {formatTime(section.startTime)} &ndash; {formatTime(section.endTime)}
+          </div>
+
+          {/* Events (at top) */}
+          {audioEvents.length > 0 && (
+            <div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+                Events ({audioEvents.length})
+              </div>
+              <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                {audioEvents.slice(0, 100).map((ev, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${STEM_DOT_COLORS[ev.stem_source] || 'bg-gray-500'}`} />
+                    <span className="font-mono text-gray-500 w-12 shrink-0">{ev.time.toFixed(2)}s</span>
+                    <span className="text-gray-300">{ev.stem_source}/{ev.effect}</span>
+                    <span className="ml-auto text-gray-500">{(ev.intensity * 100).toFixed(0)}%</span>
+                  </div>
+                ))}
+                {audioEvents.length > 100 && (
+                  <div className="text-xs text-gray-600 italic">...and {audioEvents.length - 100} more</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Section description (markdown) */}
+          <div className="prose prose-sm prose-invert max-w-none text-gray-300 leading-relaxed [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-xs [&_p]:text-sm [&_li]:text-sm [&_code]:text-xs [&_code]:bg-gray-800 [&_code]:px-1 [&_code]:rounded">
+            <ReactMarkdown>{section.content}</ReactMarkdown>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

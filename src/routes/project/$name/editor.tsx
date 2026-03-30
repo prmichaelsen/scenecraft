@@ -86,7 +86,7 @@ export type Transition = {
   candidates: string[]  // ["path/v1.mp4", "path/v2.mp4", ...]
   hasSelectedVideo: boolean
   selected: number | string | null  // variant number (1-based), imported path, or null
-  remap: { method: string; target_duration: number }
+  remap: { method: string; target_duration: number; curve_points?: [number, number][] }
 }
 
 export type EditorData = {
@@ -224,7 +224,15 @@ export const updateKeyframeTimestamp = createServerFn({ method: 'POST' })
 export const addKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; timestamp: string; section: string; prompt: string }) => input)
   .handler(async ({ data }) => {
-    return postAddKeyframe(data.projectName, data.timestamp, data.section, data.prompt)
+    console.log('[serverFn] addKeyframe:', data.projectName, data.timestamp)
+    try {
+      const result = await postAddKeyframe(data.projectName, data.timestamp, data.section, data.prompt)
+      console.log('[serverFn] addKeyframe result:', JSON.stringify(result).slice(0, 200))
+      return result
+    } catch (e) {
+      console.error('[serverFn] addKeyframe FAILED:', e)
+      throw e
+    }
   })
 
 export const deleteKeyframe = createServerFn({ method: 'POST' })

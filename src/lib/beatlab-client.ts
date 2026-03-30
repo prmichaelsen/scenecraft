@@ -44,13 +44,20 @@ export async function postUpdateTimestamp(project: string, keyframeId: string, n
 }
 
 export async function postAddKeyframe(project: string, timestamp: string, section: string, prompt: string) {
+  console.log(`[beatlab-client] add-keyframe: ${project} at ${timestamp}`)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/add-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ timestamp, section, prompt, source: 'assets/stills/default.png' }),
   })
-  if (!res.ok) throw new Error(`Failed to add keyframe: ${res.status} ${await res.text()}`)
-  return res.json()
+  if (!res.ok) {
+    const text = await res.text()
+    console.error(`[beatlab-client] add-keyframe failed: ${res.status} ${text}`)
+    throw new Error(`Failed to add keyframe: ${res.status} ${text}`)
+  }
+  const result = await res.json()
+  console.log('[beatlab-client] add-keyframe result:', result)
+  return result
 }
 
 export async function postDeleteKeyframe(project: string, keyframeId: string) {
@@ -223,11 +230,11 @@ export async function postEnhanceTransitionAction(project: string, transitionId:
   return res.json() as Promise<{ success: boolean; action: string }>
 }
 
-export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string) {
+export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string, curvePoints?: [number, number][]) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-remap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, targetDuration, method }),
+    body: JSON.stringify({ transitionId, targetDuration, method, ...(curvePoints && { curvePoints }) }),
   })
   return res.json()
 }
@@ -364,6 +371,21 @@ export async function postSetBaseImage(project: string, keyframeId: string, stil
   })
   if (!res.ok) throw new Error(`Failed to set base image: ${res.status}`)
   return res.json() as Promise<{ success: boolean; keyframeId: string; still: string }>
+}
+
+export async function postAssignPoolVideo(project: string, transitionId: string, poolPath: string) {
+  console.log(`[beatlab-client] assigning pool video: ${transitionId} <- ${poolPath}`)
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-pool-video`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, poolPath }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    console.error(`[beatlab-client] assign-pool-video failed: ${res.status} ${text}`)
+    throw new Error(`Failed to assign pool video: ${res.status} ${text}`)
+  }
+  return res.json()
 }
 
 export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
