@@ -369,7 +369,7 @@ export async function postSetBaseImage(project: string, keyframeId: string, stil
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, stillName }),
   })
-  if (!res.ok) throw new Error(`Failed to set base image: ${res.status}`)
+  if (!res.ok) throw new Error(`Failed to set base image: ${res.status} ${await res.text()}`)
   return res.json() as Promise<{ success: boolean; keyframeId: string; still: string }>
 }
 
@@ -496,5 +496,21 @@ export async function postSuggestKeyframePrompts(
     body: JSON.stringify(payload),
   })
   if (!res.ok) throw new Error(`Failed to suggest prompts: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function fetchSectionSettings(project: string, sectionLabel: string): Promise<{ still: string | null; suggestions: KeyframePromptSuggestion[] | null }> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings?section=${encodeURIComponent(sectionLabel)}`)
+  if (!res.ok) return { still: null, suggestions: null }
+  return res.json()
+}
+
+export async function postSectionSettings(project: string, sectionLabel: string, settings: { still?: string; suggestions?: KeyframePromptSuggestion[] }) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sectionLabel, ...settings }),
+  })
+  if (!res.ok) throw new Error(`Failed to save section settings: ${res.status}`)
   return res.json()
 }

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { StillPicker } from './KeyframePanel'
-import { beatlabFileUrl, type AudioEvent, type AudioDescription } from '@/lib/beatlab-client'
+import { beatlabFileUrl, type AudioEvent, type AudioDescription, fetchSectionSettings, postSectionSettings } from '@/lib/beatlab-client'
 import {
   suggestKeyframePrompts,
   addKeyframe,
@@ -44,6 +44,33 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
   const [suggestions, setSuggestions] = useState<EventSuggestion[]>([])
   const [generatingPrompts, setGeneratingPrompts] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  // Load persisted settings on mount
+  useEffect(() => {
+    fetchSectionSettings(projectName, section.label).then((settings) => {
+      if (settings.still) setSelectedStill(settings.still)
+      if (settings.suggestions && settings.suggestions.length > 0) {
+        setSuggestions(
+          settings.suggestions.map((r) => ({
+            eventIndex: r.eventIndex,
+            event: audioEvents[r.eventIndex],
+            prompt: r.prompt,
+            keyframeId: null,
+            candidates: [],
+            selectedCandidate: null,
+            status: 'prompt-only' as const,
+          }))
+        )
+      }
+    }).finally(() => setLoaded(true))
+  }, [projectName, section.label])
+
+  // Persist still selection
+  const handleStillSelect = useCallback((stillName: string) => {
+    setSelectedStill(stillName)
+    postSectionSettings(projectName, section.label, { still: stillName }).catch(() => {})
+  }, [projectName, section.label])
 
   const updateSuggestion = useCallback((index: number, updates: Partial<EventSuggestion>) => {
     setSuggestions((prev) => prev.map((s, i) => (i === index ? { ...s, ...updates } : s)))
@@ -93,7 +120,7 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
         <div className="px-3 pt-3 text-[10px] text-gray-500 uppercase tracking-wider mb-1">
           Step 1: Choose Base Image
         </div>
-        <StillPicker projectName={projectName} onSelect={setSelectedStill} />
+        <StillPicker projectName={projectName} onSelect={handleStillSelect} />
       </div>
     )
   }
@@ -202,13 +229,16 @@ function EventSuggestionRow({
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptDraft, setPromptDraft] = useState(s.prompt)
 
-  // Handle job completion
+  // Handle job completion or failure
   useEffect(() => {
     if (job?.status === 'completed' && job.result) {
       const res = job.result as { candidates?: string[] }
       if (res?.candidates) {
         onUpdate({ candidates: res.candidates, status: 'candidates-ready' })
       }
+      jobCtx.consumeResult(entityKey)
+    } else if (job?.status === 'failed') {
+      onUpdate({ status: 'prompt-only' })
       jobCtx.consumeResult(entityKey)
     }
   }, [job?.status, job?.result, entityKey, jobCtx, onUpdate])
@@ -220,7 +250,7 @@ function EventSuggestionRow({
       const kfResult = await addKeyframe({
         data: { projectName, timestamp: ts, section: sectionLabel, prompt: s.prompt },
       })
-      const keyframeId = kfResult.keyframeId || kfResult.id
+      const keyframeId = kfResult.keyframe?.id || kfResult.keyframeId || kfResult.id
       onUpdate({ keyframeId, status: 'generating' })
 
       await setBaseImage({ data: { projectName, keyframeId, stillName: selectedStill } })
