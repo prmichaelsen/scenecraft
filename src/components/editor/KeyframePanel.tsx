@@ -196,8 +196,9 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
           {editingPrompt ? (
             <div className="space-y-1">
               <textarea
+                ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
                 value={promptText}
-                onChange={(e) => setPromptText(e.target.value)}
+                onChange={(e) => { setPromptText(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault()
@@ -210,7 +211,7 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
                 }}
                 onBlur={savePrompt}
                 autoFocus
-                className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
+                className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none leading-relaxed overflow-hidden"
                 disabled={saving}
               />
               <div className="text-[9px] text-gray-600">Ctrl+Enter to save, Esc to cancel</div>
@@ -306,7 +307,7 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
   const generating = job?.status === 'in_progress'
   const jobStatus = job?.detail || ''
   const COUNT_OPTIONS = [1, 2, 3, 4] as const
-  const [generationCount, setGenerationCount] = useState<number>(1)
+  const [generationCount, setGenerationCount] = useState<number>(4)
 
   const handleGenerate = useCallback(async () => {
     if (!kf.prompt) {

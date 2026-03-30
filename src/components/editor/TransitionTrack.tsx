@@ -7,6 +7,7 @@ type TransitionTrackProps = {
   keyframes: KeyframeWithTime[]
   pxPerSec: number
   selectedId: string | null
+  duration: number
   onTransitionClick: (tr: Transition) => void
   onBoundaryDrag: (keyframeId: string, newTimeSeconds: number) => void
   onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
@@ -28,6 +29,7 @@ export function TransitionTrack({
   onRemapChange,
   onRetryRender,
   renderProgress,
+  duration,
   scrollLeft,
   viewportWidth,
 }: TransitionTrackProps) {
@@ -144,7 +146,7 @@ export function TransitionTrack({
                 className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
                 onMouseDown={(e) => {
                   const nextKf = toIdx < sortedKfs.length - 1 ? sortedKfs[toIdx + 1] : null
-                  handleEdgeDown(e, tr.to, tr.id, fromKf.timeSeconds, toKf.timeSeconds, fromKf.timeSeconds + 0.1, nextKf ? nextKf.timeSeconds - 0.1 : Infinity)
+                  handleEdgeDown(e, tr.to, tr.id, fromKf.timeSeconds, toKf.timeSeconds, fromKf.timeSeconds + 0.1, nextKf ? nextKf.timeSeconds - 0.1 : (duration || Infinity))
                 }}
               />
 

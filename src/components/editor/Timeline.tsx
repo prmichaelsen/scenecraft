@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
@@ -51,11 +51,20 @@ const DEFAULT_PREVIEW_HEIGHT = 180
 const MIN_PREVIEW_HEIGHT = 80
 const MAX_PREVIEW_HEIGHT = 500
 
+const AUDIO_HEIGHT_KEY = 'beatlab-audio-track-height'
+const DEFAULT_AUDIO_HEIGHT = 0 // 0 means flex-1 (fill remaining space)
+const MIN_AUDIO_HEIGHT = 60
+const MAX_AUDIO_HEIGHT = 400
+
 export function Timeline({ data }: { data: EditorData }) {
   const router = useRouter()
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [pxPerSec, setPxPerSec] = useState(20)
+  const [pxPerSec, setPxPerSec] = useState(() => {
+    if (typeof window === 'undefined') return 20
+    const stored = localStorage.getItem('beatlab-zoom')
+    return stored ? parseFloat(stored) : 20
+  })
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
@@ -78,6 +87,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
   const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
+  const [audioTrackHeight, setAudioTrackHeight] = useState(DEFAULT_AUDIO_HEIGHT)
   // Viewport state for virtualized rendering
   const [scrollLeft, setScrollLeft] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(2000)
@@ -88,6 +98,8 @@ export function Timeline({ data }: { data: EditorData }) {
     if (storedVideo) setVideoTrackHeight(Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(storedVideo, 10))))
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
+    const storedAudio = localStorage.getItem(AUDIO_HEIGHT_KEY)
+    if (storedAudio) setAudioTrackHeight(Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, parseInt(storedAudio, 10))))
   }, [])
 
   // Preload stills for base image picker
@@ -116,6 +128,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const playPauseFnRef = useRef<(() => void) | null>(null)
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
+  const audioDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
 
   const keyframes: KeyframeWithTime[] = data.keyframes.map((kf) => ({
     ...kf,
@@ -297,8 +310,13 @@ export function Timeline({ data }: { data: EditorData }) {
         const newPlayheadX = currentTime * newPxPerSec
         el.scrollLeft = newPlayheadX - viewportOffset
         setPxPerSec(newPxPerSec)
+        localStorage.setItem('beatlab-zoom', String(newPxPerSec))
       } else {
-        setPxPerSec((prev) => Math.max(0.1, prev * factor))
+        setPxPerSec((prev) => {
+          const next = Math.max(0.1, prev * factor)
+          localStorage.setItem('beatlab-zoom', String(next))
+          return next
+        })
       }
     }
   }, [currentTime, pxPerSec])
@@ -495,7 +513,12 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [])
 
   const handleKeyframeDragEnd = useCallback(async (id: string, newTimeSeconds: number) => {
-    const newTimestamp = secondsToTimestamp(newTimeSeconds)
+    // Clamp to valid range — prevents corrupted timestamps from drag bugs
+    const clamped = Math.max(0, Math.min(newTimeSeconds, effectiveDuration))
+    if (Math.abs(clamped - newTimeSeconds) > 0.5) {
+      console.warn(`[Timeline] Clamped drag for ${id}: ${newTimeSeconds.toFixed(2)}s → ${clamped.toFixed(2)}s (duration=${effectiveDuration.toFixed(2)}s)`)
+    }
+    const newTimestamp = secondsToTimestamp(clamped)
     setDragOverrides((prev) => {
       const next = { ...prev }
       delete next[id]
@@ -506,7 +529,7 @@ export function Timeline({ data }: { data: EditorData }) {
     if (kf) {
       kf.timestamp = newTimestamp
     }
-    // Persist to YAML
+    // Persist to DB
     try {
       await updateKeyframeTimestamp({
         data: { projectName: data.projectName, keyframeId: id, newTimestamp },
@@ -514,7 +537,7 @@ export function Timeline({ data }: { data: EditorData }) {
     } catch (err) {
       console.error('[Timeline] Failed to persist keyframe timestamp:', id, newTimestamp, err)
     }
-  }, [data])
+  }, [data, effectiveDuration])
 
   const handleAddKeyframe = useCallback(async () => {
     try {
@@ -634,12 +657,26 @@ export function Timeline({ data }: { data: EditorData }) {
     e.preventDefault()
   }, [videoTrackHeight])
 
+  const handleAudioDividerDown = useCallback((e: React.MouseEvent) => {
+    // If audio height is 0 (flex), measure current rendered height as starting point
+    const audioEl = (e.target as HTMLElement).previousElementSibling as HTMLElement | null
+    const currentHeight = audioTrackHeight || (audioEl ? audioEl.getBoundingClientRect().height : 120)
+    audioDragRef.current = { dragging: true, startY: e.clientY, startHeight: currentHeight }
+    e.preventDefault()
+  }, [audioTrackHeight])
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (previewDragRef.current.dragging) {
         const delta = e.clientY - previewDragRef.current.startY
         const newHeight = Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, previewDragRef.current.startHeight + delta))
         setPreviewHeight(newHeight)
+        return
+      }
+      if (audioDragRef.current.dragging) {
+        const delta = e.clientY - audioDragRef.current.startY
+        const newHeight = Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, audioDragRef.current.startHeight + delta))
+        setAudioTrackHeight(newHeight)
         return
       }
       if (!trackDragRef.current.dragging) return
@@ -652,6 +689,13 @@ export function Timeline({ data }: { data: EditorData }) {
         previewDragRef.current.dragging = false
         setPreviewHeight((current) => {
           localStorage.setItem(PREVIEW_HEIGHT_KEY, String(current))
+          return current
+        })
+      }
+      if (audioDragRef.current.dragging) {
+        audioDragRef.current.dragging = false
+        setAudioTrackHeight((current) => {
+          localStorage.setItem(AUDIO_HEIGHT_KEY, String(current))
           return current
         })
       }
@@ -810,6 +854,50 @@ export function Timeline({ data }: { data: EditorData }) {
           )}
 
           <button
+            onClick={async () => {
+              const missing = data.transitions.filter((tr) => tr.hasSelectedVideo && !tr.action)
+              if (missing.length === 0) { alert('All transitions with videos already have action prompts.'); return }
+              if (!confirm(`Generate action prompts for ${missing.length} transitions? This will call Claude for each.`)) return
+              let done = 0
+              for (const tr of missing) {
+                try {
+                  await generateTransitionAction({ data: { projectName: data.projectName, transitionId: tr.id } })
+                  done++
+                } catch (e) { console.error(`Failed for ${tr.id}:`, e) }
+              }
+              alert(`Generated ${done}/${missing.length} action prompts.`)
+              router.invalidate()
+            }}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-purple-400/70 hover:text-purple-300 px-2 py-1 rounded transition-colors"
+            title="Generate action prompts for all transitions missing one"
+          >
+            Gen Prompts
+          </button>
+
+          <button
+            onClick={async () => {
+              const missing = data.transitions.filter((tr) => tr.action && !tr.hasSelectedVideo)
+              if (missing.length === 0) { alert('All transitions with action prompts already have video candidates.'); return }
+              if (!confirm(`Generate video candidates for ${missing.length} transitions? This will call Veo for each.`)) return
+              let done = 0
+              for (const tr of missing) {
+                try {
+                  const fitDuration = [4, 6, 8].reduce((best, opt) => Math.abs(opt - tr.durationSeconds) < Math.abs(best - tr.durationSeconds) ? opt : best, 8)
+                  const result = await generateTransitionCandidates({
+                    data: { projectName: data.projectName, transitionId: tr.id, count: 4, duration: fitDuration },
+                  })
+                  if (result.jobId) done++
+                } catch (e) { console.error(`Failed for ${tr.id}:`, e) }
+              }
+              alert(`Queued ${done}/${missing.length} video generation jobs.`)
+            }}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-orange-400/70 hover:text-orange-300 px-2 py-1 rounded transition-colors"
+            title="Generate video candidates for all transitions with prompts but no videos"
+          >
+            Gen Videos
+          </button>
+
+          <button
             onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showBin ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Show deleted keyframes bin"
@@ -905,6 +993,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 pxPerSec={pxPerSec}
                 projectName={data.projectName}
                 selectedId={selectedKeyframe?.id ?? null}
+                duration={effectiveDuration}
                 onKeyframeClick={handleKeyframeClick}
                 onKeyframeDrag={handleKeyframeDrag}
                 onKeyframeDragEnd={handleKeyframeDragEnd}
@@ -917,6 +1006,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 keyframes={keyframes}
                 pxPerSec={pxPerSec}
                 selectedId={selectedTransition?.id ?? null}
+                duration={effectiveDuration}
                 onTransitionClick={handleTransitionClick}
                 onBoundaryDrag={handleKeyframeDrag}
                 onBoundaryDragEnd={handleKeyframeDragEnd}
@@ -936,7 +1026,8 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Audio track */}
             <div
-              className="flex-1 relative cursor-pointer min-h-[80px]"
+              className={`relative cursor-pointer ${audioTrackHeight ? '' : 'flex-1'}`}
+              style={audioTrackHeight ? { height: audioTrackHeight } : { minHeight: 80 }}
               onClick={handleTrackClick}
             >
               <div className="absolute left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
@@ -957,8 +1048,14 @@ export function Timeline({ data }: { data: EditorData }) {
               )}
             </div>
 
+            {/* Audio/FX divider */}
+            <div
+              className="h-1.5 cursor-row-resize hover:bg-blue-500/50 active:bg-blue-500 bg-gray-800 transition-colors shrink-0 relative z-20"
+              onMouseDown={handleAudioDividerDown}
+            />
+
             {/* Effects track */}
-            <div className="relative h-8 shrink-0 border-t border-gray-800 cursor-crosshair">
+            <div className="relative h-8 shrink-0 cursor-crosshair">
               <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
                 FX
               </div>

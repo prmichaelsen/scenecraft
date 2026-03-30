@@ -7,6 +7,7 @@ type VideoTrackProps = {
   pxPerSec: number
   projectName: string
   selectedId: string | null
+  duration: number
   onKeyframeClick: (kf: KeyframeWithTime) => void
   onKeyframeDrag: (id: string, newTimeSeconds: number) => void
   onKeyframeDragEnd: (id: string, newTimeSeconds: number) => void
@@ -31,6 +32,7 @@ export function VideoTrack({
   pxPerSec,
   projectName,
   selectedId,
+  duration,
   onKeyframeClick,
   onKeyframeDrag,
   onKeyframeDragEnd,
@@ -53,24 +55,29 @@ export function VideoTrack({
       startX: e.clientX,
       startTime: kf.timeSeconds,
       minTime: prevKf ? prevKf.timeSeconds + 0.1 : 0,
-      maxTime: nextKf ? nextKf.timeSeconds - 0.1 : Infinity,
+      maxTime: nextKf ? nextKf.timeSeconds - 0.1 : duration,
       didMove: false,
     }
-  }, [keyframes])
+  }, [keyframes, duration])
 
   const handleBodyMouseDown = useCallback((e: React.MouseEvent, kf: KeyframeWithTime) => {
     // Don't start body drag if clicking on the edge handle
     if ((e.target as HTMLElement).closest('[data-edge-handle]')) return
     e.stopPropagation()
     e.preventDefault()
+    // Find neighbors for bounds
+    const sortedKfs = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+    const idx = sortedKfs.findIndex((k) => k.id === kf.id)
+    const prevKf = idx > 0 ? sortedKfs[idx - 1] : null
+    const nextKf = idx < sortedKfs.length - 1 ? sortedKfs[idx + 1] : null
     dragState.current = {
       dragging: true,
       type: 'reorder',
       keyframeId: kf.id,
       startX: e.clientX,
       startTime: kf.timeSeconds,
-      minTime: 0,
-      maxTime: Infinity,
+      minTime: prevKf ? prevKf.timeSeconds + 0.1 : 0,
+      maxTime: nextKf ? nextKf.timeSeconds - 0.1 : duration,
       didMove: false,
     }
   }, [])

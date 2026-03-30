@@ -403,10 +403,10 @@ function EventSuggestionRow({
       {editingPrompt ? (
         <div className="space-y-1">
           <textarea
+            ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
             value={promptDraft}
-            onChange={(e) => setPromptDraft(e.target.value)}
-            className="w-full text-xs bg-gray-900 text-gray-300 border border-gray-700 rounded p-1.5 resize-none"
-            rows={3}
+            onChange={(e) => { setPromptDraft(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
+            className="w-full text-xs bg-gray-900 text-gray-300 border border-gray-700 rounded p-1.5 resize-none overflow-hidden"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                 onUpdate({ prompt: promptDraft })

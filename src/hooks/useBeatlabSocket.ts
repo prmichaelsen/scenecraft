@@ -65,6 +65,16 @@ function handleMessage(event: MessageEvent) {
       }
     }
 
+    // Handle "job not found" errors from reQueryActiveJobs after server restart
+    if (msg.type === 'error' && typeof (msg as { message?: string }).message === 'string') {
+      const errMsg = (msg as { message: string }).message
+      const match = errMsg.match(/Job (job_\w+) not found/)
+      if (match) {
+        routeMessage({ type: 'job_failed', jobId: match[1], error: 'Job lost (server restarted)' })
+        return
+      }
+    }
+
     routeMessage(msg)
   } catch {}
 }

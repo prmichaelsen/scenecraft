@@ -290,14 +290,15 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
       </div>
 
       <textarea
+        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
         value={action}
-        onChange={(e) => setAction(e.target.value)}
+        onChange={(e) => { setAction(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
           if (e.key === 'Escape') { setAction(transition.action) }
         }}
         onBlur={save}
-        className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-y min-h-[80px] leading-relaxed"
+        className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-orange-500 focus:outline-none resize-none leading-relaxed overflow-hidden"
         disabled={saving || generating}
         placeholder={generating ? 'Analyzing keyframe images with Claude...' : 'Enter a transition action prompt...'}
       />
@@ -373,14 +374,15 @@ function MotionPromptEditor({ projectName, motionPrompt }: { projectName: string
     <div className="space-y-1">
       <div className="text-[10px] text-gray-500 uppercase tracking-wider">Global Motion Prompt</div>
       <textarea
+        ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
         value={motion}
-        onChange={(e) => setMotion(e.target.value)}
+        onChange={(e) => { setMotion(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
         onBlur={save}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save() }
         }}
         placeholder="e.g. Slow camera drift, dreamy bokeh..."
-        className="w-full bg-gray-800 text-xs text-gray-400 rounded p-2 border border-gray-700 focus:border-gray-500 focus:outline-none resize-y min-h-[40px] leading-relaxed"
+        className="w-full bg-gray-800 text-xs text-gray-400 rounded p-2 border border-gray-700 focus:border-gray-500 focus:outline-none resize-none leading-relaxed overflow-hidden"
         disabled={saving}
       />
       <div className="text-[9px] text-gray-600">Appended as "Camera and motion: ..." to every transition with the checkbox enabled</div>
@@ -441,7 +443,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
     return DURATION_OPTIONS.reduce((best, opt) => Math.abs(opt - dur) < Math.abs(best - dur) ? opt : best, 8)
   })
   const COUNT_OPTIONS = [1, 2, 3, 4] as const
-  const [generationCount, setGenerationCount] = useState<number>(1)
+  const [generationCount, setGenerationCount] = useState<number>(4)
 
   useEffect(() => {
     setCandidates(transition.candidates)
