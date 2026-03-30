@@ -788,6 +788,24 @@ export function Timeline({ data }: { data: EditorData }) {
             + Suppress
           </button>
 
+          {activeTransition && (
+            <button
+              onClick={async () => {
+                try {
+                  const { postSplitTransition } = await import('@/lib/beatlab-client')
+                  await postSplitTransition(data.projectName, activeTransition.id, currentTime)
+                  router.invalidate()
+                } catch (e) {
+                  console.error('Split failed:', e)
+                  alert(`Split failed: ${e}`)
+                }
+              }}
+              className="text-xs bg-gray-800 hover:bg-gray-700 text-cyan-400/70 hover:text-cyan-300 px-2 py-1 rounded transition-colors"
+              title="Split transition at playhead"
+            >
+              Split
+            </button>
+          )}
 
           <button
             onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}

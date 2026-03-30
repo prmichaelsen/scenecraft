@@ -388,6 +388,16 @@ export async function postAssignPoolVideo(project: string, transitionId: string,
   return res.json()
 }
 
+export async function postSplitTransition(project: string, transitionId: string, splitTime: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/split-transition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, splitTime }),
+  })
+  if (!res.ok) throw new Error(`Failed to split transition: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ success: boolean; keyframeId: string; transition1: string; transition2: string }>
+}
+
 export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
   console.log(`[beatlab-client] inserting pool item: ${type} ${poolPath} at ${atTime}s`)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
