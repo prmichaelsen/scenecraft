@@ -1087,6 +1087,26 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
           onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
+          onDuplicate={async () => {
+            // Find next keyframe by timestamp
+            const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+            const idx = sorted.findIndex((kf) => kf.id === selectedKeyframe.id)
+            const nextKf = idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null
+            if (!nextKf) return
+            const midTime = (selectedKeyframe.timeSeconds + nextKf.timeSeconds) / 2
+            const ts = secondsToTimestamp(midTime)
+            try {
+              await addKeyframe({
+                data: { projectName: data.projectName, timestamp: ts, section: selectedKeyframe.section, prompt: selectedKeyframe.prompt },
+              })
+              // Copy the selected keyframe image to the new keyframe
+              router.invalidate()
+            } catch (e) {
+              console.error('Duplicate failed:', e)
+              alert(`Duplicate failed: ${e}`)
+            }
+          }}
+          onDataChange={() => router.invalidate()}
         />
       ) : selectedTransition ? (
         <TransitionPanel

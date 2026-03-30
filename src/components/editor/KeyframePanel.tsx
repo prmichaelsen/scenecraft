@@ -4,6 +4,7 @@ import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes, setBaseImage } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
 import { beatlabFileUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
+import { invalidateEntry } from '@/lib/frame-cache'
 import { CandidateModal } from './TransitionPanel'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
@@ -16,9 +17,11 @@ type KeyframePanelProps = {
   projectName: string
   onClose: () => void
   onDelete: () => void
+  onDuplicate: () => void
+  onDataChange: () => void
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onDataChange }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -79,6 +82,13 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete }: Keyf
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="text-sm font-medium">{kf.id}</div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={onDuplicate}
+              className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
+              title="Duplicate keyframe halfway to next"
+            >
+              Duplicate
+            </button>
             <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
@@ -295,6 +305,8 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
 
   const generating = job?.status === 'in_progress'
   const jobStatus = job?.detail || ''
+  const COUNT_OPTIONS = [1, 2, 3, 4] as const
+  const [generationCount, setGenerationCount] = useState<number>(1)
 
   const handleGenerate = useCallback(async () => {
     if (!kf.prompt) {
@@ -304,7 +316,7 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
 
     try {
       const result = await generateKeyframeCandidates({
-        data: { projectName, keyframeId: kf.id, count: 1 },
+        data: { projectName, keyframeId: kf.id, count: generationCount },
       })
 
       if (result.jobId) {
@@ -319,7 +331,7 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
       console.error('Generate candidates failed:', e)
       alert(`Failed to generate candidates: ${e}`)
     }
-  }, [projectName, kf, jobCtx, entityKey])
+  }, [projectName, kf, jobCtx, entityKey, generationCount])
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(() => {
     return typeof kf.selected === 'number' ? kf.selected : null
@@ -328,14 +340,22 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
   const [showModal, setShowModal] = useState(false)
 
   const handleSelect = useCallback(async (variantNum: number) => {
+    console.log(`[KeyframePanel] selecting ${kf.id} variant ${variantNum}`)
     setSelecting(true)
     try {
       await selectKeyframes({
         data: { projectName, selections: { [kf.id]: variantNum } },
       })
+      console.log(`[KeyframePanel] selected ${kf.id} v${variantNum} OK`)
       setSelectedIdx(variantNum)
       kf.selected = variantNum
+      // Invalidate frame cache so preview + video track update
+      invalidateEntry(`kf:${kf.id}`)
+      kf.hasSelectedImage = true
       autoSave(projectName, `Selected ${kf.id} candidate v${variantNum}`)
+      onDataChange()
+    } catch (e) {
+      console.error(`[KeyframePanel] select failed:`, e)
     } finally {
       setSelecting(false)
     }
@@ -356,6 +376,22 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
 
   return (
     <div className="p-2 space-y-2">
+      {/* Count selector */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Count</span>
+        <div className="flex gap-0.5 flex-1">
+          {COUNT_OPTIONS.map((c) => (
+            <button
+              key={c}
+              onClick={() => setGenerationCount(c)}
+              className={`flex-1 text-[10px] py-1 rounded transition-colors ${generationCount === c ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <button
         onClick={handleGenerate}
         disabled={generating}

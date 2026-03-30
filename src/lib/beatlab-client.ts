@@ -499,6 +499,26 @@ export async function postSuggestKeyframePrompts(
   return res.json()
 }
 
+export async function postPromoteStagedCandidate(project: string, keyframeId: string, stagingId: string, variant: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/promote-staged-candidate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, stagingId, variant }),
+  })
+  if (!res.ok) throw new Error(`Failed to promote staged candidate: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function postGenerateStagedCandidate(project: string, prompt: string, stillName: string, stagingId: string, count: number = 1) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-staged-candidate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, stillName, stagingId, count }),
+  })
+  if (!res.ok) throw new Error(`Failed to generate staged candidate: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ jobId: string; stagingId: string }>
+}
+
 export async function fetchSectionSettings(project: string, sectionLabel: string): Promise<{ still: string | null; suggestions: KeyframePromptSuggestion[] | null }> {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings?section=${encodeURIComponent(sectionLabel)}`)
   if (!res.ok) return { still: null, suggestions: null }

@@ -134,9 +134,17 @@ function SectionCard({ section, expanded, onToggle, onChange, onSeek }: {
   onSeek: () => void
 }) {
   const s = section
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll into view when expanded
+  useEffect(() => {
+    if (expanded && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [expanded])
 
   return (
-    <div className="group">
+    <div className="group" ref={cardRef}>
       {/* Header — always visible */}
       <div
         className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-800/50"

@@ -292,6 +292,20 @@ export const suggestKeyframePrompts = createServerFn({ method: 'POST' })
     })
   })
 
+export const promoteStagedCandidate = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; stagingId: string; variant: number }) => input)
+  .handler(async ({ data }) => {
+    const { postPromoteStagedCandidate } = await import('@/lib/beatlab-client')
+    return postPromoteStagedCandidate(data.projectName, data.keyframeId, data.stagingId, data.variant)
+  })
+
+export const generateStagedCandidate = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; prompt: string; stillName: string; stagingId: string; count?: number }) => input)
+  .handler(async ({ data }) => {
+    const { postGenerateStagedCandidate } = await import('@/lib/beatlab-client')
+    return postGenerateStagedCandidate(data.projectName, data.prompt, data.stillName, data.stagingId, data.count)
+  })
+
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
   .handler(async ({ data }) => {

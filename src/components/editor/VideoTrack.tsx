@@ -144,7 +144,7 @@ export function VideoTrack({
             {/* Thumbnail — skip when region is too narrow to see it */}
             {kf.hasSelectedImage && width > 20 ? (
               <img
-                src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
+                src={`${beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
                 alt={kf.id}
                 className={`absolute top-1 left-3 h-[calc(100%-8px)] aspect-video object-cover rounded-sm transition-opacity cursor-grab active:cursor-grabbing ${isSelected ? 'opacity-100 ring-1 ring-blue-500' : 'opacity-70 group-hover:opacity-100'}`}
                 loading="lazy"

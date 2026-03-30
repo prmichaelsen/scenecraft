@@ -4,10 +4,8 @@ import { beatlabFileUrl, type AudioEvent, type AudioDescription, fetchSectionSet
 import {
   suggestKeyframePrompts,
   addKeyframe,
-  setBaseImage,
-  generateKeyframeCandidates,
-  deleteKeyframe,
-  selectKeyframes,
+  generateStagedCandidate,
+  promoteStagedCandidate,
   secondsToTimestamp,
 } from '@/routes/project/$name/editor'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
@@ -39,27 +37,34 @@ const STEM_DOT_COLORS: Record<string, string> = {
   vocals: 'bg-purple-400',
 }
 
+function fmtTime(secs: number): string {
+  const m = Math.floor(secs / 60)
+  const s = secs - m * 60
+  return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`
+}
+
 export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyframeInserted }: Props) {
   const [selectedStill, setSelectedStill] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<EventSuggestion[]>([])
   const [generatingPrompts, setGeneratingPrompts] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
+  const [, setLoaded] = useState(false)
 
-  // Load persisted settings on mount
+  // Load persisted settings on mount (including full suggestion state)
   useEffect(() => {
     fetchSectionSettings(projectName, section.label).then((settings) => {
       if (settings.still) setSelectedStill(settings.still)
-      if (settings.suggestions && settings.suggestions.length > 0) {
+      const savedSuggestions = (settings as { suggestions?: unknown }).suggestions
+      if (Array.isArray(savedSuggestions) && savedSuggestions.length > 0) {
         setSuggestions(
-          settings.suggestions.map((r) => ({
-            eventIndex: r.eventIndex,
-            event: audioEvents[r.eventIndex],
-            prompt: r.prompt,
-            keyframeId: null,
-            candidates: [],
-            selectedCandidate: null,
-            status: 'prompt-only' as const,
+          savedSuggestions.map((r: Record<string, unknown>) => ({
+            eventIndex: r.eventIndex as number,
+            event: audioEvents[r.eventIndex as number],
+            prompt: (r.prompt as string) || '',
+            keyframeId: (r.keyframeId as string) || null,
+            candidates: (r.candidates as string[]) || [],
+            selectedCandidate: (r.selectedCandidate as number) || null,
+            status: (r.status as EventSuggestion['status']) || (r.keyframeId ? 'candidates-ready' : 'prompt-only'),
           }))
         )
       }
@@ -73,8 +78,18 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
   }, [projectName, section.label])
 
   const updateSuggestion = useCallback((index: number, updates: Partial<EventSuggestion>) => {
-    setSuggestions((prev) => prev.map((s, i) => (i === index ? { ...s, ...updates } : s)))
-  }, [])
+    setSuggestions((prev) => {
+      const next = prev.map((s, i) => (i === index ? { ...s, ...updates } : s))
+      // Auto-persist full state (debounced via fire-and-forget)
+      const toSave = next.map((s) => ({
+        eventIndex: s.eventIndex, prompt: s.prompt,
+        keyframeId: s.keyframeId, candidates: s.candidates,
+        selectedCandidate: s.selectedCandidate, status: s.status,
+      }))
+      postSectionSettings(projectName, section.label, { suggestions: toSave as unknown as import('@/lib/beatlab-client').KeyframePromptSuggestion[] }).catch(() => {})
+      return next
+    })
+  }, [projectName, section.label])
 
   const handleGeneratePrompts = useCallback(async () => {
     if (!selectedStill) return
@@ -164,7 +179,7 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
       </div>
       {suggestions.map((s, idx) => (
         <EventSuggestionRow
-          key={idx}
+          key={`${s.eventIndex}-${s.keyframeId || idx}`}
           suggestion={s}
           projectName={projectName}
           selectedStill={selectedStill}
@@ -224,8 +239,9 @@ function EventSuggestionRow({
   onKeyframeInserted: () => void
 }) {
   const jobCtx = useJobContext()
-  const entityKey = s.keyframeId ? `suggest:${s.keyframeId}:candidates` : ''
-  const job = useJobState(entityKey || '__none__')
+  const stagingIdStable = `evt_${s.eventIndex}_${Math.floor(s.event.time * 100)}`
+  const entityKey = `suggest:${stagingIdStable}:candidates`
+  const job = useJobState(entityKey)
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptDraft, setPromptDraft] = useState(s.prompt)
 
@@ -238,69 +254,132 @@ function EventSuggestionRow({
       }
       jobCtx.consumeResult(entityKey)
     } else if (job?.status === 'failed') {
-      onUpdate({ status: 'prompt-only' })
+      onUpdate({ status: s.candidates.length > 0 ? 'candidates-ready' : 'prompt-only' })
       jobCtx.consumeResult(entityKey)
     }
-  }, [job?.status, job?.result, entityKey, jobCtx, onUpdate])
+  }, [job?.status, job?.result, entityKey, jobCtx, onUpdate, s.candidates.length])
 
+  // Generate into staging area (no keyframe created on timeline)
+  const stagingId = `evt_${s.eventIndex}_${Math.floor(s.event.time * 100)}`
   const handleGenerate = useCallback(async () => {
-    onUpdate({ status: 'creating' })
+    onUpdate({ status: 'generating' })
     try {
-      const ts = secondsToTimestamp(s.event.time)
-      const kfResult = await addKeyframe({
-        data: { projectName, timestamp: ts, section: sectionLabel, prompt: s.prompt },
+      console.log(`[SuggestRow] staging generate for event ${s.eventIndex} prompt: ${s.prompt.slice(0, 50)}`)
+      const result = await generateStagedCandidate({
+        data: { projectName, prompt: s.prompt, stillName: selectedStill, stagingId, count: 1 },
       })
-      const keyframeId = kfResult.keyframe?.id || kfResult.keyframeId || kfResult.id
-      onUpdate({ keyframeId, status: 'generating' })
-
-      await setBaseImage({ data: { projectName, keyframeId, stillName: selectedStill } })
-
-      const genResult = await generateKeyframeCandidates({
-        data: { projectName, keyframeId, count: 1 },
-      })
-      if (genResult.jobId) {
-        jobCtx.startJob(`suggest:${keyframeId}:candidates`, genResult.jobId)
-      } else if (genResult.candidates) {
-        onUpdate({ candidates: genResult.candidates, status: 'candidates-ready' })
+      if (result.jobId) {
+        jobCtx.startJob(`suggest:${stagingId}:candidates`, result.jobId)
       }
     } catch (e) {
       onUpdate({ status: 'prompt-only' })
       alert(`Generation failed: ${e}`)
     }
-  }, [s.event.time, s.prompt, projectName, sectionLabel, selectedStill, jobCtx, onUpdate])
+  }, [s.eventIndex, s.prompt, projectName, selectedStill, stagingId, jobCtx, onUpdate])
+
+  const handleGenerateMore = useCallback(async () => {
+    onUpdate({ status: 'generating' })
+    try {
+      const result = await generateStagedCandidate({
+        data: { projectName, prompt: s.prompt, stillName: selectedStill, stagingId: stagingIdStable, count: 1 },
+      })
+      if (result.jobId) {
+        jobCtx.startJob(entityKey, result.jobId)
+      }
+    } catch (e) {
+      onUpdate({ status: 'candidates-ready' })
+      alert(`Generate more failed: ${e}`)
+    }
+  }, [s.prompt, projectName, selectedStill, stagingIdStable, entityKey, jobCtx, onUpdate])
 
   const handleKeep = useCallback(
     async (variantNum: number) => {
-      if (!s.keyframeId) return
+      console.log(`[SuggestRow] keeping event ${s.eventIndex} variant ${variantNum} from staging ${stagingIdStable}`)
       try {
-        await selectKeyframes({ data: { projectName, selections: { [s.keyframeId]: variantNum } } })
-        onUpdate({ status: 'inserted', selectedCandidate: variantNum })
+        // 1. Create the keyframe on the timeline at the event time
+        const ts = secondsToTimestamp(s.event.time)
+        const kfResult = await addKeyframe({
+          data: { projectName, timestamp: ts, section: sectionLabel, prompt: s.prompt },
+        })
+        const keyframeId = kfResult.keyframe?.id || kfResult.keyframeId || kfResult.id
+        console.log(`[SuggestRow] created ${keyframeId}, promoting staging v${variantNum}`)
+
+        // 2. Copy the staged candidate as the keyframe's selected image + candidate
+        await promoteStagedCandidate({
+          data: { projectName, keyframeId, stagingId: stagingIdStable, variant: variantNum },
+        })
+
+        onUpdate({ keyframeId, status: 'inserted', selectedCandidate: variantNum })
         onKeyframeInserted()
       } catch (e) {
-        alert(`Select failed: ${e}`)
+        alert(`Keep failed: ${e}`)
       }
     },
-    [s.keyframeId, projectName, onUpdate, onKeyframeInserted]
+    [s.event.time, s.prompt, s.eventIndex, projectName, sectionLabel, stagingIdStable, onUpdate, onKeyframeInserted]
   )
 
   const handleDiscard = useCallback(async () => {
-    if (s.keyframeId) {
-      try {
-        await deleteKeyframe({ data: { projectName, keyframeId: s.keyframeId } })
-      } catch {}
-    }
+    // No keyframe to delete — staging files can be cleaned up later
     onUpdate({ status: 'discarded', keyframeId: null, candidates: [], selectedCandidate: null })
-  }, [s.keyframeId, projectName, onUpdate])
+  }, [onUpdate])
 
   if (s.status === 'discarded') return null
   if (s.status === 'inserted') {
     return (
-      <div className="bg-teal-900/20 border border-teal-800/30 rounded p-2">
+      <div className="bg-teal-900/20 border border-teal-800/30 rounded p-2 space-y-1">
         <div className="flex items-center gap-2 text-xs text-teal-400">
           <div className={`w-2 h-2 rounded-full shrink-0 ${STEM_DOT_COLORS[s.event.stem_source] || 'bg-gray-500'}`} />
-          <span className="font-mono">{s.event.time.toFixed(2)}s</span>
+          <span className="font-mono">{fmtTime(s.event.time)}</span>
           <span className="text-teal-300">Inserted</span>
+          <span className="text-gray-600 text-[10px]">{s.keyframeId}</span>
         </div>
+        {/* Show candidate thumbnails */}
+        {s.candidates.length > 0 && (
+          <div className="grid grid-cols-3 gap-1">
+            {s.candidates.map((path, ci) => {
+              const isSelected = s.selectedCandidate === ci + 1
+              return (
+                <div key={ci} className={`relative rounded overflow-hidden border-2 ${isSelected ? 'border-teal-500' : 'border-transparent'}`}>
+                  <img
+                    src={beatlabFileUrl(projectName, path)}
+                    alt={`v${ci + 1}`}
+                    className="w-full aspect-video object-cover"
+                    loading="lazy"
+                  />
+                  {isSelected && (
+                    <div className="absolute top-0.5 right-0.5">
+                      <span className="text-[7px] bg-teal-500 text-white px-0.5 rounded">kept</span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <div className="text-[10px] text-gray-500 truncate">{s.prompt}</div>
+        <button
+          onClick={async () => {
+            try {
+              const ts = secondsToTimestamp(s.event.time)
+              const kfResult = await addKeyframe({
+                data: { projectName, timestamp: ts, section: sectionLabel, prompt: s.prompt },
+              })
+              const keyframeId = kfResult.keyframe?.id || kfResult.keyframeId || kfResult.id
+              if (s.selectedCandidate && s.candidates.length > 0) {
+                await promoteStagedCandidate({
+                  data: { projectName, keyframeId, stagingId: stagingIdStable, variant: s.selectedCandidate },
+                })
+              }
+              onUpdate({ keyframeId, status: 'inserted' })
+              onKeyframeInserted()
+            } catch (e) {
+              alert(`Reinsert failed: ${e}`)
+            }
+          }}
+          className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          Reinsert
+        </button>
       </div>
     )
   }
@@ -313,7 +392,7 @@ function EventSuggestionRow({
       {/* Event header */}
       <div className="flex items-center gap-2 text-xs">
         <div className={`w-2 h-2 rounded-full shrink-0 ${STEM_DOT_COLORS[s.event.stem_source] || 'bg-gray-500'}`} />
-        <span className="font-mono text-gray-500">{s.event.time.toFixed(2)}s</span>
+        <span className="font-mono text-gray-500">{fmtTime(s.event.time)}</span>
         <span className="text-gray-400">
           {s.event.stem_source}/{s.event.effect}
         </span>
@@ -411,12 +490,20 @@ function EventSuggestionRow({
               )
             })}
           </div>
-          <button
-            onClick={handleDiscard}
-            className="w-full text-[10px] text-gray-500 hover:text-red-400 py-1 transition-colors"
-          >
-            Discard
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleGenerateMore}
+              className="flex-1 text-[10px] text-blue-400 hover:text-blue-300 py-1 transition-colors"
+            >
+              Generate More
+            </button>
+            <button
+              onClick={handleDiscard}
+              className="flex-1 text-[10px] text-gray-500 hover:text-red-400 py-1 transition-colors"
+            >
+              Discard
+            </button>
+          </div>
         </div>
       )}
     </div>
