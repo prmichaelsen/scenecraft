@@ -17,6 +17,7 @@ import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames,
 import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
+import { SuppressionTrack } from './SuppressionTrack'
 import { RulesTrack } from './RulesTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
@@ -24,6 +25,7 @@ import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { AudioDescriptionTrack } from './AudioDescriptionTrack'
+import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
 
 function parseTimestamp(ts: string | number): number {
   if (typeof ts === 'number') return ts
@@ -962,7 +964,6 @@ export function Timeline({ data }: { data: EditorData }) {
               </div>
               <EffectsTrack
                 effects={userEffects}
-                suppressions={suppressions}
                 pxPerSec={pxPerSec}
                 selectedEffectId={selectedEffect?.id ?? null}
                 selectedEffectIds={selectedEffectIds}
@@ -978,6 +979,19 @@ export function Timeline({ data }: { data: EditorData }) {
                 onAddEffect={handleAddEffect}
                 onEffectDrag={handleEffectDrag}
                 onEffectDragEnd={handleEffectDragEnd}
+                scrollLeft={scrollLeft}
+                viewportWidth={viewportWidth}
+              />
+            </div>
+
+            {/* Suppression track */}
+            <div className="relative h-6 shrink-0 border-t border-gray-800 cursor-crosshair">
+              <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-10 bg-gray-950/80">
+                Mute
+              </div>
+              <SuppressionTrack
+                suppressions={suppressions}
+                pxPerSec={pxPerSec}
                 onAddSuppression={handleAddSuppression}
                 onDeleteSuppression={handleDeleteSuppression}
                 onResizeSuppression={handleResizeSuppression}
@@ -1015,34 +1029,23 @@ export function Timeline({ data }: { data: EditorData }) {
         </div>
       </div>
 
-      {/* Side panel */}
-      {selectedKeyframe && !showBin && !selectedTransition && (
-        <KeyframePanel
-          key={selectedKeyframe.id}
-          keyframe={selectedKeyframe}
+      {/* Side panels — mutually exclusive: only one renders at a time.
+         Priority order: settings > versions > bin > sections > keyframe > transition > audioDesc > effect */}
+      {showSettings ? (
+        <SettingsPanel
+          data={data}
           projectName={data.projectName}
-          onClose={() => setSelectedKeyframe(null)}
-          onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
+          onClose={() => setShowSettings(false)}
+          onSave={() => router.invalidate()}
+          onPreviewQualityChange={(q) => setPreviewQuality(q)}
         />
-      )}
-
-      {/* Transition panel */}
-      {selectedTransition && !showBin && !selectedKeyframe && (
-        <TransitionPanel
-          key={selectedTransition.id}
-          transition={selectedTransition}
+      ) : showVersions ? (
+        <VersionHistoryPanel
           projectName={data.projectName}
-          motionPrompt={data.meta.motionPrompt}
-          audioDescriptions={data.audioDescriptions}
-          keyframes={keyframes}
-          onClose={() => setSelectedTransition(null)}
-          onDelete={() => handleDeleteTransition(selectedTransition.id)}
-          onDataChange={() => router.invalidate()}
+          onClose={() => setShowVersions(false)}
+          onRestore={() => router.invalidate()}
         />
-      )}
-
-      {/* Bin panel */}
-      {showBin && !showVersions && (
+      ) : showBin ? (
         <BinPanel
           projectName={data.projectName}
           onClose={() => setShowBin(false)}
@@ -1067,21 +1070,7 @@ export function Timeline({ data }: { data: EditorData }) {
           activeKeyframes={data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
           activeTransitions={data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
         />
-      )}
-
-      {/* Audio description panel */}
-      {selectedAudioDescription && !selectedKeyframe && !selectedTransition && !showBin && (
-        <AudioDescriptionPanel
-          section={selectedAudioDescription}
-          audioEvents={data.audioEvents.filter(
-            (ev) => ev.time >= selectedAudioDescription.startTime && ev.time <= selectedAudioDescription.endTime
-          )}
-          onClose={() => setSelectedAudioDescription(null)}
-        />
-      )}
-
-      {/* Narrative sections panel */}
-      {showSections && (
+      ) : showSections ? (
         <NarrativeSectionPanel
           sections={data.narrativeSections}
           projectName={data.projectName}
@@ -1091,37 +1080,44 @@ export function Timeline({ data }: { data: EditorData }) {
             else setCurrentTime(time)
           }}
         />
-      )}
-
-      {/* Settings panel */}
-      {showSettings && (
-        <SettingsPanel
-          data={data}
+      ) : selectedKeyframe ? (
+        <KeyframePanel
+          key={selectedKeyframe.id}
+          keyframe={selectedKeyframe}
           projectName={data.projectName}
-          onClose={() => setShowSettings(false)}
-          onSave={() => router.invalidate()}
-          onPreviewQualityChange={(q) => setPreviewQuality(q)}
+          onClose={() => setSelectedKeyframe(null)}
+          onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
         />
-      )}
-
-      {/* Version history panel */}
-      {showVersions && !showSettings && (
-        <VersionHistoryPanel
+      ) : selectedTransition ? (
+        <TransitionPanel
+          key={selectedTransition.id}
+          transition={selectedTransition}
           projectName={data.projectName}
-          onClose={() => setShowVersions(false)}
-          onRestore={() => router.invalidate()}
+          motionPrompt={data.meta.motionPrompt}
+          audioDescriptions={data.audioDescriptions}
+          keyframes={keyframes}
+          onClose={() => setSelectedTransition(null)}
+          onDelete={() => handleDeleteTransition(selectedTransition.id)}
+          onDataChange={() => router.invalidate()}
         />
-      )}
-
-      {/* Effect editor side panel */}
-      {selectedEffect && !selectedKeyframe && !selectedTransition && !showBin && !showVersions && !showSections && !showSettings && (
+      ) : selectedAudioDescription ? (
+        <AudioDescriptionPanel
+          section={selectedAudioDescription}
+          audioEvents={data.audioEvents.filter(
+            (ev) => ev.time >= selectedAudioDescription.startTime && ev.time <= selectedAudioDescription.endTime
+          )}
+          projectName={data.projectName}
+          onClose={() => setSelectedAudioDescription(null)}
+          onKeyframeInserted={() => router.invalidate()}
+        />
+      ) : selectedEffect ? (
         <EffectEditor
           effect={selectedEffect}
           onUpdate={handleEffectUpdate}
           onDelete={handleEffectDelete}
           onClose={() => { setSelectedEffect(null); setSelectedEffectIds(new Set()) }}
         />
-      )}
+      ) : null}
 
       {/* Import dialog */}
       {showImport && (
@@ -1266,10 +1262,12 @@ const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
 const DESC_PANEL_MIN_WIDTH = 240
 
-function AudioDescriptionPanel({ section, audioEvents, onClose }: {
+function AudioDescriptionPanel({ section, audioEvents, projectName, onClose, onKeyframeInserted }: {
   section: import('@/lib/beatlab-client').AudioDescription
   audioEvents: AudioEvent[]
+  projectName: string
   onClose: () => void
+  onKeyframeInserted: () => void
 }) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DESC_PANEL_DEFAULT_WIDTH
@@ -1279,6 +1277,7 @@ function AudioDescriptionPanel({ section, audioEvents, onClose }: {
   const isDragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
+  const [tab, setTab] = useState<'description' | 'suggest'>('description')
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     isDragging.current = true
@@ -1324,44 +1323,72 @@ function AudioDescriptionPanel({ section, audioEvents, onClose }: {
         onMouseDown={handleMouseDown}
       />
 
-      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
+      <div className="flex-1 bg-gray-900 border-l border-gray-800 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
           <div className="text-sm font-medium text-teal-300 truncate">{section.label}</div>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider">
-            {formatTime(section.startTime)} &ndash; {formatTime(section.endTime)}
-          </div>
+        {/* Tabs */}
+        <div className="flex border-b border-gray-800 shrink-0">
+          <button
+            onClick={() => setTab('description')}
+            className={`flex-1 text-xs py-2 transition-colors ${tab === 'description' ? 'text-gray-200 border-b-2 border-teal-500' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Description
+          </button>
+          <button
+            onClick={() => setTab('suggest')}
+            className={`flex-1 text-xs py-2 transition-colors ${tab === 'suggest' ? 'text-gray-200 border-b-2 border-teal-500' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Suggest
+          </button>
+        </div>
 
-          {/* Events (at top) */}
-          {audioEvents.length > 0 && (
-            <div>
-              <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
-                Events ({audioEvents.length})
+        {/* Tab content */}
+        <div className="flex-1 overflow-y-auto">
+          {tab === 'description' ? (
+            <div className="p-3 space-y-3">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+                {formatTime(section.startTime)} &ndash; {formatTime(section.endTime)}
               </div>
-              <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                {audioEvents.slice(0, 100).map((ev, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${STEM_DOT_COLORS[ev.stem_source] || 'bg-gray-500'}`} />
-                    <span className="font-mono text-gray-500 w-12 shrink-0">{ev.time.toFixed(2)}s</span>
-                    <span className="text-gray-300">{ev.stem_source}/{ev.effect}</span>
-                    <span className="ml-auto text-gray-500">{(ev.intensity * 100).toFixed(0)}%</span>
+
+              {/* Events (at top) */}
+              {audioEvents.length > 0 && (
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+                    Events ({audioEvents.length})
                   </div>
-                ))}
-                {audioEvents.length > 100 && (
-                  <div className="text-xs text-gray-600 italic">...and {audioEvents.length - 100} more</div>
-                )}
+                  <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                    {audioEvents.slice(0, 100).map((ev, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${STEM_DOT_COLORS[ev.stem_source] || 'bg-gray-500'}`} />
+                        <span className="font-mono text-gray-500 w-12 shrink-0">{ev.time.toFixed(2)}s</span>
+                        <span className="text-gray-300">{ev.stem_source}/{ev.effect}</span>
+                        <span className="ml-auto text-gray-500">{(ev.intensity * 100).toFixed(0)}%</span>
+                      </div>
+                    ))}
+                    {audioEvents.length > 100 && (
+                      <div className="text-xs text-gray-600 italic">...and {audioEvents.length - 100} more</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Section description (markdown) */}
+              <div className="prose prose-sm prose-invert max-w-none text-gray-300 leading-relaxed [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-xs [&_p]:text-sm [&_li]:text-sm [&_code]:text-xs [&_code]:bg-gray-800 [&_code]:px-1 [&_code]:rounded">
+                <ReactMarkdown>{section.content}</ReactMarkdown>
               </div>
             </div>
+          ) : (
+            <KeyframeSuggestPanel
+              section={section}
+              audioEvents={audioEvents}
+              projectName={projectName}
+              onKeyframeInserted={onKeyframeInserted}
+            />
           )}
-
-          {/* Section description (markdown) */}
-          <div className="prose prose-sm prose-invert max-w-none text-gray-300 leading-relaxed [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-xs [&_p]:text-sm [&_li]:text-sm [&_code]:text-xs [&_code]:bg-gray-800 [&_code]:px-1 [&_code]:rounded">
-            <ReactMarkdown>{section.content}</ReactMarkdown>
-          </div>
         </div>
       </div>
     </div>

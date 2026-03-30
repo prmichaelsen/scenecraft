@@ -398,6 +398,43 @@ export async function postSplitTransition(project: string, transitionId: string,
   return res.json() as Promise<{ success: boolean; keyframeId: string; transition1: string; transition2: string }>
 }
 
+export type BenchItem = {
+  id: string
+  type: 'keyframe' | 'transition'
+  sourcePath: string
+  label: string
+  addedAt: string
+  usageCount: number
+  usages: { entityId: string; timestamp: string }[]
+}
+
+export async function fetchBench(project: string): Promise<BenchItem[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bench`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.items || []
+}
+
+export async function postAddToBench(project: string, type: 'keyframe' | 'transition', entityId?: string, sourcePath?: string, label?: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bench/add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, entityId, sourcePath, label }),
+  })
+  if (!res.ok) throw new Error(`Failed to add to bench: ${res.status}`)
+  return res.json() as Promise<{ success: boolean; benchId: string }>
+}
+
+export async function postRemoveFromBench(project: string, benchId: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bench/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ benchId }),
+  })
+  if (!res.ok) throw new Error(`Failed to remove from bench: ${res.status}`)
+  return res.json()
+}
+
 export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
   console.log(`[beatlab-client] inserting pool item: ${type} ${poolPath} at ${atTime}s`)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
@@ -436,5 +473,28 @@ export async function postSelectKeyframes(project: string, selections: Record<st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selections }),
   })
+  return res.json()
+}
+
+export type KeyframePromptSuggestion = {
+  eventIndex: number
+  prompt: string
+}
+
+export async function postSuggestKeyframePrompts(
+  project: string,
+  payload: {
+    sectionLabel: string
+    sectionContent: string
+    events: Array<{ time: number; effect: string; intensity: number; stem_source: string }>
+    baseStillName: string
+  }
+): Promise<{ suggestions: KeyframePromptSuggestion[] }> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/suggest-keyframe-prompts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`Failed to suggest prompts: ${res.status} ${await res.text()}`)
   return res.json()
 }

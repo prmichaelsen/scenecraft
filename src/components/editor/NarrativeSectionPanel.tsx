@@ -1,6 +1,10 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { NarrativeSection } from '@/lib/timeline-client'
 import { postUpdateNarrative } from '@/lib/timeline-client'
+
+const STORAGE_KEY = 'beatlab-side-panel-width'
+const DEFAULT_WIDTH = 360
+const MIN_WIDTH = 240
 
 type NarrativeSectionPanelProps = {
   sections: NarrativeSection[]
@@ -16,6 +20,46 @@ function parseTs(ts: string): number {
 }
 
 export function NarrativeSectionPanel({ sections: initialSections, projectName, onClose, onSeek }: NarrativeSectionPanelProps) {
+  const [width, setWidth] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_WIDTH
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? Math.max(MIN_WIDTH, parseInt(stored, 10)) : DEFAULT_WIDTH
+  })
+  const isDragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true
+    startX.current = e.clientX
+    startWidth.current = width
+    e.preventDefault()
+  }, [width])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = startX.current - e.clientX
+      const newWidth = Math.max(MIN_WIDTH, startWidth.current + delta)
+      setWidth(newWidth)
+    }
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false
+        setWidth((current) => {
+          localStorage.setItem(STORAGE_KEY, String(current))
+          return current
+        })
+      }
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
   const [sections, setSections] = useState(initialSections)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -38,7 +82,12 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
   }, [projectName, sections])
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('beatlab-side-panel-width') || '360', 10) }}>
+    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col relative" style={{ width }}>
+      {/* Resize handle */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 z-20"
+        onMouseDown={handleResizeMouseDown}
+      />
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
         <div className="text-sm font-medium">Sections</div>
         <div className="flex items-center gap-3">

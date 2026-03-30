@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import type { Transition } from '@/routes/project/$name/editor'
 import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
 import { beatlabFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdateTransitionRemap, type PoolEntry, type TransitionBinEntry } from '@/lib/beatlab-client'
-import { evaluateCurve } from '@/lib/remap-curve'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
@@ -76,7 +75,7 @@ export function TransitionPanel({
     }
   }, [])
 
-  const [tab, setTab] = useState<'details' | 'candidates' | 'browse'>('details')
+  const [tab, setTab] = useState<'details' | 'candidates' | 'browse' | 'bench'>('details')
   const tr = transition
   const totalCandidates = Object.values(tr.candidates).reduce((sum, arr) => sum + arr.length, 0)
 
@@ -102,6 +101,18 @@ export function TransitionPanel({
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="text-sm font-medium text-orange-300">{tr.id}</div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={async () => {
+                try {
+                  const { postAddToBench } = await import('@/lib/beatlab-client')
+                  await postAddToBench(projectName, 'transition', tr.id)
+                } catch (e) { console.error('Bench failed:', e) }
+              }}
+              className="text-xs text-green-500/70 hover:text-green-400 transition-colors"
+              title="Add to bench for quick access"
+            >
+              Bench
+            </button>
             <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
@@ -133,7 +144,7 @@ export function TransitionPanel({
 
               {/* Time remap curve editor */}
               <div className="px-3 py-3 border-b border-gray-800">
-                <CurveEditor transition={tr} projectName={projectName} onDataChange={onDataChange} />
+                <CurveEditor transition={tr} projectName={projectName} />
               </div>
 
               {/* Action prompt */}
@@ -151,12 +162,18 @@ export function TransitionPanel({
             </>
           ) : tab === 'candidates' ? (
             <CandidatesTab transition={tr} projectName={projectName} />
-          ) : (
+          ) : tab === 'browse' ? (
             <BrowseTab transition={tr} projectName={projectName} onAssigned={() => {
               transition.hasSelectedVideo = true
               setTab('candidates')
               onDataChange()
             }} />
+          ) : (
+            <BenchTab transition={tr} projectName={projectName} onAssigned={() => {
+              transition.hasSelectedVideo = true
+              setTab('candidates')
+              onDataChange()
+            }} onSeek={onDataChange} />
           )}
         </div>
       </div>
@@ -371,7 +388,7 @@ function MotionPromptEditor({ projectName, motionPrompt }: { projectName: string
   )
 }
 
-function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'details' | 'candidates' | 'browse') => void; candidateCount: number }) {
+function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'details' | 'candidates' | 'browse' | 'bench') => void; candidateCount: number }) {
   return (
     <div className="flex border-b border-gray-800 shrink-0">
       <button
@@ -391,6 +408,12 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
         className={`flex-1 text-xs py-2 transition-colors ${tab === 'browse' ? 'text-gray-200 border-b-2 border-green-500' : 'text-gray-500 hover:text-gray-400'}`}
       >
         Browse
+      </button>
+      <button
+        onClick={() => setTab('bench')}
+        className={`flex-1 text-xs py-2 transition-colors ${tab === 'bench' ? 'text-gray-200 border-b-2 border-yellow-500' : 'text-gray-500 hover:text-gray-400'}`}
+      >
+        Bench
       </button>
     </div>
   )
@@ -784,7 +807,7 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
   )
 }
 
-function CurveEditor({ transition, projectName, onDataChange }: { transition: Transition; projectName: string; onDataChange: () => void }) {
+function CurveEditor({ transition, projectName }: { transition: Transition; projectName: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [points, setPoints] = useState<[number, number][]>(() =>
     transition.remap.curve_points || [[0, 0], [1, 1]]
@@ -1002,6 +1025,95 @@ function CurveEditor({ transition, projectName, onDataChange }: { transition: Tr
 }
 
 const browseBlobCache = new Map<string, string>()
+
+function BenchTab({ transition, projectName, onAssigned, onSeek }: { transition: Transition; projectName: string; onAssigned: () => void; onSeek: () => void }) {
+  const [items, setItems] = useState<import('@/lib/beatlab-client').BenchItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [assigning, setAssigning] = useState(false)
+
+  useEffect(() => {
+    import('@/lib/beatlab-client').then(({ fetchBench }) =>
+      fetchBench(projectName).then(setItems)
+    ).finally(() => setLoading(false))
+  }, [projectName])
+
+  const handleAssign = useCallback(async (sourcePath: string) => {
+    setAssigning(true)
+    try {
+      await postAssignPoolVideo(projectName, transition.id, sourcePath)
+      autoSave(projectName, `Assigned bench video to ${transition.id}`)
+      const oldVariant = transition.selected ?? 'none'
+      invalidateEntry(`tr:${transition.id}:v${oldVariant}`)
+      transition.hasSelectedVideo = true
+      onAssigned()
+    } catch (e) {
+      console.error('Assign from bench failed:', e)
+    } finally {
+      setAssigning(false)
+    }
+  }, [projectName, transition, onAssigned])
+
+  const handleRemove = useCallback(async (benchId: string) => {
+    try {
+      const { postRemoveFromBench } = await import('@/lib/beatlab-client')
+      await postRemoveFromBench(projectName, benchId)
+      setItems((prev) => prev.filter((i) => i.id !== benchId))
+    } catch (e) {
+      console.error('Remove from bench failed:', e)
+    }
+  }, [projectName])
+
+  if (loading) return <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
+
+  const trItems = items.filter((i) => i.type === 'transition')
+
+  if (trItems.length === 0) {
+    return <div className="p-4 text-center text-sm text-gray-600">No benched transitions. Click "Bench" on a transition to add it here.</div>
+  }
+
+  return (
+    <div className="p-2 space-y-2">
+      {trItems.map((item) => (
+        <div key={item.id} className="bg-gray-800/50 rounded p-2 space-y-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BrowseVideoCard
+                path={item.sourcePath}
+                label={item.label}
+                projectName={projectName}
+                disabled={assigning}
+                onAssign={() => handleAssign(item.sourcePath)}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] text-gray-500">{item.usageCount} uses</span>
+            <button
+              onClick={() => handleRemove(item.id)}
+              className="text-[9px] text-red-400/60 hover:text-red-400"
+            >
+              Remove
+            </button>
+          </div>
+          {item.usages.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {item.usages.map((u) => (
+                <button
+                  key={u.entityId}
+                  className="text-[8px] bg-gray-700 text-yellow-300 px-1 py-0.5 rounded hover:bg-gray-600"
+                  title={`Jump to ${u.entityId}`}
+                  onClick={onSeek}
+                >
+                  {u.timestamp}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function BrowseTab({ transition, projectName, onAssigned }: { transition: Transition; projectName: string; onAssigned: () => void }) {
   const [poolSegments, setPoolSegments] = useState<PoolEntry[]>([])

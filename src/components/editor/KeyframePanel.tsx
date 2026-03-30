@@ -482,11 +482,15 @@ export function preloadStills(projectName: string): Promise<{ entries: FileEntry
     })
 }
 
-function BaseImagePicker({ keyframeId, projectName, onSet }: { keyframeId: string; projectName: string; onSet: () => void }) {
+export function StillPicker({ projectName, onSelect, disabled, selectedStill }: {
+  projectName: string
+  onSelect: (stillName: string) => void
+  disabled?: boolean
+  selectedStill?: string | null
+}) {
   const [stills, setStills] = useState<FileEntry[]>(() => stillsCache.get(projectName)?.entries || [])
   const [blobs, setBlobs] = useState<Map<string, string>>(() => stillsCache.get(projectName)?.blobs || new Map())
   const [loading, setLoading] = useState(!stillsCache.has(projectName))
-  const [setting, setSetting] = useState(false)
 
   useEffect(() => {
     preloadStills(projectName).then((cached) => {
@@ -495,16 +499,6 @@ function BaseImagePicker({ keyframeId, projectName, onSet }: { keyframeId: strin
       setLoading(false)
     })
   }, [projectName])
-
-  const handleSelect = useCallback(async (stillName: string) => {
-    setSetting(true)
-    try {
-      await setBaseImage({ data: { projectName, keyframeId, stillName } })
-      onSet()
-    } finally {
-      setSetting(false)
-    }
-  }, [projectName, keyframeId, onSet])
 
   if (loading) return <div className="p-3 text-[10px] text-gray-600">Loading stills...</div>
   if (stills.length === 0) return <div className="p-3 text-[10px] text-gray-600">No stills in assets/stills/</div>
@@ -516,9 +510,9 @@ function BaseImagePicker({ keyframeId, projectName, onSet }: { keyframeId: strin
         {stills.map((still) => (
           <button
             key={still.name}
-            onClick={() => handleSelect(still.name)}
-            disabled={setting}
-            className="relative rounded overflow-hidden border-2 border-transparent hover:border-blue-500 transition-colors disabled:opacity-50"
+            onClick={() => onSelect(still.name)}
+            disabled={disabled}
+            className={`relative rounded overflow-hidden border-2 transition-colors disabled:opacity-50 ${selectedStill === still.name ? 'border-teal-500' : 'border-transparent hover:border-blue-500'}`}
           >
             <img
               src={blobs.get(still.name) || beatlabFileUrl(projectName, `assets/stills/${still.name}`)}
@@ -533,6 +527,22 @@ function BaseImagePicker({ keyframeId, projectName, onSet }: { keyframeId: strin
       </div>
     </div>
   )
+}
+
+function BaseImagePicker({ keyframeId, projectName, onSet }: { keyframeId: string; projectName: string; onSet: () => void }) {
+  const [setting, setSetting] = useState(false)
+
+  const handleSelect = useCallback(async (stillName: string) => {
+    setSetting(true)
+    try {
+      await setBaseImage({ data: { projectName, keyframeId, stillName } })
+      onSet()
+    } finally {
+      setSetting(false)
+    }
+  }, [projectName, keyframeId, onSet])
+
+  return <StillPicker projectName={projectName} onSelect={handleSelect} disabled={setting} />
 }
 
 function Field({ label, value }: { label: string; value: string }) {

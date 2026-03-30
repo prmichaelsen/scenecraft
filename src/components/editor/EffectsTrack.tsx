@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import type { UserEffect, BeatSuppression, EffectType } from '@/lib/beatlab-client'
+import type { UserEffect, EffectType } from '@/lib/beatlab-client'
 
 const EFFECT_COLORS: Record<EffectType, string> = {
   pulse: 'bg-yellow-500',
@@ -17,19 +17,8 @@ const EFFECT_LABEL_COLORS: Record<EffectType, string> = {
   flash: 'text-gray-200',
 }
 
-const EFFECT_DOT_COLORS: Record<EffectType, string> = {
-  pulse: 'bg-yellow-500',
-  zoom: 'bg-blue-500',
-  shake: 'bg-red-500',
-  glow: 'bg-purple-500',
-  flash: 'bg-white',
-}
-
-const ALL_EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash']
-
 type EffectsTrackProps = {
   effects: UserEffect[]
-  suppressions: BeatSuppression[]
   pxPerSec: number
   selectedEffectId: string | null
   selectedEffectIds: Set<string>
@@ -38,19 +27,12 @@ type EffectsTrackProps = {
   onAddEffect: (time: number) => void
   onEffectDrag: (id: string, newTime: number) => void
   onEffectDragEnd: (id: string, newTime: number) => void
-  onAddSuppression: (from: number, to: number) => void
-  onDeleteSuppression: (id: string) => void
-  onResizeSuppression: (id: string, from: number, to: number) => void
-  onUpdateSuppressionTypes: (id: string, effectTypes: EffectType[] | undefined) => void
-  selectedSuppressionId: string | null
-  onSuppressionClick: (id: string) => void
   scrollLeft: number
   viewportWidth: number
 }
 
 export function EffectsTrack({
   effects,
-  suppressions,
   pxPerSec,
   selectedEffectId,
   selectedEffectIds,
@@ -59,12 +41,6 @@ export function EffectsTrack({
   onAddEffect,
   onEffectDrag,
   onEffectDragEnd,
-  onAddSuppression,
-  onDeleteSuppression: _onDeleteSuppression,
-  onResizeSuppression,
-  onUpdateSuppressionTypes,
-  selectedSuppressionId,
-  onSuppressionClick,
   scrollLeft,
   viewportWidth,
 }: EffectsTrackProps) {
@@ -101,55 +77,24 @@ export function EffectsTrack({
     document.addEventListener('mouseup', handleMouseUp)
   }, [pxPerSec, onEffectDrag])
 
-  // Shift+drag to create suppression zone
-  const suppressionDragRef = useRef<{ startTime: number; rect: DOMRect } | null>(null)
-
+  // Alt+drag to select effects in range
   const handleTrackMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!e.shiftKey && !e.altKey) return
+    if (!e.altKey) return
     e.preventDefault()
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
     const startTime = x / pxPerSec
 
-    if (e.altKey) {
-      // Alt+drag: select effects in range
-      const handleMouseUp = (ev: MouseEvent) => {
-        const endX = ev.clientX - rect.left
-        const endTime = endX / pxPerSec
-        const from = Math.min(startTime, endTime)
-        const to = Math.max(startTime, endTime)
-        if (to - from > 0.05) onSelectEffectsInRange(from, to)
-        document.removeEventListener('mouseup', handleMouseUp)
-      }
-      document.addEventListener('mouseup', handleMouseUp)
-      return
-    }
-
-    // Shift+drag: create suppression zone
-    suppressionDragRef.current = { startTime, rect }
-
-    const handleMouseMove = (_ev: MouseEvent) => {
-      // Visual feedback could be added here with a temp overlay
-    }
-
     const handleMouseUp = (ev: MouseEvent) => {
-      if (suppressionDragRef.current) {
-        const endX = ev.clientX - suppressionDragRef.current.rect.left
-        const endTime = endX / pxPerSec
-        const from = Math.min(suppressionDragRef.current.startTime, endTime)
-        const to = Math.max(suppressionDragRef.current.startTime, endTime)
-        if (to - from > 0.1) {
-          onAddSuppression(from, to)
-        }
-        suppressionDragRef.current = null
-      }
-      document.removeEventListener('mousemove', handleMouseMove)
+      const endX = ev.clientX - rect.left
+      const endTime = endX / pxPerSec
+      const from = Math.min(startTime, endTime)
+      const to = Math.max(startTime, endTime)
+      if (to - from > 0.05) onSelectEffectsInRange(from, to)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-
-    document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [pxPerSec, onAddSuppression])
+  }, [pxPerSec, onSelectEffectsInRange])
 
   const handleTrackDoubleClick = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -164,120 +109,6 @@ export function EffectsTrack({
       onDoubleClick={handleTrackDoubleClick}
       onMouseDown={handleTrackMouseDown}
     >
-      {/* Suppression zones */}
-      {suppressions.map((s) => {
-        const leftPx = s.from * pxPerSec
-        const rightPx = s.to * pxPerSec
-        if (rightPx < scrollLeft - BUFFER_PX || leftPx > scrollLeft + viewportWidth + BUFFER_PX) return null
-        const isSelected = s.id === selectedSuppressionId
-        const widthPx = (s.to - s.from) * pxPerSec
-        const hasTypeFilter = s.effectTypes && s.effectTypes.length > 0
-        return (
-          <div
-            key={s.id}
-            className={`absolute top-0 h-full pointer-events-auto cursor-pointer ${isSelected ? 'bg-red-900/30 border-l-2 border-r-2 border-red-500' : 'bg-red-900/15 border-l border-r border-red-800/30 hover:bg-red-900/25'}`}
-            style={{
-              left: s.from * pxPerSec,
-              width: widthPx,
-            }}
-            title={`Suppressed: ${s.from.toFixed(1)}s - ${s.to.toFixed(1)}s${hasTypeFilter ? ` (${s.effectTypes!.join(', ')})` : ' (all)'}`}
-            onClick={(e) => { e.stopPropagation(); onSuppressionClick(s.id) }}
-          >
-            {/* Type indicator dots */}
-            {widthPx > 30 && (
-              <div className="absolute top-0.5 left-1/2 -translate-x-1/2 flex gap-0.5 pointer-events-none">
-                {hasTypeFilter ? (
-                  s.effectTypes!.map((t) => (
-                    <div key={t} className={`w-1.5 h-1.5 rounded-full ${EFFECT_DOT_COLORS[t]} opacity-70`} />
-                  ))
-                ) : (
-                  <span className="text-[7px] text-red-400/60 font-mono">ALL</span>
-                )}
-              </div>
-            )}
-
-            {/* Type toggle editor (shown when selected) */}
-            {isSelected && (
-              <div
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex gap-0.5 bg-gray-900/90 border border-red-500/50 rounded px-1 py-0.5 z-50 pointer-events-auto"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {ALL_EFFECT_TYPES.map((t) => {
-                  const active = !hasTypeFilter || s.effectTypes!.includes(t)
-                  return (
-                    <button
-                      key={t}
-                      className={`text-[8px] px-1 py-0.5 rounded transition-colors ${active ? `${EFFECT_DOT_COLORS[t]} text-black font-bold` : 'bg-gray-800 text-gray-500'}`}
-                      title={`${active ? 'Unsuppress' : 'Suppress'} ${t}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!hasTypeFilter) {
-                          // Currently suppressing all — switch to suppressing all except this one
-                          onUpdateSuppressionTypes(s.id, ALL_EFFECT_TYPES.filter((et) => et !== t))
-                        } else {
-                          const current = s.effectTypes!
-                          if (current.includes(t)) {
-                            const next = current.filter((et) => et !== t)
-                            onUpdateSuppressionTypes(s.id, next.length === 0 ? undefined : next)
-                          } else {
-                            const next = [...current, t]
-                            onUpdateSuppressionTypes(s.id, next.length === ALL_EFFECT_TYPES.length ? undefined : next)
-                          }
-                        }
-                      }}
-                    >
-                      {t[0].toUpperCase()}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* Resize handles */}
-            <div
-              className="absolute top-0 left-0 w-2 h-full cursor-col-resize hover:bg-red-500/40 z-10"
-              onMouseDown={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                const startX = e.clientX
-                const origFrom = s.from
-                const handleMove = (ev: MouseEvent) => {
-                  const delta = (ev.clientX - startX) / pxPerSec
-                  const newFrom = Math.max(0, Math.min(s.to - 0.1, origFrom + delta))
-                  onResizeSuppression(s.id, newFrom, s.to)
-                }
-                const handleUp = () => {
-                  document.removeEventListener('mousemove', handleMove)
-                  document.removeEventListener('mouseup', handleUp)
-                }
-                document.addEventListener('mousemove', handleMove)
-                document.addEventListener('mouseup', handleUp)
-              }}
-            />
-            <div
-              className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-red-500/40 z-10"
-              onMouseDown={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                const startX = e.clientX
-                const origTo = s.to
-                const handleMove = (ev: MouseEvent) => {
-                  const delta = (ev.clientX - startX) / pxPerSec
-                  const newTo = Math.max(s.from + 0.1, origTo + delta)
-                  onResizeSuppression(s.id, s.from, newTo)
-                }
-                const handleUp = () => {
-                  document.removeEventListener('mousemove', handleMove)
-                  document.removeEventListener('mouseup', handleUp)
-                }
-                document.addEventListener('mousemove', handleMove)
-                document.addEventListener('mouseup', handleUp)
-              }}
-            />
-          </div>
-        )
-      })}
-
       {/* Effect markers */}
       {effects.map((fx) => {
         const x = fx.time * pxPerSec

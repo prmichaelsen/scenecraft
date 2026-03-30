@@ -274,6 +274,24 @@ export const selectKeyframes = createServerFn({ method: 'POST' })
     return postSelectKeyframes(data.projectName, data.selections)
   })
 
+export const suggestKeyframePrompts = createServerFn({ method: 'POST' })
+  .inputValidator((input: {
+    projectName: string
+    sectionLabel: string
+    sectionContent: string
+    events: Array<{ time: number; effect: string; intensity: number; stem_source: string }>
+    baseStillName: string
+  }) => input)
+  .handler(async ({ data }) => {
+    const { postSuggestKeyframePrompts } = await import('@/lib/beatlab-client')
+    return postSuggestKeyframePrompts(data.projectName, {
+      sectionLabel: data.sectionLabel,
+      sectionContent: data.sectionContent,
+      events: data.events,
+      baseStillName: data.baseStillName,
+    })
+  })
+
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
   .handler(async ({ data }) => {
