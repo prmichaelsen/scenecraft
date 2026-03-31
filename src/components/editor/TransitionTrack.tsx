@@ -55,6 +55,7 @@ export function TransitionTrack({
       if (didDrag.current && dragState.current) {
         const deltaX = ev.clientX - dragState.current.startX
         const newTime = Math.max(dragState.current.minTime, Math.min(dragState.current.maxTime, dragState.current.startTime + deltaX / pxPerSec))
+        console.log(`[TransitionTrack] mouseUp ${dragState.current.keyframeId}: startTime=${dragState.current.startTime.toFixed(2)} deltaX=${deltaX} pxPerSec=${pxPerSec} rawTime=${(dragState.current.startTime + deltaX / pxPerSec).toFixed(2)} clampedTime=${newTime.toFixed(2)} min=${dragState.current.minTime.toFixed(2)} max=${dragState.current.maxTime.toFixed(2)}`)
         onBoundaryDragEnd(dragState.current.keyframeId, newTime)
         // Compute new timeline duration and update remap
         const newDuration = Math.abs(newTime - dragState.current.otherKfTime)
@@ -120,6 +121,13 @@ export function TransitionTrack({
                 </div>
               )
             })()}
+
+            {/* Duration label above transition bar */}
+            {width > 30 && (
+              <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center pointer-events-none">
+                <span className="text-[8px] font-mono text-gray-600">{timelineDur.toFixed(1)}s</span>
+              </div>
+            )}
 
             {/* Transition bar */}
             <div

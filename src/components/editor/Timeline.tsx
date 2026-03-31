@@ -3,7 +3,9 @@ import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
+import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
+import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker } from '@/lib/beatlab-client'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
@@ -12,7 +14,8 @@ import { Playhead } from './Playhead'
 import { KeyframePanel, preloadStills } from './KeyframePanel'
 import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
-import { BeatEffectPreview } from './BeatEffectPreview'
+import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
+import { recordPreview } from '@/lib/preview-recorder'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
 import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
@@ -26,6 +29,184 @@ import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { AudioDescriptionTrack } from './AudioDescriptionTrack'
 import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
+
+function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate }: {
+  markers: { id: string; time: number; label: string }[]
+  pxPerSec: number
+  scrollLeft: number
+  viewportWidth: number
+  onAdd: (time: number) => void
+  onRemove: (id: string) => void
+  onUpdate: (id: string, label: string) => void
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const BUFFER_PX = 300
+
+  return (
+    <div
+      className="relative h-5 shrink-0 border-b border-gray-800 cursor-crosshair"
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        const x = e.clientX - rect.left + scrollLeft
+        const time = x / pxPerSec
+        onAdd(time)
+      }}
+    >
+      <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 pointer-events-none">
+        Markers
+      </div>
+      {markers.map((m) => {
+        const x = m.time * pxPerSec
+        if (x < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
+        const isEditing = editingId === m.id
+        return (
+          <div key={m.id} className="absolute top-0 h-full group" style={{ left: x }}>
+            <div
+              className="w-2 h-full bg-amber-500/70 hover:bg-amber-400 cursor-pointer pointer-events-auto relative"
+              onClick={(e) => {
+                e.stopPropagation()
+                setEditingId(m.id)
+                setEditText(m.label)
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onRemove(m.id)
+              }}
+            >
+              {/* Hover tooltip */}
+              {!isEditing && m.label && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-[10px] text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none max-w-[200px] truncate">
+                  {m.label}
+                </div>
+              )}
+            </div>
+            {/* Inline edit */}
+            {isEditing && (
+              <div className="absolute top-full left-0 mt-0.5 z-50 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="text"
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { onUpdate(m.id, editText); setEditingId(null) }
+                    if (e.key === 'Escape') setEditingId(null)
+                  }}
+                  onBlur={() => { onUpdate(m.id, editText); setEditingId(null) }}
+                  autoFocus
+                  className="bg-gray-800 text-xs text-gray-300 border border-amber-500 rounded px-1.5 py-0.5 w-40 focus:outline-none"
+                  placeholder="Marker label..."
+                />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function fmtTimestamp(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`
+}
+
+function DownloadPreviewPanel({ currentTime, duration, recording, onRecord, onClose }: {
+  currentTime: number
+  duration: number
+  recording: { progress: number } | null
+  onRecord: (startTime: number, endTime: number) => void
+  onClose: () => void
+}) {
+  const [startInput, setStartInput] = useState(fmtTimestamp(currentTime))
+  const [endInput, setEndInput] = useState(fmtTimestamp(Math.min(currentTime + 30, duration)))
+
+  const parseMmSs = (val: string): number | null => {
+    const parts = val.split(':')
+    if (parts.length === 2) {
+      const m = parseInt(parts[0], 10)
+      const s = parseFloat(parts[1])
+      if (!isNaN(m) && !isNaN(s)) return m * 60 + s
+    }
+    const n = parseFloat(val)
+    return isNaN(n) ? null : n
+  }
+
+  const startSec = parseMmSs(startInput)
+  const endSec = parseMmSs(endInput)
+  const valid = startSec !== null && endSec !== null && endSec > startSec && startSec >= 0 && endSec <= duration
+  const rangeDuration = valid ? (endSec! - startSec!) : 0
+
+  return (
+    <div className="w-72 shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+        <span className="text-xs text-gray-400 uppercase tracking-wider font-medium">Download Preview</span>
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
+      </div>
+      <div className="p-3 space-y-3">
+        <div className="text-[10px] text-gray-500">
+          Records the preview canvas + audio as a WebM file. Enter times in M:SS.f format.
+        </div>
+
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Start Time</label>
+            <input
+              type="text"
+              value={startInput}
+              onChange={(e) => setStartInput(e.target.value)}
+              placeholder="0:00.0"
+              className="w-full bg-gray-800 text-sm text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-green-500 focus:outline-none font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">End Time</label>
+            <input
+              type="text"
+              value={endInput}
+              onChange={(e) => setEndInput(e.target.value)}
+              placeholder="0:30.0"
+              className="w-full bg-gray-800 text-sm text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-green-500 focus:outline-none font-mono"
+            />
+          </div>
+        </div>
+
+        {valid && (
+          <div className="text-[10px] text-gray-500">
+            Duration: {rangeDuration.toFixed(1)}s
+          </div>
+        )}
+
+        {!valid && startInput && endInput && (
+          <div className="text-[10px] text-red-400">
+            Invalid range. End must be after start, both within 0 - {fmtTimestamp(duration)}.
+          </div>
+        )}
+
+        <button
+          onClick={() => { if (valid) onRecord(startSec!, endSec!) }}
+          disabled={!valid || recording !== null}
+          className="w-full text-xs bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        >
+          {recording ? `Recording... ${Math.round(recording.progress * 100)}%` : 'Record & Download'}
+        </button>
+
+        {recording && (
+          <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
+            <div className="h-full bg-green-500 transition-[width] duration-200" style={{ width: `${recording.progress * 100}%` }} />
+          </div>
+        )}
+
+        <div className="text-[10px] text-gray-600 space-y-1">
+          <div>Playback will start at the start time and record until the end time.</div>
+          <div>Output: WebM (VP9 + Opus) at preview resolution.</div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function parseTimestamp(ts: string | number): number {
   if (typeof ts === 'number') return ts
@@ -67,12 +248,14 @@ export function Timeline({ data }: { data: EditorData }) {
   })
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
+  const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<Set<string>>(new Set())
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [showBin, setShowBin] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showDownloadPreview, setShowDownloadPreview] = useState(false)
   const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/beatlab-client').AudioDescription | null>(null)
   const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
@@ -105,6 +288,17 @@ export function Timeline({ data }: { data: EditorData }) {
   // Preload stills for base image picker
   useEffect(() => { preloadStills(data.projectName) }, [data.projectName])
 
+  // Listen for timeline validation warnings via WebSocket
+  const { subscribeAll } = useBeatlabSocket()
+  useEffect(() => {
+    return subscribeAll((msg) => {
+      if (msg.type === 'timeline_warning') {
+        const w = msg as { warnings: string[]; route: string }
+        console.warn(`[Timeline] ⚠ ${w.warnings.length} validation issues after ${w.route}:`, w.warnings)
+      }
+    })
+  }, [subscribeAll])
+
   // Measure viewport width for virtualization
   useEffect(() => {
     const el = scrollRef.current
@@ -129,11 +323,20 @@ export function Timeline({ data }: { data: EditorData }) {
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const audioDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
+  const previewRef = useRef<BeatEffectPreviewHandle>(null)
+  const audioElRef = useRef<HTMLAudioElement | null>(null)
+  const [recording, setRecording] = useState<{ progress: number } | null>(null)
+  const [markers, setMarkers] = useState<{ id: string; time: number; label: string }[]>([])
+
+  // Load markers from backend
+  useEffect(() => {
+    fetchMarkers(data.projectName).then(setMarkers).catch(() => {})
+  }, [data.projectName])
 
   const keyframes: KeyframeWithTime[] = data.keyframes.map((kf) => ({
     ...kf,
     timeSeconds: dragOverrides[kf.id] ?? parseTimestamp(kf.timestamp),
-  }))
+  })).sort((a, b) => a.timeSeconds - b.timeSeconds)
 
   // Use audio duration if available, otherwise estimate from keyframes
   const effectiveDuration = duration > 0 ? duration : (
@@ -397,9 +600,27 @@ export function Timeline({ data }: { data: EditorData }) {
     setShowSections(false)
     setShowSettings(false)
     setSelectedAudioDescription(null)
+    setShowDownloadPreview(false)
   }, [])
 
-  const handleKeyframeClick = useCallback((kf: KeyframeWithTime) => {
+  const handleKeyframeClick = useCallback((kf: KeyframeWithTime, shiftKey?: boolean) => {
+    if (shiftKey) {
+      // Shift-click: toggle in multi-select set
+      setSelectedKeyframeIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(kf.id)) {
+          next.delete(kf.id)
+        } else {
+          next.add(kf.id)
+        }
+        return next
+      })
+      // Also set as the active keyframe for panel display
+      setSelectedKeyframe(kf)
+      return
+    }
+    // Normal click: clear multi-select, toggle single
+    setSelectedKeyframeIds(new Set())
     closeAllPanels()
     setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
   }, [closeAllPanels])
@@ -507,37 +728,79 @@ export function Timeline({ data }: { data: EditorData }) {
     setSelectedSuppressionId((prev) => prev === id ? null : id)
   }, [closeAllPanels])
 
-  // Keyframe boundary drag — updates local state during drag, persists to YAML on release
+  // Keyframe boundary drag — updates local state during drag, persists to DB on release
+  // Tracks the original time of the dragged kf for computing multi-select deltas
+  const dragOriginalTime = useRef<number | null>(null)
+
   const handleKeyframeDrag = useCallback((id: string, newTimeSeconds: number) => {
-    setDragOverrides((prev) => ({ ...prev, [id]: newTimeSeconds }))
-  }, [])
+    if (selectedKeyframeIds.has(id) && selectedKeyframeIds.size > 1) {
+      // Multi-drag: compute delta from original position, apply to all selected
+      const origKf = keyframes.find((k) => k.id === id)
+      const origTime = dragOriginalTime.current ?? origKf?.timeSeconds ?? newTimeSeconds
+      if (dragOriginalTime.current === null && origKf) {
+        dragOriginalTime.current = origKf.timeSeconds
+      }
+      const delta = newTimeSeconds - origTime
+      setDragOverrides((prev) => {
+        const next = { ...prev, [id]: newTimeSeconds }
+        for (const otherId of selectedKeyframeIds) {
+          if (otherId !== id) {
+            const otherKf = keyframes.find((k) => k.id === otherId)
+            if (otherKf) {
+              next[otherId] = Math.max(0, otherKf.timeSeconds + delta)
+            }
+          }
+        }
+        return next
+      })
+    } else {
+      setDragOverrides((prev) => ({ ...prev, [id]: newTimeSeconds }))
+    }
+  }, [selectedKeyframeIds, keyframes])
 
   const handleKeyframeDragEnd = useCallback(async (id: string, newTimeSeconds: number) => {
+    console.log(`[Timeline] dragEnd ${id}: newTime=${newTimeSeconds.toFixed(2)}s effectiveDuration=${effectiveDuration.toFixed(2)}s`)
+    const isMultiDrag = selectedKeyframeIds.has(id) && selectedKeyframeIds.size > 1
+
     // Clamp to valid range — prevents corrupted timestamps from drag bugs
     const clamped = Math.max(0, Math.min(newTimeSeconds, effectiveDuration))
     if (Math.abs(clamped - newTimeSeconds) > 0.5) {
       console.warn(`[Timeline] Clamped drag for ${id}: ${newTimeSeconds.toFixed(2)}s → ${clamped.toFixed(2)}s (duration=${effectiveDuration.toFixed(2)}s)`)
     }
-    const newTimestamp = secondsToTimestamp(clamped)
-    setDragOverrides((prev) => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-    // Update the keyframe in the parent data so it persists visually
-    const kf = data.keyframes.find((k) => k.id === id)
-    if (kf) {
-      kf.timestamp = newTimestamp
+
+    // Collect all kfs to persist (multi-drag or single)
+    const updates: { id: string; timestamp: string }[] = []
+    if (isMultiDrag) {
+      const origKf = keyframes.find((k) => k.id === id)
+      const origTime = dragOriginalTime.current ?? origKf?.timeSeconds ?? clamped
+      const delta = clamped - origTime
+      for (const kfId of selectedKeyframeIds) {
+        const kf = keyframes.find((k) => k.id === kfId)
+        if (kf) {
+          const newTime = Math.max(0, Math.min(kf.timeSeconds + delta, effectiveDuration))
+          updates.push({ id: kfId, timestamp: secondsToTimestamp(newTime) })
+        }
+      }
+    } else {
+      updates.push({ id, timestamp: secondsToTimestamp(clamped) })
     }
-    // Persist to DB
-    try {
-      await updateKeyframeTimestamp({
-        data: { projectName: data.projectName, keyframeId: id, newTimestamp },
-      })
-    } catch (err) {
-      console.error('[Timeline] Failed to persist keyframe timestamp:', id, newTimestamp, err)
+
+    dragOriginalTime.current = null
+    setDragOverrides({})
+
+    // Update local data + persist
+    for (const u of updates) {
+      const kf = data.keyframes.find((k) => k.id === u.id)
+      if (kf) kf.timestamp = u.timestamp
+      try {
+        await updateKeyframeTimestamp({
+          data: { projectName: data.projectName, keyframeId: u.id, newTimestamp: u.timestamp },
+        })
+      } catch (err) {
+        console.error('[Timeline] Failed to persist keyframe timestamp:', u.id, u.timestamp, err)
+      }
     }
-  }, [data, effectiveDuration])
+  }, [data, effectiveDuration, selectedKeyframeIds, keyframes])
 
   const handleAddKeyframe = useCallback(async () => {
     try {
@@ -761,6 +1024,7 @@ export function Timeline({ data }: { data: EditorData }) {
           <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
             {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
               <BeatEffectPreview
+                ref={previewRef}
                 src={currentKeyframe?.hasSelectedImage
                   ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
                   : ''}
@@ -855,9 +1119,13 @@ export function Timeline({ data }: { data: EditorData }) {
 
           <button
             onClick={async () => {
-              const missing = data.transitions.filter((tr) => tr.hasSelectedVideo && !tr.action)
-              if (missing.length === 0) { alert('All transitions with videos already have action prompts.'); return }
-              if (!confirm(`Generate action prompts for ${missing.length} transitions? This will call Claude for each.`)) return
+              const scope = selectedKeyframeIds.size > 1
+                ? data.transitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
+                : data.transitions
+              const missing = scope.filter((tr) => tr.hasSelectedVideo && !tr.action)
+              const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
+              if (missing.length === 0) { alert('All matching transitions already have action prompts.'); return }
+              if (!confirm(`Generate action prompts for ${label} transitions? This will call Claude for each.`)) return
               let done = 0
               for (const tr of missing) {
                 try {
@@ -869,16 +1137,20 @@ export function Timeline({ data }: { data: EditorData }) {
               router.invalidate()
             }}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-purple-400/70 hover:text-purple-300 px-2 py-1 rounded transition-colors"
-            title="Generate action prompts for all transitions missing one"
+            title={selectedKeyframeIds.size > 1 ? 'Generate action prompts for selected keyframes\' transitions' : 'Generate action prompts for all transitions missing one'}
           >
-            Gen Prompts
+            Gen Prompts{selectedKeyframeIds.size > 1 ? ` (${selectedKeyframeIds.size})` : ''}
           </button>
 
           <button
             onClick={async () => {
-              const missing = data.transitions.filter((tr) => tr.action && !tr.hasSelectedVideo)
-              if (missing.length === 0) { alert('All transitions with action prompts already have video candidates.'); return }
-              if (!confirm(`Generate video candidates for ${missing.length} transitions? This will call Veo for each.`)) return
+              const scope = selectedKeyframeIds.size > 1
+                ? data.transitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
+                : data.transitions
+              const missing = scope.filter((tr) => tr.action && !tr.hasSelectedVideo)
+              const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
+              if (missing.length === 0) { alert('All matching transitions already have video candidates.'); return }
+              if (!confirm(`Generate video candidates for ${label} transitions? This will call Veo for each.`)) return
               let done = 0
               for (const tr of missing) {
                 try {
@@ -892,9 +1164,9 @@ export function Timeline({ data }: { data: EditorData }) {
               alert(`Queued ${done}/${missing.length} video generation jobs.`)
             }}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-orange-400/70 hover:text-orange-300 px-2 py-1 rounded transition-colors"
-            title="Generate video candidates for all transitions with prompts but no videos"
+            title={selectedKeyframeIds.size > 1 ? 'Generate videos for selected keyframes\' transitions' : 'Generate video candidates for all transitions with prompts but no videos'}
           >
-            Gen Videos
+            Gen Videos{selectedKeyframeIds.size > 1 ? ` (${selectedKeyframeIds.size})` : ''}
           </button>
 
           <button
@@ -955,6 +1227,28 @@ export function Timeline({ data }: { data: EditorData }) {
             {/* Time ruler */}
             <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
 
+            {/* Marker track */}
+            <MarkerTrack
+              markers={markers}
+              pxPerSec={pxPerSec}
+              scrollLeft={scrollLeft}
+              viewportWidth={viewportWidth}
+              onAdd={(time) => {
+                const id = `m_${Date.now()}`
+                const t = Math.round(time * 100) / 100
+                setMarkers((prev) => [...prev, { id, time: t, label: '' }])
+                postAddMarker(data.projectName, id, t).catch(() => {})
+              }}
+              onRemove={(id) => {
+                setMarkers((prev) => prev.filter((m) => m.id !== id))
+                postRemoveMarker(data.projectName, id).catch(() => {})
+              }}
+              onUpdate={(id, label) => {
+                setMarkers((prev) => prev.map((m) => m.id === id ? { ...m, label } : m))
+                postUpdateMarker(data.projectName, id, label).catch(() => {})
+              }}
+            />
+
             {/* Audio description track */}
             {data.audioDescriptions.length > 0 && (
               <div className="relative shrink-0 border-b border-gray-800">
@@ -993,6 +1287,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 pxPerSec={pxPerSec}
                 projectName={data.projectName}
                 selectedId={selectedKeyframe?.id ?? null}
+                selectedIds={selectedKeyframeIds}
                 duration={effectiveDuration}
                 onKeyframeClick={handleKeyframeClick}
                 onKeyframeDrag={handleKeyframeDrag}
@@ -1044,6 +1339,7 @@ export function Timeline({ data }: { data: EditorData }) {
                   onPlayingChange={setIsPlaying}
                   seekRef={seekFnRef}
                   playPauseRef={playPauseFnRef}
+                  audioElRef={audioElRef}
                 />
               )}
             </div>
@@ -1128,7 +1424,37 @@ export function Timeline({ data }: { data: EditorData }) {
 
       {/* Side panels — mutually exclusive: only one renders at a time.
          Priority order: settings > versions > bin > sections > keyframe > transition > audioDesc > effect */}
-      {showSettings ? (
+      {showDownloadPreview ? (
+        <DownloadPreviewPanel
+          currentTime={currentTime}
+          duration={effectiveDuration}
+          recording={recording}
+          onRecord={async (startTime, endTime) => {
+            const canvas = previewRef.current?.getCanvas()
+            const audio = audioElRef.current
+            if (!canvas || !audio) { alert('Preview canvas or audio not ready'); return }
+            setRecording({ progress: 0 })
+            try {
+              const blob = await recordPreview({
+                canvas, audioElement: audio,
+                startTime, endTime,
+                onProgress: (p) => setRecording({ progress: p }),
+              })
+              setRecording(null)
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `preview_${data.projectName}_${startTime.toFixed(0)}-${endTime.toFixed(0)}.webm`
+              a.click()
+              URL.revokeObjectURL(url)
+            } catch (e) {
+              setRecording(null)
+              alert(`Recording failed: ${e}`)
+            }
+          }}
+          onClose={() => setShowDownloadPreview(false)}
+        />
+      ) : showSettings ? (
         <SettingsPanel
           data={data}
           projectName={data.projectName}
@@ -1184,6 +1510,37 @@ export function Timeline({ data }: { data: EditorData }) {
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
           onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
+          onMoveLeft={async () => {
+            const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+            const idx = sorted.findIndex((kf) => kf.id === selectedKeyframe.id)
+            if (idx <= 0) return
+            const prev = sorted[idx - 1]
+            // Swap timestamps
+            const tmpTs = secondsToTimestamp(prev.timeSeconds)
+            const curTs = secondsToTimestamp(selectedKeyframe.timeSeconds)
+            try {
+              await Promise.all([
+                updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: selectedKeyframe.id, newTimestamp: tmpTs } }),
+                updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: prev.id, newTimestamp: curTs } }),
+              ])
+              router.invalidate()
+            } catch (e) { console.error('Move left failed:', e) }
+          }}
+          onMoveRight={async () => {
+            const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+            const idx = sorted.findIndex((kf) => kf.id === selectedKeyframe.id)
+            if (idx < 0 || idx >= sorted.length - 1) return
+            const next = sorted[idx + 1]
+            const tmpTs = secondsToTimestamp(next.timeSeconds)
+            const curTs = secondsToTimestamp(selectedKeyframe.timeSeconds)
+            try {
+              await Promise.all([
+                updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: selectedKeyframe.id, newTimestamp: tmpTs } }),
+                updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: next.id, newTimestamp: curTs } }),
+              ])
+              router.invalidate()
+            } catch (e) { console.error('Move right failed:', e) }
+          }}
           onDuplicate={async () => {
             // Find next keyframe by timestamp
             const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
@@ -1193,10 +1550,9 @@ export function Timeline({ data }: { data: EditorData }) {
             const midTime = (selectedKeyframe.timeSeconds + nextKf.timeSeconds) / 2
             const ts = secondsToTimestamp(midTime)
             try {
-              await addKeyframe({
-                data: { projectName: data.projectName, timestamp: ts, section: selectedKeyframe.section, prompt: selectedKeyframe.prompt },
+              await duplicateKeyframe({
+                data: { projectName: data.projectName, keyframeId: selectedKeyframe.id, timestamp: ts },
               })
-              // Copy the selected keyframe image to the new keyframe
               router.invalidate()
             } catch (e) {
               console.error('Duplicate failed:', e)
@@ -1219,6 +1575,7 @@ export function Timeline({ data }: { data: EditorData }) {
         />
       ) : selectedAudioDescription ? (
         <AudioDescriptionPanel
+          key={selectedAudioDescription.sectionIndex}
           section={selectedAudioDescription}
           audioEvents={data.audioEvents.filter(
             (ev) => ev.time >= selectedAudioDescription.startTime && ev.time <= selectedAudioDescription.endTime

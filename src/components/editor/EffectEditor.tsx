@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { UserEffect, EffectType } from '@/lib/beatlab-client'
 
-const EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash']
+const EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
 
 type EffectEditorProps = {
   effect: UserEffect

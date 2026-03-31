@@ -605,7 +605,11 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
         <div className="text-center text-sm text-gray-600 py-4">No video candidates yet.</div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          {candidates.map((videoPath) => {
+          {[...candidates].sort((a, b) => {
+            const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
+            const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
+            return na - nb
+          }).map((videoPath) => {
             const filename = videoPath.split('/').pop() || ''
             const variantNum = parseInt(filename.match(/v(\d+)\./)?.[1] || '0', 10)
             const label = filename || `v${variantNum}`
@@ -665,8 +669,13 @@ export function CandidateModal({ title, groups, selectedMap, disabled, projectNa
               {selectedMap[groupKey] != null && <span className="text-green-400">&#10003;</span>}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {groups[groupKey].map((filePath, idx) => {
-                const variantNum = idx + 1
+              {[...groups[groupKey]].sort((a, b) => {
+                const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
+                const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
+                return na - nb
+              }).map((filePath) => {
+                const vMatch = filePath.match(/v(\d+)\./)
+                const variantNum = vMatch ? parseInt(vMatch[1], 10) : 0
                 const isSelected = selectedMap[groupKey] === variantNum
                 const label = filePath.split('/').pop() || `v${variantNum}`
                 return (

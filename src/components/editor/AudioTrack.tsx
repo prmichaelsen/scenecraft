@@ -9,6 +9,7 @@ type AudioTrackProps = {
   onPlayingChange: (playing: boolean) => void
   seekRef: MutableRefObject<((time: number) => void) | null>
   playPauseRef: MutableRefObject<(() => void) | null>
+  audioElRef?: MutableRefObject<HTMLAudioElement | null>
 }
 
 // IndexedDB cache for waveform peaks
@@ -67,6 +68,7 @@ export function AudioTrack({
   onPlayingChange,
   seekRef,
   playPauseRef,
+  audioElRef,
 }: AudioTrackProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WaveSurfer | null>(null)
@@ -89,6 +91,7 @@ export function AudioTrack({
       const audio = new Audio(audioUrl)
       audio.crossOrigin = 'anonymous'
       audio.preload = 'auto'
+      if (audioElRef) audioElRef.current = audio
 
       // Enable playback as soon as audio is buffered (before waveform is ready)
       audio.addEventListener('canplay', () => {

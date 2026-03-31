@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
 import type { Beat } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
 
@@ -37,18 +37,32 @@ const FRAGMENT_SHADER = `
   uniform float u_blend;       // 0.0 = imageA only, 1.0 = imageB only
   uniform float u_intensity;   // 0.0 - 1.0 beat intensity
   uniform float u_decay;       // 0.0 - 1.0 time since beat (1.0 = on beat, decays to 0)
+  uniform float u_echo;        // 0.0 = no echo, higher = more echo layers visible
+
+  vec4 sampleBlended(vec2 uv) {
+    return mix(texture2D(u_imageA, uv), texture2D(u_imageB, uv), u_blend);
+  }
 
   void main() {
     float effect = u_intensity * u_decay;
-
-    // Zoom toward center on beat
     vec2 center = vec2(0.5, 0.5);
+
+    // Base zoom toward center on beat
     float zoom = 1.0 - effect * 0.06;
     vec2 uv = center + (v_texCoord - center) * zoom;
+    vec4 color = sampleBlended(uv);
 
-    vec4 colorA = texture2D(u_imageA, uv);
-    vec4 colorB = texture2D(u_imageB, uv);
-    vec4 color = mix(colorA, colorB, u_blend);
+    // Echo: stack multiple zoom layers with increasing zoom + decreasing opacity
+    if (u_echo > 0.01) {
+      float echoLayers = 5.0;
+      for (float i = 1.0; i <= 5.0; i += 1.0) {
+        float layerZoom = zoom - u_echo * 0.04 * i; // each layer zooms further in
+        vec2 layerUv = center + (v_texCoord - center) * layerZoom;
+        vec4 layerColor = sampleBlended(layerUv);
+        float layerAlpha = u_echo * (1.0 - i / (echoLayers + 1.0)) * 0.4;
+        color = mix(color, layerColor, layerAlpha);
+      }
+    }
 
     // Brightness pulse
     color.rgb *= 1.0 + effect * 0.4;
@@ -60,6 +74,7 @@ const FRAGMENT_SHADER = `
     gl_FragColor = color;
   }
 `
+
 
 function isTimeSuppressed(time: number, suppressions: BeatSuppression[], effectType?: string): boolean {
   return suppressions.some((s) => {
@@ -75,9 +90,10 @@ function findEffectIntensity(
   userEffects: UserEffect[],
   suppressions: BeatSuppression[],
   time: number,
-): { intensity: number; decay: number } {
+): { intensity: number; decay: number; echoIntensity: number } {
   let bestIntensity = 0
   let bestDecay = 0
+  let echoIntensity = 0
 
   // Prefer audio intelligence events over raw beats
   if (audioEvents.length > 0) {
@@ -103,7 +119,11 @@ function findEffectIntensity(
       if (dist <= ev.duration) {
         const decay = Math.max(0, 1 - dist / ev.duration)
         const d = decay * decay
-        if (ev.intensity * d > bestIntensity * bestDecay) {
+        // Echo effect: track separately
+        if (ev.effect === 'echo' || ev.effect === 'echo_pulse') {
+          const e = ev.intensity * d
+          if (e > echoIntensity) echoIntensity = e
+        } else if (ev.intensity * d > bestIntensity * bestDecay) {
           bestIntensity = ev.intensity
           bestDecay = d
         }
@@ -140,18 +160,29 @@ function findEffectIntensity(
     if (dist >= 0 && dist <= fx.duration) {
       const decay = Math.max(0, 1 - dist / fx.duration)
       const d = decay * decay
-      if (fx.intensity * d > bestIntensity * bestDecay) {
+      if (fx.type === 'echo') {
+        const e = fx.intensity * d
+        if (e > echoIntensity) echoIntensity = e
+      } else if (fx.intensity * d > bestIntensity * bestDecay) {
         bestIntensity = fx.intensity
         bestDecay = d
       }
     }
   }
 
-  return { intensity: bestIntensity, decay: bestDecay }
+  return { intensity: bestIntensity, decay: bestDecay, echoIntensity }
 }
 
-export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0 }: BeatEffectPreviewProps) {
+export type BeatEffectPreviewHandle = {
+  getCanvas: () => HTMLCanvasElement | null
+}
+
+export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectPreviewProps>(function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useImperativeHandle(ref, () => ({
+    getCanvas: () => canvasRef.current,
+  }), [])
   const glRef = useRef<{
     gl: WebGLRenderingContext
     program: WebGLProgram
@@ -160,6 +191,7 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
     intensityLoc: WebGLUniformLocation
     decayLoc: WebGLUniformLocation
     blendLoc: WebGLUniformLocation
+    echoLoc: WebGLUniformLocation
   } | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const animRef = useRef<number>(0)
@@ -181,6 +213,8 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
     const program = gl.createProgram()!
     gl.attachShader(program, vs)
     gl.attachShader(program, fs)
+    gl.bindAttribLocation(program, 0, 'a_position')
+    gl.bindAttribLocation(program, 1, 'a_texCoord')
     gl.linkProgram(program)
     gl.useProgram(program)
 
@@ -235,6 +269,7 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
       intensityLoc: gl.getUniformLocation(program, 'u_intensity')!,
       decayLoc: gl.getUniformLocation(program, 'u_decay')!,
       blendLoc: gl.getUniformLocation(program, 'u_blend')!,
+      echoLoc: gl.getUniformLocation(program, 'u_echo')!,
     }
   }, [])
 
@@ -274,31 +309,31 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
     img.src = src
   }, [src])
 
-  const render = useCallback((intensity: number, decay: number, blend: number) => {
+  const render = useCallback((intensity: number, decay: number, blend: number, echoMix: number = 0) => {
     const ctx = glRef.current
     if (!ctx) return
 
     const sourceA = transitionFrameA || imgRef.current
     if (!sourceA) return
-    // When no B frame, use A for both so blend has no visual effect
     const sourceB = transitionFrameB || sourceA
-
-    ctx.gl.activeTexture(ctx.gl.TEXTURE0)
-    ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.textureA)
-    ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, sourceA)
-
-    ctx.gl.activeTexture(ctx.gl.TEXTURE1)
-    ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.textureB)
-    ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, sourceB)
-
+    const { gl } = ctx
     const canvas = canvasRef.current
     if (!canvas) return
 
-    ctx.gl.viewport(0, 0, canvas.width, canvas.height)
-    ctx.gl.uniform1f(ctx.intensityLoc, intensity)
-    ctx.gl.uniform1f(ctx.decayLoc, decay)
-    ctx.gl.uniform1f(ctx.blendLoc, blend)
-    ctx.gl.drawArrays(ctx.gl.TRIANGLES, 0, 6)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceA)
+
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceB)
+
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.uniform1f(ctx.intensityLoc, intensity)
+    gl.uniform1f(ctx.decayLoc, decay)
+    gl.uniform1f(ctx.blendLoc, blend)
+    gl.uniform1f(ctx.echoLoc, echoMix)
+    gl.drawArrays(gl.TRIANGLES, 0, 6)
   }, [transitionFrameA, transitionFrameB])
 
   // Render loop when playing
@@ -309,8 +344,8 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
     }
 
     const loop = () => {
-      const { intensity, decay } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
-      render(intensity, decay, blendFactor)
+      const { intensity, decay, echoIntensity } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
+      render(intensity, decay, blendFactor, echoIntensity)
       animRef.current = requestAnimationFrame(loop)
     }
     loop()
@@ -321,8 +356,8 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
   // Render on time changes when paused (seeking) or when frame/effects change
   useEffect(() => {
     if (isPlaying) return
-    const { intensity, decay } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
-    render(intensity, decay, blendFactor)
+    const { intensity, decay, echoIntensity } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
+    render(intensity, decay, blendFactor, echoIntensity)
   }, [currentTime, isPlaying, beats, audioEvents, userEffects, suppressions, render, transitionFrameA, transitionFrameB, blendFactor])
 
   return (
@@ -333,4 +368,4 @@ export function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = 
       className={className}
     />
   )
-}
+})

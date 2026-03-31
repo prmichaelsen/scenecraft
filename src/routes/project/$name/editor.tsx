@@ -9,6 +9,7 @@ import {
   fetchBin,
   postUpdateTimestamp,
   postAddKeyframe,
+  postDuplicateKeyframe,
   postDeleteKeyframe,
   postRestoreKeyframe,
   postUpdatePrompt,
@@ -235,6 +236,12 @@ export const addKeyframe = createServerFn({ method: 'POST' })
     }
   })
 
+export const duplicateKeyframe = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; timestamp: string }) => input)
+  .handler(async ({ data }) => {
+    return postDuplicateKeyframe(data.projectName, data.keyframeId, data.timestamp)
+  })
+
 export const deleteKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string }) => input)
   .handler(async ({ data }) => {
@@ -289,6 +296,22 @@ export const suggestKeyframePrompts = createServerFn({ method: 'POST' })
       sectionContent: data.sectionContent,
       events: data.events,
       baseStillName: data.baseStillName,
+    })
+  })
+
+export const enhanceKeyframePrompt = createServerFn({ method: 'POST' })
+  .inputValidator((input: {
+    projectName: string
+    prompt: string
+    sectionContent: string
+    event: { time: number; effect: string; intensity: number; stem_source: string; rationale?: string }
+  }) => input)
+  .handler(async ({ data }) => {
+    const { postEnhanceKeyframePrompt } = await import('@/lib/beatlab-client')
+    return postEnhanceKeyframePrompt(data.projectName, {
+      prompt: data.prompt,
+      sectionContent: data.sectionContent,
+      event: data.event,
     })
   })
 

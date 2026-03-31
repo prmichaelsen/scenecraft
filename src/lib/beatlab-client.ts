@@ -60,6 +60,16 @@ export async function postAddKeyframe(project: string, timestamp: string, sectio
   return result
 }
 
+export async function postDuplicateKeyframe(project: string, keyframeId: string, timestamp: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-keyframe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, timestamp }),
+  })
+  if (!res.ok) throw new Error(`Failed to duplicate keyframe: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ success: boolean; keyframe: { id: string; timestamp: string } }>
+}
+
 export async function postDeleteKeyframe(project: string, keyframeId: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/delete-keyframe`, {
     method: 'POST',
@@ -191,6 +201,41 @@ export type PoolEntry = {
   size: number
 }
 
+export async function fetchMarkers(project: string): Promise<{ id: string; time: number; label: string }[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers`)
+  if (!res.ok) return []
+  const data = await res.json() as { markers: { id: string; time: number; label: string }[] }
+  return data.markers
+}
+
+export async function postAddMarker(project: string, id: string, time: number, label: string = '') {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/add`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, time, label }),
+  })
+}
+
+export async function postUpdateMarker(project: string, id: string, label: string) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/update`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, label }),
+  })
+}
+
+export async function postRemoveMarker(project: string, id: string) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/remove`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+}
+
+export async function fetchStagingCandidates(project: string, stagingId: string): Promise<string[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/staging/${encodeURIComponent(stagingId)}`)
+  if (!res.ok) return []
+  const data = await res.json() as { candidates: string[] }
+  return data.candidates
+}
+
 export async function fetchPool(project: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/pool`)
   if (!res.ok) throw new Error(`Failed to fetch pool: ${res.status}`)
@@ -284,7 +329,7 @@ export async function postRestoreTransition(project: string, transitionId: strin
   return res.json()
 }
 
-export type EffectType = 'pulse' | 'zoom' | 'shake' | 'glow' | 'flash'
+export type EffectType = 'pulse' | 'zoom' | 'shake' | 'glow' | 'flash' | 'echo'
 
 export type UserEffect = {
   id: string
@@ -479,6 +524,23 @@ export async function postSelectKeyframes(project: string, selections: Record<st
 export type KeyframePromptSuggestion = {
   eventIndex: number
   prompt: string
+}
+
+export async function postEnhanceKeyframePrompt(
+  project: string,
+  payload: {
+    prompt: string
+    sectionContent: string
+    event: { time: number; effect: string; intensity: number; stem_source: string; rationale?: string }
+  }
+): Promise<{ success: boolean; prompt: string }> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-keyframe-prompt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`Failed to enhance prompt: ${res.status} ${await res.text()}`)
+  return res.json()
 }
 
 export async function postSuggestKeyframePrompts(

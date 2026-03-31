@@ -7,8 +7,9 @@ type VideoTrackProps = {
   pxPerSec: number
   projectName: string
   selectedId: string | null
+  selectedIds: Set<string>
   duration: number
-  onKeyframeClick: (kf: KeyframeWithTime) => void
+  onKeyframeClick: (kf: KeyframeWithTime, shiftKey?: boolean) => void
   onKeyframeDrag: (id: string, newTimeSeconds: number) => void
   onKeyframeDragEnd: (id: string, newTimeSeconds: number) => void
   scrollRef: RefObject<HTMLDivElement | null>
@@ -32,6 +33,7 @@ export function VideoTrack({
   pxPerSec,
   projectName,
   selectedId,
+  selectedIds,
   duration,
   onKeyframeClick,
   onKeyframeDrag,
@@ -48,14 +50,18 @@ export function VideoTrack({
     e.preventDefault()
     const prevKf = idx > 0 ? keyframes[idx - 1] : null
     const nextKf = idx < keyframes.length - 1 ? keyframes[idx + 1] : null
+    let edgeMin = prevKf ? prevKf.timeSeconds + 0.1 : 0
+    let edgeMax = nextKf ? nextKf.timeSeconds - 0.1 : duration
+    if (edgeMin > kf.timeSeconds) edgeMin = Math.max(0, kf.timeSeconds - 30)
+    if (edgeMax < kf.timeSeconds) edgeMax = kf.timeSeconds + 30
     dragState.current = {
       dragging: true,
       type: 'edge',
       keyframeId: kf.id,
       startX: e.clientX,
       startTime: kf.timeSeconds,
-      minTime: prevKf ? prevKf.timeSeconds + 0.1 : 0,
-      maxTime: nextKf ? nextKf.timeSeconds - 0.1 : duration,
+      minTime: edgeMin,
+      maxTime: edgeMax,
       didMove: false,
     }
   }, [keyframes, duration])
@@ -65,22 +71,25 @@ export function VideoTrack({
     if ((e.target as HTMLElement).closest('[data-edge-handle]')) return
     e.stopPropagation()
     e.preventDefault()
-    // Find neighbors for bounds
     const sortedKfs = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
     const idx = sortedKfs.findIndex((k) => k.id === kf.id)
     const prevKf = idx > 0 ? sortedKfs[idx - 1] : null
     const nextKf = idx < sortedKfs.length - 1 ? sortedKfs[idx + 1] : null
+    let minTime = prevKf ? prevKf.timeSeconds + 0.1 : 0
+    let maxTime = nextKf ? nextKf.timeSeconds - 0.1 : duration
+    if (minTime > kf.timeSeconds) minTime = Math.max(0, kf.timeSeconds - 30)
+    if (maxTime < kf.timeSeconds) maxTime = kf.timeSeconds + 30
     dragState.current = {
       dragging: true,
-      type: 'reorder',
+      type: 'edge',
       keyframeId: kf.id,
       startX: e.clientX,
       startTime: kf.timeSeconds,
-      minTime: prevKf ? prevKf.timeSeconds + 0.1 : 0,
-      maxTime: nextKf ? nextKf.timeSeconds - 0.1 : duration,
+      minTime,
+      maxTime,
       didMove: false,
     }
-  }, [])
+  }, [keyframes, duration])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -93,12 +102,13 @@ export function VideoTrack({
       onKeyframeDrag(ds.keyframeId, newTime)
     }
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (e: MouseEvent) => {
       const ds = dragState.current
       if (!ds?.dragging) return
       if (ds.didMove) {
-        const kf = keyframes.find((k) => k.id === ds.keyframeId)
-        if (kf) onKeyframeDragEnd(ds.keyframeId, kf.timeSeconds)
+        const deltaX = e.clientX - ds.startX
+        const newTime = Math.max(ds.minTime, Math.min(ds.maxTime, ds.startTime + deltaX / pxPerSec))
+        onKeyframeDragEnd(ds.keyframeId, newTime)
       }
       dragState.current = null
     }
@@ -123,20 +133,26 @@ export function VideoTrack({
         // Viewport culling: skip keyframes outside visible range
         if (nextX < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
         const isSelected = kf.id === selectedId
+        const isMultiSelected = selectedIds.has(kf.id)
         const ds = dragState.current
         const isDraggingEdge = ds?.keyframeId === kf.id && ds?.type === 'edge'
         const isDraggingBody = ds?.keyframeId === kf.id && ds?.type === 'reorder'
+        const isDragging = isDraggingEdge || isDraggingBody
+        // Show durations on this kf and the one before when dragging
+        const isPrevOfDragged = ds?.dragging && nextKf && ds.keyframeId === nextKf.id
+        const showDuration = isDragging || isPrevOfDragged
+        const dur = nextKf ? nextKf.timeSeconds - kf.timeSeconds : 0
 
         return (
           <div
             key={kf.id}
-            className={`absolute top-0 h-full group ${isSelected ? 'bg-blue-500/10' : ''} ${isDraggingBody ? 'opacity-80 z-40' : ''}`}
+            className={`absolute top-0 h-full group ${isSelected ? 'bg-blue-500/10' : ''} ${isMultiSelected ? 'bg-teal-500/15' : ''} ${isDraggingBody ? 'opacity-80 z-40' : ''}`}
             style={{ left: x, width }}
             onMouseDown={(e) => handleBodyMouseDown(e, kf)}
             onClick={(e) => {
               if (didDrag.current) { didDrag.current = false; return }
               e.stopPropagation()
-              onKeyframeClick(kf)
+              onKeyframeClick(kf, e.shiftKey)
             }}
           >
             {/* Draggable left edge handle */}
@@ -167,6 +183,13 @@ export function VideoTrack({
             <div className="absolute bottom-0.5 left-3 text-[8px] text-gray-500 truncate max-w-[60px]">
               {kf.section}
             </div>
+
+            {/* Duration overlay during drag */}
+            {showDuration && (
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-black/80 text-yellow-300 text-[10px] font-mono px-1.5 py-0.5 rounded-b z-50 pointer-events-none whitespace-nowrap">
+                {formatDuration(dur)}
+              </div>
+            )}
 
             {/* Hover tooltip */}
             <div className="absolute top-full left-0 mt-1 hidden group-hover:block bg-gray-800 text-xs text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none">

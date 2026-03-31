@@ -13,6 +13,7 @@ export type JobMessage =
   | { type: 'pong' }
   | { type: 'job_status'; jobId: string; status: string; completed: number; total: number; result: unknown; error: string | null }
   | { type: 'error'; message: string }
+  | { type: 'timeline_warning'; route: string; warnings: string[] }
 
 type JobListener = (msg: JobMessage) => void
 

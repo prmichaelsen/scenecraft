@@ -7,9 +7,10 @@ const EFFECT_DOT_COLORS: Record<EffectType, string> = {
   shake: 'bg-red-500',
   glow: 'bg-purple-500',
   flash: 'bg-white',
+  echo: 'bg-teal-500',
 }
 
-const ALL_EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash']
+const ALL_EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
 
 type SuppressionTrackProps = {
   suppressions: BeatSuppression[]

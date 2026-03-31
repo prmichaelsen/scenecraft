@@ -18,10 +18,12 @@ type KeyframePanelProps = {
   onClose: () => void
   onDelete: () => void
   onDuplicate: () => void
+  onMoveLeft: () => void
+  onMoveRight: () => void
   onDataChange: () => void
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onDataChange }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onDataChange }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -80,7 +82,19 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
       <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
-          <div className="text-sm font-medium">{kf.id}</div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onMoveLeft}
+              className="text-sm text-gray-500 hover:text-gray-200 transition-colors px-1"
+              title="Swap with previous keyframe"
+            >&larr;</button>
+            <span className="text-sm font-medium">{kf.id}</span>
+            <button
+              onClick={onMoveRight}
+              className="text-sm text-gray-500 hover:text-gray-200 transition-colors px-1"
+              title="Swap with next keyframe"
+            >&rarr;</button>
+          </div>
           <div className="flex items-center gap-4">
             <button
               onClick={onDuplicate}
@@ -337,6 +351,10 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
   const [selectedIdx, setSelectedIdx] = useState<number | null>(() => {
     return typeof kf.selected === 'number' ? kf.selected : null
   })
+  // Sync selectedIdx when kf data refreshes (e.g. after router.invalidate)
+  useEffect(() => {
+    if (typeof kf.selected === 'number') setSelectedIdx(kf.selected)
+  }, [kf.id, kf.selected])
   const [selecting, setSelecting] = useState(false)
   const [showModal, setShowModal] = useState(false)
 
@@ -371,9 +389,6 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
     return path.split('/').pop() || path
   }
 
-  function isSelected(idx: number): boolean {
-    return selectedIdx === idx + 1
-  }
 
   return (
     <div className="p-2 space-y-2">
@@ -439,9 +454,14 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          {candidates.map((candidatePath, idx) => {
-            const selected = isSelected(idx)
-            const variantNum = idx + 1
+          {[...candidates].sort((a, b) => {
+            const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
+            const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
+            return na - nb
+          }).map((candidatePath) => {
+            const vMatch = candidatePath.match(/v(\d+)\./)
+            const variantNum = vMatch ? parseInt(vMatch[1], 10) : 0
+            const selected = selectedIdx === variantNum
             // Convert .beatlab_work/project/path to beatlab API file URL
             const parts = candidatePath.split('/')
             const projectIdx = parts.indexOf('.beatlab_work')

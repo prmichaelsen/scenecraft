@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from 'react'
 import { StillPicker } from './KeyframePanel'
-import { beatlabFileUrl, type AudioEvent, type AudioDescription, fetchSectionSettings, postSectionSettings } from '@/lib/beatlab-client'
+import { beatlabFileUrl, type AudioEvent, type AudioDescription, fetchSectionSettings, postSectionSettings, fetchStagingCandidates } from '@/lib/beatlab-client'
 import {
   suggestKeyframePrompts,
+  enhanceKeyframePrompt,
   addKeyframe,
   generateStagedCandidate,
   promoteStagedCandidate,
@@ -184,6 +185,7 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
           projectName={projectName}
           selectedStill={selectedStill}
           sectionLabel={section.label}
+          sectionContent={section.content}
           onUpdate={(updates) => updateSuggestion(idx, updates)}
           onKeyframeInserted={onKeyframeInserted}
         />
@@ -228,6 +230,7 @@ function EventSuggestionRow({
   projectName,
   selectedStill,
   sectionLabel,
+  sectionContent,
   onUpdate,
   onKeyframeInserted,
 }: {
@@ -235,6 +238,7 @@ function EventSuggestionRow({
   projectName: string
   selectedStill: string
   sectionLabel: string
+  sectionContent: string
   onUpdate: (updates: Partial<EventSuggestion>) => void
   onKeyframeInserted: () => void
 }) {
@@ -245,12 +249,27 @@ function EventSuggestionRow({
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptDraft, setPromptDraft] = useState(s.prompt)
 
+  // On mount, fetch actual candidates from staging dir
+  useEffect(() => {
+    let cancelled = false
+    fetchStagingCandidates(projectName, stagingIdStable).then((found) => {
+      if (cancelled || found.length === 0) return
+      if (found.length !== s.candidates.length || found.some((f, i) => f !== s.candidates[i])) {
+        onUpdate({ candidates: found, status: 'candidates-ready' })
+      }
+    })
+    return () => { cancelled = true }
+  }, [stagingIdStable, projectName])
+
   // Handle job completion or failure
   useEffect(() => {
     if (job?.status === 'completed' && job.result) {
       const res = job.result as { candidates?: string[] }
       if (res?.candidates) {
-        onUpdate({ candidates: res.candidates, status: 'candidates-ready' })
+        // Merge new candidates with existing (dedup by path)
+        const existing = new Set(s.candidates)
+        const merged = [...s.candidates, ...res.candidates.filter((c) => !existing.has(c))]
+        onUpdate({ candidates: merged, status: 'candidates-ready' })
       }
       jobCtx.consumeResult(entityKey)
     } else if (job?.status === 'failed') {
@@ -266,7 +285,7 @@ function EventSuggestionRow({
     try {
       console.log(`[SuggestRow] staging generate for event ${s.eventIndex} prompt: ${s.prompt.slice(0, 50)}`)
       const result = await generateStagedCandidate({
-        data: { projectName, prompt: s.prompt, stillName: selectedStill, stagingId, count: 1 },
+        data: { projectName, prompt: s.prompt, stillName: selectedStill, stagingId, count: 4 },
       })
       if (result.jobId) {
         jobCtx.startJob(`suggest:${stagingId}:candidates`, result.jobId)
@@ -281,7 +300,7 @@ function EventSuggestionRow({
     onUpdate({ status: 'generating' })
     try {
       const result = await generateStagedCandidate({
-        data: { projectName, prompt: s.prompt, stillName: selectedStill, stagingId: stagingIdStable, count: 1 },
+        data: { projectName, prompt: s.prompt, stillName: selectedStill, stagingId: stagingIdStable, count: 4 },
       })
       if (result.jobId) {
         jobCtx.startJob(entityKey, result.jobId)
@@ -322,6 +341,64 @@ function EventSuggestionRow({
     // No keyframe to delete — staging files can be cleaned up later
     onUpdate({ status: 'discarded', keyframeId: null, candidates: [], selectedCandidate: null })
   }, [onUpdate])
+
+  const [regenerating, setRegenerating] = useState(false)
+  const handleRegenerate = useCallback(async () => {
+    setRegenerating(true)
+    try {
+      const result = await suggestKeyframePrompts({
+        data: {
+          projectName,
+          sectionLabel,
+          sectionContent,
+          events: [{
+            time: s.event.time,
+            effect: s.event.effect,
+            intensity: s.event.intensity,
+            stem_source: s.event.stem_source,
+          }],
+          baseStillName: selectedStill,
+        },
+      })
+      if (result.suggestions.length > 0) {
+        onUpdate({ prompt: result.suggestions[0].prompt })
+        setPromptDraft(result.suggestions[0].prompt)
+      }
+    } catch (e) {
+      alert(`Regenerate failed: ${e}`)
+    } finally {
+      setRegenerating(false)
+    }
+  }, [projectName, sectionLabel, sectionContent, s.event, selectedStill, onUpdate])
+
+  const [enhancing, setEnhancing] = useState(false)
+  const handleEnhance = useCallback(async () => {
+    setEnhancing(true)
+    try {
+      const result = await enhanceKeyframePrompt({
+        data: {
+          projectName,
+          prompt: s.prompt,
+          sectionContent,
+          event: {
+            time: s.event.time,
+            effect: s.event.effect,
+            intensity: s.event.intensity,
+            stem_source: s.event.stem_source,
+            rationale: s.event.rationale,
+          },
+        },
+      })
+      if (result.prompt) {
+        onUpdate({ prompt: result.prompt })
+        setPromptDraft(result.prompt)
+      }
+    } catch (e) {
+      alert(`Enhance failed: ${e}`)
+    } finally {
+      setEnhancing(false)
+    }
+  }, [projectName, s.prompt, sectionContent, s.event, onUpdate])
 
   if (s.status === 'discarded') return null
   if (s.status === 'inserted') {
@@ -398,6 +475,12 @@ function EventSuggestionRow({
         </span>
         <span className="ml-auto text-gray-500">{(s.event.intensity * 100).toFixed(0)}%</span>
       </div>
+      {/* Audio event rationale */}
+      {s.event.rationale && (
+        <div className="text-[10px] text-gray-500 italic leading-tight">
+          {s.event.rationale}
+        </div>
+      )}
 
       {/* Prompt */}
       {editingPrompt ? (
@@ -449,6 +532,26 @@ function EventSuggestionRow({
         </div>
       )}
 
+      {/* Prompt actions: Regenerate / Enhance */}
+      {!editingPrompt && !generating && (
+        <div className="flex gap-2">
+          <button
+            onClick={handleRegenerate}
+            disabled={regenerating || enhancing}
+            className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+          >
+            {regenerating ? 'Regenerating...' : 'Regenerate'}
+          </button>
+          <button
+            onClick={handleEnhance}
+            disabled={enhancing || regenerating}
+            className="text-[10px] text-purple-400 hover:text-purple-300 disabled:text-gray-600 transition-colors"
+          >
+            {enhancing ? 'Enhancing...' : 'Enhance'}
+          </button>
+        </div>
+      )}
+
       {/* Actions */}
       {s.status === 'prompt-only' && (
         <button
@@ -468,23 +571,26 @@ function EventSuggestionRow({
       {/* Candidates grid */}
       {s.status === 'candidates-ready' && s.candidates.length > 0 && (
         <div className="space-y-1">
-          <div className="grid grid-cols-2 gap-1">
+          <div className="grid grid-cols-2 gap-2">
             {s.candidates.map((path, ci) => {
-              const variantNum = ci + 1
+              // Extract variant number from path (e.g., "staging/.../v2.png" -> 2)
+              const pathMatch = path.match(/v(\d+)\.png$/)
+              const variantNum = pathMatch ? parseInt(pathMatch[1], 10) : ci + 1
               return (
                 <button
                   key={ci}
                   onClick={() => handleKeep(variantNum)}
-                  className="relative rounded overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors"
-                  title={`Keep variant ${variantNum}`}
+                  className="relative rounded-md overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors"
+                  title={`Insert variant ${variantNum}`}
                 >
                   <img
                     src={beatlabFileUrl(projectName, path)}
                     alt={`v${variantNum}`}
-                    className="w-full aspect-video object-cover"
+                    className="w-full aspect-[16/9] object-cover"
                   />
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">
-                    <span className="text-[8px] text-gray-300">v{variantNum}</span>
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1.5 py-0.5 flex items-center justify-between">
+                    <span className="text-[9px] text-gray-300 font-mono">v{variantNum}</span>
+                    <span className="text-[9px] text-teal-400">Insert</span>
                   </div>
                 </button>
               )
