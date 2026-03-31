@@ -63,6 +63,7 @@ export type Keyframe = {
   hasSelectedImage: boolean
   context: KeyframeContext | null
   candidates: string[]
+  trackId: string
 }
 
 export type Beat = {
@@ -88,6 +89,7 @@ export type Transition = {
   hasSelectedVideo: boolean
   selected: number | string | null  // variant number (1-based), imported path, or null
   remap: { method: string; target_duration: number; curve_points?: [number, number][] }
+  trackId: string
 }
 
 export type EditorData = {
@@ -112,6 +114,7 @@ export type EditorData = {
   beatSuppressions: BeatSuppression[]
   previewQuality: number
   audioDescriptions: AudioDescription[]
+  tracks: import('@/lib/beatlab-client').Track[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
@@ -149,6 +152,7 @@ const getEditorData = createServerFn({ method: 'GET' })
               typeof c === 'string' ? c : (c.path as string) || ''
             ).filter(Boolean)
           : [],
+        trackId: (kf.trackId as string) || 'track_1',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         // Flatten slot-based candidates to a simple list
@@ -188,6 +192,7 @@ const getEditorData = createServerFn({ method: 'GET' })
           hasSelectedVideo,
           selected,
           remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
+          trackId: (tr.trackId as string) || 'track_1',
         }
       }),
       audioFile: kfData.audioFile || null,
@@ -202,6 +207,15 @@ const getEditorData = createServerFn({ method: 'GET' })
       beatSuppressions: effectsData.suppressions || [],
       previewQuality: settingsData.preview_quality || 50,
       audioDescriptions: descriptionsData,
+      tracks: (kfData.tracks || [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, enabled: true }]).map((t: Record<string, unknown>) => ({
+        id: t.id as string,
+        name: t.name as string,
+        zOrder: (t.zOrder as number) ?? 0,
+        blendMode: (t.blendMode as string) || 'normal',
+        baseOpacity: (t.baseOpacity as number) ?? 1.0,
+        enabled: t.enabled !== false,
+        opacityKeyframes: (t.opacityKeyframes as { id: string; time: number; opacity: number }[]) || [],
+      })),
     }
   })
 

@@ -201,6 +201,54 @@ export type PoolEntry = {
   size: number
 }
 
+export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'difference' | 'add' | 'soft-light'
+
+export type Track = {
+  id: string
+  name: string
+  zOrder: number
+  blendMode: BlendMode
+  baseOpacity: number
+  enabled: boolean
+  opacityKeyframes: { id: string; time: number; opacity: number }[]
+}
+
+export async function fetchTracks(project: string): Promise<Track[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks`)
+  if (!res.ok) return [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, enabled: true, opacityKeyframes: [] }]
+  const data = await res.json() as { tracks: Track[] }
+  return data.tracks.map((t) => ({ ...t, opacityKeyframes: t.opacityKeyframes || [] }))
+}
+
+export async function postAddTrack(project: string, name?: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/add`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  return res.json() as Promise<{ success: boolean; id: string }>
+}
+
+export async function postUpdateTrack(project: string, id: string, updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/update`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...updates }),
+  })
+}
+
+export async function postDeleteTrack(project: string, id: string) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+}
+
+export async function postReorderTracks(project: string, trackIds: string[]) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/reorder`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trackIds }),
+  })
+}
+
 export async function fetchMarkers(project: string): Promise<{ id: string; time: number; label: string }[]> {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers`)
   if (!res.ok) return []
