@@ -45,42 +45,70 @@ const FRAGMENT_SHADER = `
   varying vec2 v_texCoord;
   uniform sampler2D u_imageA;
   uniform sampler2D u_imageB;
-  uniform float u_blend;       // 0.0 = imageA only, 1.0 = imageB only
-  uniform float u_intensity;   // 0.0 - 1.0 beat intensity
-  uniform float u_decay;       // 0.0 - 1.0 time since beat (1.0 = on beat, decays to 0)
-  uniform float u_echo;        // 0.0 = no echo, higher = more echo layers visible
+  uniform float u_blend;
+  uniform float u_zoom;          // zoom_pulse / zoom_bounce intensity
+  uniform float u_shakeX;        // horizontal shake offset
+  uniform float u_shakeY;        // vertical shake offset
+  uniform float u_contrastPop;   // contrast enhancement intensity
+  uniform float u_glowSwell;     // glow/bloom intensity
+  uniform float u_flash;         // flash to white intensity
+  uniform float u_echo;          // echo concentric zoom layers
 
   vec4 sampleBlended(vec2 uv) {
     return mix(texture2D(u_imageA, uv), texture2D(u_imageB, uv), u_blend);
   }
 
   void main() {
-    float effect = u_intensity * u_decay;
     vec2 center = vec2(0.5, 0.5);
 
-    // Base zoom toward center on beat
-    float zoom = 1.0 - effect * 0.06;
+    // Zoom toward center
+    float zoom = 1.0 - u_zoom * 0.06;
     vec2 uv = center + (v_texCoord - center) * zoom;
+
+    // Shake: translate UV
+    uv.x += u_shakeX * 0.02;
+    uv.y += u_shakeY * 0.02;
+
     vec4 color = sampleBlended(uv);
 
-    // Echo: stack multiple zoom layers with increasing zoom + decreasing opacity
+    // Echo: concentric zoom layers
     if (u_echo > 0.01) {
-      float echoLayers = 5.0;
       for (float i = 1.0; i <= 5.0; i += 1.0) {
-        float layerZoom = zoom - u_echo * 0.04 * i; // each layer zooms further in
+        float layerZoom = zoom - u_echo * 0.04 * i;
         vec2 layerUv = center + (v_texCoord - center) * layerZoom;
+        layerUv.x += u_shakeX * 0.02;
+        layerUv.y += u_shakeY * 0.02;
         vec4 layerColor = sampleBlended(layerUv);
-        float layerAlpha = u_echo * (1.0 - i / (echoLayers + 1.0)) * 0.4;
+        float layerAlpha = u_echo * (1.0 - i / 6.0) * 0.4;
         color = mix(color, layerColor, layerAlpha);
       }
     }
 
-    // Brightness pulse
-    color.rgb *= 1.0 + effect * 0.4;
+    // Contrast pop: increase contrast around midpoint
+    if (u_contrastPop > 0.01) {
+      float c = 1.0 + u_contrastPop * 0.4;
+      color.rgb = clamp((color.rgb - 0.5) * c + 0.5, 0.0, 1.0);
+    }
 
-    // Slight warm tint on strong beats
-    color.r += effect * 0.03;
-    color.g += effect * 0.01;
+    // Glow swell: bloom-like brightness + soft saturation boost
+    if (u_glowSwell > 0.01) {
+      float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+      vec3 glow = color.rgb + (color.rgb - vec3(lum)) * u_glowSwell * 0.5;
+      color.rgb = mix(color.rgb, glow, u_glowSwell) * (1.0 + u_glowSwell * 0.3);
+      color.rgb = clamp(color.rgb, 0.0, 1.0);
+    }
+
+    // Brightness pulse from zoom
+    color.rgb *= 1.0 + u_zoom * 0.3;
+
+    // Flash to white
+    if (u_flash > 0.01) {
+      color.rgb = mix(color.rgb, vec3(1.0), u_flash * 0.7);
+    }
+
+    // Warm tint on zoom beats
+    color.r += u_zoom * 0.02;
+    color.g += u_zoom * 0.005;
 
     gl_FragColor = color;
   }
@@ -120,11 +148,24 @@ const BLEND_MODE_MAP: Record<string, number> = {
   normal: 0, multiply: 1, screen: 2, overlay: 3, difference: 4, add: 5, 'soft-light': 3, // soft-light → overlay fallback
 }
 
+// Map detailed AI effect names to suppression categories
+const EFFECT_TO_CATEGORY: Record<string, EffectType> = {
+  zoom_pulse: 'zoom', zoom_bounce: 'zoom', zoom: 'zoom',
+  shake_x: 'shake', shake_y: 'shake', shake: 'shake',
+  contrast_pop: 'pulse', // contrast maps to pulse category
+  glow_swell: 'glow', glow: 'glow',
+  flash: 'flash', hard_cut: 'flash',
+  echo: 'echo', echo_pulse: 'echo',
+  pulse: 'pulse',
+}
+
 function isTimeSuppressed(time: number, suppressions: BeatSuppression[], effectType?: string): boolean {
   return suppressions.some((s) => {
     if (time < s.from || time > s.to) return false
     if (!s.effectTypes || s.effectTypes.length === 0) return true
-    return effectType ? s.effectTypes.includes(effectType as EffectType) : true
+    if (!effectType) return true
+    const category = EFFECT_TO_CATEGORY[effectType] || effectType
+    return s.effectTypes.includes(category as EffectType) || s.effectTypes.includes(effectType as EffectType)
   })
 }
 
@@ -134,88 +175,62 @@ function findEffectIntensity(
   userEffects: UserEffect[],
   suppressions: BeatSuppression[],
   time: number,
-): { intensity: number; decay: number; echoIntensity: number } {
-  let bestIntensity = 0
-  let bestDecay = 0
-  let echoIntensity = 0
+): EffectValues {
+  const fx: EffectValues = { zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 }
 
-  // Prefer audio intelligence events over raw beats
+  function addEffect(effect: string, value: number) {
+    if (effect === 'zoom_pulse' || effect === 'zoom_bounce' || effect === 'zoom') fx.zoom = Math.max(fx.zoom, value)
+    else if (effect === 'shake_x') fx.shakeX = Math.max(fx.shakeX, value) * (Math.sin(time * 40) > 0 ? 1 : -1)
+    else if (effect === 'shake_y') fx.shakeY = Math.max(Math.abs(fx.shakeY), value) * (Math.cos(time * 35) > 0 ? 1 : -1)
+    else if (effect === 'shake') { fx.shakeX = Math.max(Math.abs(fx.shakeX), value * 0.7) * (Math.sin(time * 40) > 0 ? 1 : -1); fx.shakeY = Math.max(Math.abs(fx.shakeY), value * 0.7) * (Math.cos(time * 35) > 0 ? 1 : -1) }
+    else if (effect === 'contrast_pop') fx.contrastPop = Math.max(fx.contrastPop, value)
+    else if (effect === 'glow_swell' || effect === 'glow') fx.glowSwell = Math.max(fx.glowSwell, value)
+    else if (effect === 'flash') fx.flash = Math.max(fx.flash, value)
+    else if (effect === 'echo' || effect === 'echo_pulse') fx.echo = Math.max(fx.echo, value)
+    else if (effect === 'pulse') fx.zoom = Math.max(fx.zoom, value) // legacy
+    else fx.zoom = Math.max(fx.zoom, value * 0.5) // unknown → mild zoom
+  }
+
+  // Audio intelligence events
   if (audioEvents.length > 0) {
-    // Audio events are sorted by time — binary search for nearby events
-    let lo = 0
-    let hi = audioEvents.length - 1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (audioEvents[mid].time <= time) {
-        lo = mid + 1
-      } else {
-        hi = mid - 1
-      }
-    }
-    // Check events near the current time (search backward from hi)
-    for (let i = hi; i >= Math.max(0, hi - 5); i--) {
+    let lo = 0, hi = audioEvents.length - 1
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (audioEvents[mid].time <= time) lo = mid + 1; else hi = mid - 1 }
+    for (let i = hi; i >= Math.max(0, hi - 8); i--) {
       const ev = audioEvents[i]
       const dist = time - ev.time
       if (dist < 0) continue
       if (dist > ev.duration + 0.1) break
-      // Per-event suppression: check this event's effect type against suppression zones
       if (isTimeSuppressed(time, suppressions, ev.effect)) continue
       if (dist <= ev.duration) {
         const decay = Math.max(0, 1 - dist / ev.duration)
-        const d = decay * decay
-        // Echo effect: track separately
-        if (ev.effect === 'echo' || ev.effect === 'echo_pulse') {
-          const e = ev.intensity * d
-          if (e > echoIntensity) echoIntensity = e
-        } else if (ev.intensity * d > bestIntensity * bestDecay) {
-          bestIntensity = ev.intensity
-          bestDecay = d
-        }
+        addEffect(ev.effect, ev.intensity * decay * decay)
       }
     }
   } else if (beats.length > 0 && !isTimeSuppressed(time, suppressions)) {
-    // Fallback to raw beats (no effect type — global suppression check)
-    let lo = 0
-    let hi = beats.length - 1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (beats[mid].time <= time) {
-        lo = mid + 1
-      } else {
-        hi = mid - 1
-      }
-    }
+    let lo = 0, hi = beats.length - 1
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (beats[mid].time <= time) lo = mid + 1; else hi = mid - 1 }
     if (hi >= 0) {
       const dist = time - beats[hi].time
       if (dist <= 0.3) {
         const decay = Math.max(0, 1 - dist / 0.2)
-        const d = decay * decay
-        if (beats[hi].intensity * d > bestIntensity * bestDecay) {
-          bestIntensity = beats[hi].intensity
-          bestDecay = d
-        }
+        addEffect('zoom_pulse', beats[hi].intensity * decay * decay)
       }
     }
   }
 
-  // Check user effects (always active, never suppressed)
-  for (const fx of userEffects) {
-    const dist = time - fx.time
-    if (dist >= 0 && dist <= fx.duration) {
-      const decay = Math.max(0, 1 - dist / fx.duration)
-      const d = decay * decay
-      if (fx.type === 'echo') {
-        const e = fx.intensity * d
-        if (e > echoIntensity) echoIntensity = e
-      } else if (fx.intensity * d > bestIntensity * bestDecay) {
-        bestIntensity = fx.intensity
-        bestDecay = d
-      }
+  // User effects
+  for (const ufx of userEffects) {
+    const dist = time - ufx.time
+    if (dist >= 0 && dist <= ufx.duration) {
+      const decay = Math.max(0, 1 - dist / ufx.duration)
+      addEffect(ufx.type, ufx.intensity * decay * decay)
     }
   }
 
-  return { intensity: bestIntensity, decay: bestDecay, echoIntensity }
+  return fx
 }
+
+type EffectValues = { zoom: number; shakeX: number; shakeY: number; contrastPop: number; glowSwell: number; flash: number; echo: number }
 
 export type BeatEffectPreviewHandle = {
   getCanvas: () => HTMLCanvasElement | null
@@ -232,9 +247,13 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     program: WebGLProgram
     textureA: WebGLTexture
     textureB: WebGLTexture
-    intensityLoc: WebGLUniformLocation
-    decayLoc: WebGLUniformLocation
     blendLoc: WebGLUniformLocation
+    zoomLoc: WebGLUniformLocation
+    shakeXLoc: WebGLUniformLocation
+    shakeYLoc: WebGLUniformLocation
+    contrastPopLoc: WebGLUniformLocation
+    glowSwellLoc: WebGLUniformLocation
+    flashLoc: WebGLUniformLocation
     echoLoc: WebGLUniformLocation
     // Compositor
     compProgram: WebGLProgram
@@ -349,9 +368,13 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       program,
       textureA,
       textureB,
-      intensityLoc: gl.getUniformLocation(program, 'u_intensity')!,
-      decayLoc: gl.getUniformLocation(program, 'u_decay')!,
       blendLoc: gl.getUniformLocation(program, 'u_blend')!,
+      zoomLoc: gl.getUniformLocation(program, 'u_zoom')!,
+      shakeXLoc: gl.getUniformLocation(program, 'u_shakeX')!,
+      shakeYLoc: gl.getUniformLocation(program, 'u_shakeY')!,
+      contrastPopLoc: gl.getUniformLocation(program, 'u_contrastPop')!,
+      glowSwellLoc: gl.getUniformLocation(program, 'u_glowSwell')!,
+      flashLoc: gl.getUniformLocation(program, 'u_flash')!,
       echoLoc: gl.getUniformLocation(program, 'u_echo')!,
       compProgram,
       compBaseTex: textureA, // reuse for uploads
@@ -393,12 +416,23 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       ctx.gl.bindTexture(ctx.gl.TEXTURE_2D, ctx.textureA)
       ctx.gl.texImage2D(ctx.gl.TEXTURE_2D, 0, ctx.gl.RGBA, ctx.gl.RGBA, ctx.gl.UNSIGNED_BYTE, img)
       // Draw once immediately
-      render(0, 0, 0)
+      render({ zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 }, 0)
     }
     img.src = src
   }, [src])
 
-  const render = useCallback((intensity: number, decay: number, blend: number, echoMix: number = 0) => {
+  const setEffectUniforms = useCallback((ctx: NonNullable<typeof glRef.current>, fx: EffectValues) => {
+    const { gl } = ctx
+    gl.uniform1f(ctx.zoomLoc, fx.zoom)
+    gl.uniform1f(ctx.shakeXLoc, fx.shakeX)
+    gl.uniform1f(ctx.shakeYLoc, fx.shakeY)
+    gl.uniform1f(ctx.contrastPopLoc, fx.contrastPop)
+    gl.uniform1f(ctx.glowSwellLoc, fx.glowSwell)
+    gl.uniform1f(ctx.flashLoc, fx.flash)
+    gl.uniform1f(ctx.echoLoc, fx.echo)
+  }, [])
+
+  const render = useCallback((fx: EffectValues, blend: number) => {
     const ctx = glRef.current
     if (!ctx) return
     const { gl } = ctx
@@ -424,10 +458,8 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.activeTexture(gl.TEXTURE1)
       gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bottomB)
-      gl.uniform1f(ctx.intensityLoc, 0)
-      gl.uniform1f(ctx.decayLoc, 0)
       gl.uniform1f(ctx.blendLoc, bottom.blendFactor)
-      gl.uniform1f(ctx.echoLoc, 0)
+      setEffectUniforms(ctx, { zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 })
       gl.drawArrays(gl.TRIANGLES, 0, 6)
 
       // Pass 2..N: composite each subsequent layer onto accumulator
@@ -481,10 +513,8 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.bindTexture(gl.TEXTURE_2D, readTex)
       gl.activeTexture(gl.TEXTURE1)
       gl.bindTexture(gl.TEXTURE_2D, readTex) // same tex for both slots (no crossfade at this stage)
-      gl.uniform1f(ctx.intensityLoc, intensity)
-      gl.uniform1f(ctx.decayLoc, decay)
-      gl.uniform1f(ctx.blendLoc, 0) // no crossfade, already composited
-      gl.uniform1f(ctx.echoLoc, echoMix)
+      gl.uniform1f(ctx.blendLoc, 0)
+      setEffectUniforms(ctx, fx)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     } else {
       // ── Single-track (original path) ──
@@ -503,24 +533,22 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceB)
       gl.viewport(0, 0, canvas.width, canvas.height)
       gl.useProgram(ctx.program)
-      gl.uniform1f(ctx.intensityLoc, intensity)
-      gl.uniform1f(ctx.decayLoc, decay)
       gl.uniform1f(ctx.blendLoc, singleBlend)
-      gl.uniform1f(ctx.echoLoc, echoMix)
+      setEffectUniforms(ctx, fx)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
-  }, [transitionFrameA, transitionFrameB, layers])
+  }, [transitionFrameA, transitionFrameB, layers, setEffectUniforms])
 
   // Render loop when playing
   useEffect(() => {
     if (!isPlaying) {
-      render(0, 0, blendFactor)
+      render({ zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 }, blendFactor)
       return
     }
 
     const loop = () => {
-      const { intensity, decay, echoIntensity } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
-      render(intensity, decay, blendFactor, echoIntensity)
+      const effectValues = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
+      render(effectValues, blendFactor)
       animRef.current = requestAnimationFrame(loop)
     }
     loop()
@@ -531,8 +559,8 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
   // Render on time changes when paused (seeking) or when frame/effects change
   useEffect(() => {
     if (isPlaying) return
-    const { intensity, decay, echoIntensity } = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
-    render(intensity, decay, blendFactor, echoIntensity)
+    const effectValues = findEffectIntensity(beats, audioEvents, userEffects, suppressions, currentTime)
+    render(effectValues, blendFactor)
   }, [currentTime, isPlaying, beats, audioEvents, userEffects, suppressions, render, transitionFrameA, transitionFrameB, blendFactor])
 
   return (

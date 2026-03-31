@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, type PoolEntry } from '@/lib/beatlab-client'
+import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -30,22 +30,29 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
   const [poolKeyframes, setPoolKeyframes] = useState<PoolEntry[]>([])
   const [poolSegments, setPoolSegments] = useState<PoolEntry[]>([])
   const [watchedFolders, setWatchedFolders] = useState<string[]>([])
+  const [unselectedCandidates, setUnselectedCandidates] = useState<UnselectedCandidate[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool'>('keyframes')
+  const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates'>('keyframes')
+  const scrollPositions = useRef<Record<string, number>>(
+    typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem('beatlab-bin-scroll') || '{}') } catch { return {} } })() : {}
+  )
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const loadBin = useCallback(async () => {
     setLoading(true)
     try {
-      const [binData, watchData, poolData] = await Promise.all([
+      const [binData, watchData, poolData, candData] = await Promise.all([
         getBin({ data: { projectName } }).catch(() => ({ bin: [], transitionBin: [] })),
         fetchWatchedFolders(projectName).catch(() => ({ watchedFolders: [] })),
         fetchPool(projectName).catch(() => ({ keyframes: [], segments: [] })),
+        fetchUnselectedCandidates(projectName).catch(() => []),
       ])
       setKeyframeEntries(binData.bin || [])
       setTransitionEntries(binData.transitionBin || [])
       setWatchedFolders(watchData.watchedFolders || [])
       setPoolKeyframes(poolData.keyframes || [])
       setPoolSegments(poolData.segments || [])
+      setUnselectedCandidates(candData)
     } finally {
       setLoading(false)
     }
@@ -115,27 +122,30 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
       {/* Tabs */}
       <div className="flex border-b border-gray-800 shrink-0">
-        <button
-          onClick={() => setTab('keyframes')}
-          className={`flex-1 text-xs py-2 transition-colors ${tab === 'keyframes' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
-        >
-          KFs{allKfCount > 0 ? ` (${allKfCount})` : ''}
-        </button>
-        <button
-          onClick={() => setTab('transitions')}
-          className={`flex-1 text-xs py-2 transition-colors ${tab === 'transitions' ? 'text-gray-200 border-b-2 border-orange-500' : 'text-gray-500 hover:text-gray-400'}`}
-        >
-          TRs{allTrCount > 0 ? ` (${allTrCount})` : ''}
-        </button>
-        <button
-          onClick={() => setTab('pool')}
-          className={`flex-1 text-xs py-2 transition-colors ${tab === 'pool' ? 'text-gray-200 border-b-2 border-green-500' : 'text-gray-500 hover:text-gray-400'}`}
-        >
-          Pool{poolCount > 0 ? ` (${poolCount})` : ''}
-        </button>
+        {(['keyframes', 'transitions', 'pool', 'candidates'] as const).map((t) => {
+          const candCount = unselectedCandidates.length
+          const label = t === 'keyframes' ? `KFs${allKfCount > 0 ? ` (${allKfCount})` : ''}` : t === 'transitions' ? `TRs${allTrCount > 0 ? ` (${allTrCount})` : ''}` : t === 'pool' ? `Pool${poolCount > 0 ? ` (${poolCount})` : ''}` : `Cands${candCount > 0 ? ` (${candCount})` : ''}`
+          const color = t === 'keyframes' ? 'blue' : t === 'transitions' ? 'orange' : t === 'pool' ? 'green' : 'purple'
+          return (
+            <button
+              key={t}
+              onClick={() => {
+                // Save current scroll position before switching
+                if (scrollContainerRef.current) {
+                  scrollPositions.current[tab] = scrollContainerRef.current.scrollTop
+                  localStorage.setItem('beatlab-bin-scroll', JSON.stringify(scrollPositions.current))
+                }
+                setTab(t)
+                // Restore scroll position after render
+                requestAnimationFrame(() => { if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = scrollPositions.current[t] || 0 })
+              }}
+              className={`flex-1 text-xs py-2 transition-colors ${tab === t ? `text-gray-200 border-b-2 border-${color}-500` : 'text-gray-500 hover:text-gray-400'}`}
+            >{label}</button>
+          )
+        })}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
         ) : tab === 'keyframes' ? (
@@ -146,12 +156,20 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               {/* Active keyframes */}
               <div className="grid grid-cols-3 gap-1">
                 {activeKeyframes.map((kf) => (
-                  <div key={kf.id} className="relative group rounded overflow-hidden">
+                  <div
+                    key={kf.id}
+                    className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
+                    draggable={kf.hasSelectedImage}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
+                      e.dataTransfer.effectAllowed = 'copy'
+                    }}
+                  >
                     {kf.hasSelectedImage ? (
                       <img
                         src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
                         alt={kf.id}
-                        className="w-full aspect-video object-cover"
+                        className="w-full aspect-video object-cover pointer-events-none"
                         loading="lazy"
                       />
                     ) : (
@@ -171,12 +189,21 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                   <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
                   <div className="grid grid-cols-3 gap-1">
                     {keyframeEntries.map((entry) => (
-                      <div key={entry.id} className="relative group rounded overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-pointer" onClick={() => handleRestoreKeyframe(entry.id)}>
+                      <div
+                        key={entry.id}
+                        className="relative group rounded overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
+                        draggable={entry.hasSelectedImage}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
+                          e.dataTransfer.effectAllowed = 'copy'
+                        }}
+                        onClick={() => handleRestoreKeyframe(entry.id)}
+                      >
                         {entry.hasSelectedImage ? (
                           <img
                             src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
                             alt={entry.id}
-                            className="w-full aspect-video object-cover"
+                            className="w-full aspect-video object-cover pointer-events-none"
                             loading="lazy"
                           />
                         ) : (
@@ -232,6 +259,36 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                   ))}
                 </>
               )}
+            </div>
+          )
+        ) : tab === 'candidates' ? (
+          unselectedCandidates.length === 0 ? (
+            <div className="p-4 text-center text-sm text-gray-600">No unselected candidates</div>
+          ) : (
+            <div className="p-2">
+              <div className="grid grid-cols-3 gap-1">
+                {unselectedCandidates.map((c) => (
+                  <div
+                    key={`${c.keyframeId}-v${c.variant}`}
+                    className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/x-beatlab-pool-path', c.path)
+                      e.dataTransfer.effectAllowed = 'copy'
+                    }}
+                  >
+                    <img
+                      src={beatlabFileUrl(projectName, c.path)}
+                      alt={`${c.keyframeId} v${c.variant}`}
+                      className="w-full aspect-video object-cover pointer-events-none"
+                      loading="lazy"
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="text-[7px] text-gray-300 truncate">{c.keyframeId} v{c.variant}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )
         ) : (

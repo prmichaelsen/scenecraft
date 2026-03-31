@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, type RefObject } from 'react'
+import { useRef, useState, useEffect, useCallback, type RefObject } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 
@@ -15,6 +15,8 @@ type VideoTrackProps = {
   scrollRef: RefObject<HTMLDivElement | null>
   scrollLeft: number
   viewportWidth: number
+  onDropVideo?: (keyframeId: string, poolPath: string) => void
+  onDropStagedImage?: (keyframeId: string, stagingId: string, variant: number) => void
 }
 
 type DragState = {
@@ -41,9 +43,12 @@ export function VideoTrack({
   scrollRef,
   scrollLeft,
   viewportWidth,
+  onDropVideo,
+  onDropStagedImage,
 }: VideoTrackProps) {
   const dragState = useRef<DragState | null>(null)
   const didDrag = useRef(false)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
 
   const handleEdgeMouseDown = useCallback((e: React.MouseEvent, kf: KeyframeWithTime, idx: number) => {
     e.stopPropagation()
@@ -146,13 +151,35 @@ export function VideoTrack({
         return (
           <div
             key={kf.id}
-            className={`absolute top-0 h-full group ${isSelected ? 'bg-blue-500/10' : ''} ${isMultiSelected ? 'bg-teal-500/15' : ''} ${isDraggingBody ? 'opacity-80 z-40' : ''}`}
+            className={`absolute top-0 h-full group ${dropTarget === kf.id ? 'bg-green-500/20 ring-1 ring-green-500' : ''} ${isSelected ? 'bg-blue-500/10' : ''} ${isMultiSelected ? 'bg-teal-500/30 ring-1 ring-teal-500/50' : ''} ${isDraggingBody ? 'opacity-80 z-40' : ''}`}
             style={{ left: x, width }}
             onMouseDown={(e) => handleBodyMouseDown(e, kf)}
             onClick={(e) => {
               if (didDrag.current) { didDrag.current = false; return }
               e.stopPropagation()
               onKeyframeClick(kf, e.shiftKey)
+            }}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes('application/x-beatlab-pool-path') || e.dataTransfer.types.includes('application/x-beatlab-staging-path')) {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+                setDropTarget(kf.id)
+              }
+            }}
+            onDragLeave={() => setDropTarget((prev) => prev === kf.id ? null : prev)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDropTarget(null)
+              const poolPath = e.dataTransfer.getData('application/x-beatlab-pool-path')
+              if (poolPath && onDropVideo) {
+                onDropVideo(kf.id, poolPath)
+                return
+              }
+              const stagingId = e.dataTransfer.getData('application/x-beatlab-staging-id')
+              const variant = e.dataTransfer.getData('application/x-beatlab-variant')
+              if (stagingId && variant && onDropStagedImage) {
+                onDropStagedImage(kf.id, stagingId, parseInt(variant, 10))
+              }
             }}
           >
             {/* Draggable left edge handle */}

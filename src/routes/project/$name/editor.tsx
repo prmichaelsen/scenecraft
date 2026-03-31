@@ -115,21 +115,24 @@ export type EditorData = {
   previewQuality: number
   audioDescriptions: AudioDescription[]
   tracks: import('@/lib/beatlab-client').Track[]
+  audioOnsets: Record<string, Record<string, { time: number; strength: number }[]>>
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
-    const [kfData, beatsData, effectsData, narrativeData, timelineData, aiData, settingsData, descriptionsData] = await Promise.all([
+    // Split: heavy AI data is cached client-side, only light data refetched on invalidate
+    const [kfData, beatsData, effectsData, narrativeData, timelineData, settingsData, descriptionsData] = await Promise.all([
       fetchKeyframes(data.name).catch((e) => { console.error('[editor] fetchKeyframes failed:', e); return { meta: null, keyframes: [], transitions: [], audioFile: null } }),
       fetchBeats(data.name).catch((e) => { console.error('[editor] fetchBeats failed:', e); return { beats: [], sections: [] } }),
       fetchEffects(data.name).catch((e) => { console.error('[editor] fetchEffects failed:', e); return { effects: [], suppressions: [] } }),
       fetchNarrative(data.name).catch((e) => { console.error('[editor] fetchNarrative failed:', e); return { sections: [] } }),
       fetchTimelines(data.name).catch(() => null),
-      fetchAudioIntelligence(data.name).catch((e) => { console.error('[editor] fetchAudioIntelligence failed:', e); return { activeFile: null, events: [], sections: [], rules: [], ruleCount: 0 } }),
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
       fetchDescriptions(data.name).catch(() => [] as AudioDescription[]),
     ])
+    // AI data placeholder — loaded separately on client to avoid refetching 5MB on every invalidate
+    const aiData = { activeFile: null as string | null, events: [] as AudioEvent[], sections: [] as { start_time: number; end_time: number; type: string; label: string; description: string }[], rules: [] as import('@/lib/beatlab-client').AudioRule[], ruleCount: 0, onsets: {} as Record<string, Record<string, { time: number; strength: number }[]>> }
 
     return {
       meta: {
@@ -207,7 +210,8 @@ const getEditorData = createServerFn({ method: 'GET' })
       beatSuppressions: effectsData.suppressions || [],
       previewQuality: settingsData.preview_quality || 50,
       audioDescriptions: descriptionsData,
-      tracks: (kfData.tracks || [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, enabled: true }]).map((t: Record<string, unknown>) => ({
+      audioOnsets: aiData.onsets || {},
+      tracks: (Array.isArray(kfData.tracks) && kfData.tracks.length > 0 ? kfData.tracks : [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, enabled: true }]).map((t: Record<string, unknown>) => ({
         id: t.id as string,
         name: t.name as string,
         zOrder: (t.zOrder as number) ?? 0,
@@ -216,6 +220,70 @@ const getEditorData = createServerFn({ method: 'GET' })
         enabled: t.enabled !== false,
         opacityKeyframes: (t.opacityKeyframes as { id: string; time: number; opacity: number }[]) || [],
       })),
+    }
+  })
+
+// Light refetch — only keyframes + transitions + tracks (500KB vs 5.5MB full refetch)
+export const getTimelineData = createServerFn({ method: 'GET' })
+  .inputValidator((input: { name: string }) => input)
+  .handler(async ({ data }) => {
+    const kfData = await fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null, tracks: [] }))
+    return {
+      keyframes: (kfData.keyframes || []).map((kf: Record<string, unknown>) => ({
+        id: kf.id as string,
+        timestamp: kf.timestamp as string,
+        section: kf.section as string,
+        prompt: (kf.prompt as string) || '',
+        selected: kf.selected as number | string | null,
+        hasSelectedImage: kf.hasSelectedImage as boolean,
+        context: kf.context as KeyframeContext | null,
+        candidates: Array.isArray(kf.candidates)
+          ? (kf.candidates as Array<string | Record<string, unknown>>).map((c) =>
+              typeof c === 'string' ? c : (c.path as string) || ''
+            ).filter(Boolean)
+          : [],
+        trackId: (kf.trackId as string) || 'track_1',
+      })),
+      transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
+        const candidates = Array.isArray(tr.candidates) ? tr.candidates as string[]
+          : typeof tr.candidates === 'object' && tr.candidates !== null
+            ? Object.values(tr.candidates as Record<string, string[]>).flat()
+            : []
+        let selected: number | string | null = null
+        const rawSelected = tr.selected
+        if (Array.isArray(rawSelected)) {
+          selected = (rawSelected as (number | string | null)[])[0] ?? null
+        } else {
+          selected = rawSelected as number | string | null
+        }
+        const rawHasSelected = tr.hasSelectedVideos
+        const hasSelectedVideo = Array.isArray(rawHasSelected) ? (rawHasSelected as boolean[])[0] ?? false : !!rawHasSelected
+        return {
+          id: tr.id as string,
+          from: tr.from as string,
+          to: tr.to as string,
+          durationSeconds: tr.durationSeconds as number,
+          action: (tr.action as string) || '',
+          useGlobalPrompt: tr.useGlobalPrompt !== false,
+          candidates,
+          hasSelectedVideo,
+          selected,
+          remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
+          trackId: (tr.trackId as string) || 'track_1',
+        }
+      }),
+    }
+  })
+
+export const getAudioIntelligenceData = createServerFn({ method: 'GET' })
+  .inputValidator((input: { name: string }) => input)
+  .handler(async ({ data }) => {
+    const aiData = await fetchAudioIntelligence(data.name).catch(() => ({ activeFile: null, events: [], sections: [], rules: [], ruleCount: 0 }))
+    return {
+      audioEvents: aiData.events || [],
+      audioRules: aiData.rules || [],
+      audioOnsets: (aiData as Record<string, unknown>).onsets as Record<string, Record<string, { time: number; strength: number }[]>> || {},
+      audioDescriptions: aiData.sections || [],
     }
   })
 
@@ -351,9 +419,9 @@ export const generateStagedCandidate = createServerFn({ method: 'POST' })
   })
 
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
+  .inputValidator((input: { projectName: string; keyframeId: string; count?: number; refinementPrompt?: string }) => input)
   .handler(async ({ data }) => {
-    return postGenerateKeyframeCandidates(data.projectName, data.keyframeId, data.count)
+    return postGenerateKeyframeCandidates(data.projectName, data.keyframeId, data.count, data.refinementPrompt)
   })
 
 export const generateTransitionAction = createServerFn({ method: 'POST' })

@@ -580,17 +580,24 @@ function EventSuggestionRow({
                 <button
                   key={ci}
                   onClick={() => handleKeep(variantNum)}
-                  className="relative rounded-md overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors"
-                  title={`Insert variant ${variantNum}`}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-beatlab-staging-path', path)
+                    e.dataTransfer.setData('application/x-beatlab-staging-id', stagingIdStable)
+                    e.dataTransfer.setData('application/x-beatlab-variant', String(variantNum))
+                    e.dataTransfer.effectAllowed = 'copy'
+                  }}
+                  className="relative rounded-md overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors cursor-grab active:cursor-grabbing"
+                  title={`Click to insert at event time, or drag onto a keyframe`}
                 >
                   <img
                     src={beatlabFileUrl(projectName, path)}
                     alt={`v${variantNum}`}
-                    className="w-full aspect-[16/9] object-cover"
+                    className="w-full aspect-[16/9] object-cover pointer-events-none"
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1.5 py-0.5 flex items-center justify-between">
                     <span className="text-[9px] text-gray-300 font-mono">v{variantNum}</span>
-                    <span className="text-[9px] text-teal-400">Insert</span>
+                    <span className="text-[9px] text-teal-400">Insert / Drag</span>
                   </div>
                 </button>
               )

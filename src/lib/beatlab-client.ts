@@ -179,6 +179,7 @@ export async function fetchAudioIntelligence(project: string) {
     sections: AudioSection[]
     rules: AudioRule[]
     ruleCount: number
+    onsets?: Record<string, Record<string, { time: number; strength: number }[]>>
   }>
 }
 
@@ -266,6 +267,38 @@ export async function postReorderTracks(project: string, trackIds: string[]) {
   })
 }
 
+export type UnselectedCandidate = { keyframeId: string; variant: number; path: string }
+
+export async function fetchUnselectedCandidates(project: string): Promise<UnselectedCandidate[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unselected-candidates`)
+  if (!res.ok) return []
+  const data = await res.json() as { candidates: UnselectedCandidate[] }
+  return data.candidates
+}
+
+export async function postAssignKeyframeImage(project: string, keyframeId: string, sourcePath: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-keyframe-image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, sourcePath }),
+  })
+  if (!res.ok) throw new Error(`Failed to assign keyframe image: ${res.status}`)
+  return res.json()
+}
+
+export async function postReapplyRules(project: string, rules?: AudioRule[], sectionStart?: number, sectionEnd?: number): Promise<{ success: boolean; eventCount: number }> {
+  const body: Record<string, unknown> = {}
+  if (rules) body.rules = rules
+  if (sectionStart != null && sectionEnd != null) { body.sectionStart = sectionStart; body.sectionEnd = sectionEnd }
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/reapply-rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`Failed to reapply rules: ${res.status}`)
+  return res.json()
+}
+
 export async function postUpdateRules(project: string, rules: AudioRule[]) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-rules`, {
     method: 'POST',
@@ -317,12 +350,12 @@ export async function fetchPool(project: string) {
   return res.json() as Promise<{ keyframes: PoolEntry[]; segments: PoolEntry[] }>
 }
 
-export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number) {
-  console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count)
+export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number, refinementPrompt?: string) {
+  console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count, refinementPrompt ? `refine: ${refinementPrompt.slice(0, 50)}` : '')
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keyframeId, count }),
+    body: JSON.stringify({ keyframeId, count, ...(refinementPrompt ? { refinementPrompt } : {}) }),
   })
   if (!res.ok) {
     const text = await res.text()

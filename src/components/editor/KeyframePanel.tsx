@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
-import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes, setBaseImage } from '@/routes/project/$name/editor'
+import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
-import { beatlabFileUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
+import { beatlabFileUrl, fetchDirectoryListing, type FileEntry, type AudioEvent, type AudioDescription } from '@/lib/beatlab-client'
 import { invalidateEntry } from '@/lib/frame-cache'
 import { CandidateModal } from './TransitionPanel'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
@@ -21,9 +21,11 @@ type KeyframePanelProps = {
   onMoveLeft: () => void
   onMoveRight: () => void
   onDataChange: () => void
+  audioDescriptions?: AudioDescription[]
+  audioEvents?: AudioEvent[]
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onDataChange }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onDataChange, audioDescriptions, audioEvents }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -138,9 +140,9 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto">
           {tab === 'details' ? (
-            <DetailsTab kf={kf} projectName={projectName} />
+            <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} />
           ) : (
-            <CandidatesTab kf={kf} projectName={projectName} />
+            <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           )}
         </div>
       </div>
@@ -148,11 +150,13 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
   )
 }
 
-function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataChange }: { kf: KeyframeWithTime; projectName: string; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; onDataChange: () => void }) {
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptText, setPromptText] = useState(kf.prompt)
   const [saving, setSaving] = useState(false)
   const [hasImage, setHasImage] = useState(kf.hasSelectedImage)
+  const [generating, setGenerating] = useState(false)
+  const [enhancing, setEnhancing] = useState(false)
 
   // Sync when keyframe changes
   useEffect(() => {
@@ -175,6 +179,80 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
     setEditingPrompt(false)
   }, [promptText, kf, projectName])
 
+  // Find section content and nearest audio event for this keyframe
+  const sectionDesc = audioDescriptions?.find((d) => d.label === kf.section)
+  const sectionContent = sectionDesc?.content || ''
+  const nearestEvent = audioEvents
+    ?.filter((ev) => {
+      if (!sectionDesc) return true
+      return ev.time >= sectionDesc.startTime && ev.time <= sectionDesc.endTime
+    })
+    .reduce<AudioEvent | null>((best, ev) => {
+      if (!best) return ev
+      return Math.abs(ev.time - kf.timeSeconds) < Math.abs(best.time - kf.timeSeconds) ? ev : best
+    }, null)
+
+  const handleGeneratePrompt = useCallback(async () => {
+    setGenerating(true)
+    try {
+      const event = nearestEvent || { time: kf.timeSeconds, effect: 'pulse', intensity: 0.8, stem_source: 'kick' }
+      const result = await suggestKeyframePrompts({
+        data: {
+          projectName,
+          sectionLabel: kf.section,
+          sectionContent,
+          events: [{ time: event.time, effect: event.effect, intensity: event.intensity, stem_source: event.stem_source }],
+          baseStillName: '',
+        },
+      })
+      if (result.suggestions.length > 0) {
+        const newPrompt = result.suggestions[0].prompt
+        setPromptText(newPrompt)
+        // Auto-save
+        await updateKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: newPrompt } })
+        kf.prompt = newPrompt
+      }
+    } catch (e) {
+      alert(`Generate failed: ${e}`)
+    } finally {
+      setGenerating(false)
+    }
+  }, [projectName, kf, sectionContent, nearestEvent])
+
+  const handleEnhancePrompt = useCallback(async () => {
+    if (!promptText) {
+      alert('Add a prompt first before enhancing.')
+      return
+    }
+    setEnhancing(true)
+    try {
+      const event = nearestEvent || { time: kf.timeSeconds, effect: 'pulse', intensity: 0.8, stem_source: 'kick' }
+      const result = await enhanceKeyframePrompt({
+        data: {
+          projectName,
+          prompt: promptText,
+          sectionContent,
+          event: {
+            time: event.time,
+            effect: event.effect,
+            intensity: event.intensity,
+            stem_source: event.stem_source,
+            rationale: 'rationale' in event ? (event as AudioEvent).rationale : undefined,
+          },
+        },
+      })
+      if (result.prompt) {
+        setPromptText(result.prompt)
+        await updateKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: result.prompt } })
+        kf.prompt = result.prompt
+      }
+    } catch (e) {
+      alert(`Enhance failed: ${e}`)
+    } finally {
+      setEnhancing(false)
+    }
+  }, [projectName, kf, promptText, sectionContent, nearestEvent])
+
   return (
     <>
       {/* Image or base image picker */}
@@ -187,7 +265,7 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
           />
         </div>
       ) : (
-        <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true) }} />
+        <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true); onDataChange() }} />
       )}
 
       {/* Metadata */}
@@ -199,12 +277,28 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
           <div className="flex items-center justify-between mb-1">
             <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt</div>
             {!editingPrompt && (
-              <button
-                onClick={() => setEditingPrompt(true)}
-                className="text-[10px] text-blue-500 hover:text-blue-400"
-              >
-                Edit
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGeneratePrompt}
+                  disabled={generating || enhancing}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+                >
+                  {generating ? 'Generating...' : 'Generate'}
+                </button>
+                <button
+                  onClick={handleEnhancePrompt}
+                  disabled={enhancing || generating || !promptText}
+                  className="text-[10px] text-purple-400 hover:text-purple-300 disabled:text-gray-600 transition-colors"
+                >
+                  {enhancing ? 'Enhancing...' : 'Enhance'}
+                </button>
+                <button
+                  onClick={() => setEditingPrompt(true)}
+                  className="text-[10px] text-gray-500 hover:text-gray-400"
+                >
+                  Edit
+                </button>
+              </div>
             )}
           </div>
           {editingPrompt ? (
@@ -294,7 +388,7 @@ function DetailsTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: st
   )
 }
 
-function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName: string }) {
+function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void }) {
   const jobCtx = useJobContext()
   const entityKey = `kf:${kf.id}:candidates`
   const job = useJobState(entityKey)
@@ -322,16 +416,17 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
   const jobStatus = job?.detail || ''
   const COUNT_OPTIONS = [1, 2, 3, 4] as const
   const [generationCount, setGenerationCount] = useState<number>(4)
+  const [refinementPrompt, setRefinementPrompt] = useState('')
 
   const handleGenerate = useCallback(async () => {
-    if (!kf.prompt) {
-      alert('Add a prompt to this keyframe first (Details tab) before generating candidates.')
+    if (!kf.prompt && !refinementPrompt) {
+      alert('Add a prompt to this keyframe first (Details tab) or enter a refinement prompt.')
       return
     }
 
     try {
       const result = await generateKeyframeCandidates({
-        data: { projectName, keyframeId: kf.id, count: generationCount },
+        data: { projectName, keyframeId: kf.id, count: generationCount, ...(refinementPrompt ? { refinementPrompt } : {}) },
       })
 
       if (result.jobId) {
@@ -346,7 +441,7 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
       console.error('Generate candidates failed:', e)
       alert(`Failed to generate candidates: ${e}`)
     }
-  }, [projectName, kf, jobCtx, entityKey, generationCount])
+  }, [projectName, kf, jobCtx, entityKey, generationCount, refinementPrompt])
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(() => {
     return typeof kf.selected === 'number' ? kf.selected : null
@@ -408,12 +503,24 @@ function CandidatesTab({ kf, projectName }: { kf: KeyframeWithTime; projectName:
         </div>
       </div>
 
+      {/* Refinement prompt — generates from selected image instead of base still */}
+      <div>
+        <textarea
+          ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
+          value={refinementPrompt}
+          onChange={(e) => { setRefinementPrompt(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
+          placeholder="Refinement prompt (optional) — generates from selected image..."
+          className="w-full bg-gray-800 text-[11px] text-gray-400 rounded p-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none overflow-hidden leading-relaxed"
+          rows={1}
+        />
+      </div>
+
       <button
         onClick={handleGenerate}
         disabled={generating}
         className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
       >
-        {generating ? 'Generating with Imagen...' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
+        {generating ? 'Generating with Imagen...' : refinementPrompt ? 'Refine Selected Image' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
       </button>
       {generating && (
         <div className="text-[10px] text-gray-500 text-center">

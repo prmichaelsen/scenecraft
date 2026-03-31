@@ -1,11 +1,12 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData } from '@/routes/project/$name/editor'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, postDeleteTrack, type BlendMode, type Track } from '@/lib/beatlab-client'
+import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
@@ -395,18 +396,84 @@ export function Timeline({ data }: { data: EditorData }) {
     fetchMarkers(data.projectName).then(setMarkers).catch(() => {})
   }, [data.projectName])
 
-  const keyframes: KeyframeWithTime[] = data.keyframes.map((kf) => ({
+  // Load AI data once (heavy — 5MB with onsets, not refetched on router.invalidate)
+  const [aiAudioEvents, setAiAudioEvents] = useState(data.audioEvents)
+  const [aiAudioRules, setAiAudioRules] = useState(data.audioRules)
+  const [aiAudioOnsets, setAiAudioOnsets] = useState(data.audioOnsets)
+  const [aiAudioDescriptions, setAiAudioDescriptions] = useState(data.audioDescriptions)
+  const aiLoadedRef = useRef(false)
+  useEffect(() => {
+    if (aiLoadedRef.current) return
+    aiLoadedRef.current = true
+    getAudioIntelligenceData({ data: { name: data.projectName } }).then((ai) => {
+      if (ai.audioEvents.length > 0) setAiAudioEvents(ai.audioEvents)
+      if (ai.audioRules.length > 0) setAiAudioRules(ai.audioRules)
+      if (Object.keys(ai.audioOnsets).length > 0) setAiAudioOnsets(ai.audioOnsets)
+      if (ai.audioDescriptions && (ai.audioDescriptions as unknown[]).length > 0) setAiAudioDescriptions(ai.audioDescriptions as typeof aiAudioDescriptions)
+    }).catch(() => {})
+  }, [data.projectName])
+
+  // Local keyframe/transition state for fast partial refetches
+  const [localKeyframes, setLocalKeyframes] = useState(data.keyframes)
+  const [localTransitions, setLocalTransitions] = useState(data.transitions)
+  useEffect(() => { setLocalKeyframes(data.keyframes) }, [data.keyframes])
+  useEffect(() => { setLocalTransitions(data.transitions) }, [data.transitions])
+
+  // Partial refetch — only keyframes + transitions (fast, ~500KB)
+  const refreshTimeline = useCallback(() => {
+    getTimelineData({ data: { name: data.projectName } }).then((tl) => {
+      setLocalKeyframes(tl.keyframes)
+      setLocalTransitions(tl.transitions)
+    }).catch((e) => { console.error('refreshTimeline failed:', e); router.invalidate() })
+  }, [data.projectName, router])
+
+  const reloadAudioIntelligence = useCallback(() => {
+    getAudioIntelligenceData({ data: { name: data.projectName } }).then((ai) => {
+      if (ai.audioEvents.length > 0) setAiAudioEvents(ai.audioEvents)
+      if (ai.audioRules.length > 0) { setAiAudioRules(ai.audioRules); setLocalRules(ai.audioRules) }
+      if (Object.keys(ai.audioOnsets).length > 0) setAiAudioOnsets(ai.audioOnsets)
+    }).catch(() => {})
+  }, [data.projectName])
+
+  const keyframes: KeyframeWithTime[] = localKeyframes.map((kf) => ({
     ...kf,
     timeSeconds: dragOverrides[kf.id] ?? parseTimestamp(kf.timestamp),
   })).sort((a, b) => a.timeSeconds - b.timeSeconds)
 
   // Group by track
+  // Client-side rule application for instant preview
+  // When rules are edited locally, recompute events from onsets without backend round-trip
+  const [localRules, setLocalRules] = useState(aiAudioRules)
+  useEffect(() => { setLocalRules(aiAudioRules) }, [aiAudioRules])
+
+  const filteredAudioEvents = useMemo(() => {
+    const hasOnsets = aiAudioOnsets && Object.keys(aiAudioOnsets).length > 0
+    console.log(`[Timeline] audioOnsets: ${hasOnsets ? Object.keys(aiAudioOnsets).length + ' stems' : 'EMPTY'}, localRules: ${localRules.length}`)
+    if (hasOnsets) {
+      const events = applyRulesClient(aiAudioOnsets as OnsetData, localRules)
+      console.log(`[Timeline] Client-side apply: ${localRules.length} rules → ${events.length} events`)
+      return events
+    }
+    // Fallback: filter disabled rules from server events
+    const disabledRules = localRules.filter((r) => (r as Record<string, unknown>)._disabled)
+    if (disabledRules.length === 0) return aiAudioEvents
+    const disabled = disabledRules.map((r) => ({
+      key: `${r.stem}/${r.band}:${r.effect}`,
+      start: r._group_start ?? r._start ?? 0,
+      end: r._group_end ?? r._end ?? Infinity,
+    }))
+    return aiAudioEvents.filter((ev) => {
+      const evKey = `${ev.stem_source}:${ev.effect}`
+      return !disabled.some((d) => d.key === evKey && ev.time >= d.start && ev.time <= d.end)
+    })
+  }, [aiAudioEvents, aiAudioOnsets, localRules])
+
   const sortedTracks = [...data.tracks].sort((a, b) => a.zOrder - b.zOrder)
   const trackKeyframes = new Map<string, KeyframeWithTime[]>()
   const trackTransitions = new Map<string, Transition[]>()
   for (const track of sortedTracks) {
     trackKeyframes.set(track.id, keyframes.filter((kf) => kf.trackId === track.id))
-    trackTransitions.set(track.id, data.transitions.filter((tr) => tr.trackId === track.id))
+    trackTransitions.set(track.id, localTransitions.filter((tr) => tr.trackId === track.id))
   }
 
   // Use audio duration if available, otherwise estimate from keyframes
@@ -421,7 +488,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
   // Find active transition at current time (if any with selected video)
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
-  const activeTransition = data.transitions.find((tr) => {
+  const activeTransition = localTransitions.find((tr) => {
     const fromKf = kfMap.get(tr.from)
     const toKf = kfMap.get(tr.to)
     if (!fromKf || !toKf) return false
@@ -443,7 +510,7 @@ export function Timeline({ data }: { data: EditorData }) {
       preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`))
     }
 
-    for (const tr of data.transitions) {
+    for (const tr of localTransitions) {
       if (!tr.hasSelectedVideo) continue
       const fromKf = kfMap.get(tr.from)
       if (!fromKf || Math.abs(fromKf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
@@ -454,7 +521,7 @@ export function Timeline({ data }: { data: EditorData }) {
         preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
       }
     }
-  }, [currentTime, data.transitions, data.keyframes, data.projectName, canvasWidth, canvasHeight])
+  }, [currentTime, localTransitions, localKeyframes, data.projectName, canvasWidth, canvasHeight])
 
   // Update playhead position for proximity-based cache eviction
   useEffect(() => {
@@ -473,7 +540,7 @@ export function Timeline({ data }: { data: EditorData }) {
     const update = () => {
       const progress: Record<string, number> = {}
 
-      for (const tr of data.transitions) {
+      for (const tr of localTransitions) {
         if (!tr.hasSelectedVideo) continue
         const fromKf = kfMap.get(tr.from)
         const toKf = kfMap.get(tr.to)
@@ -495,10 +562,10 @@ export function Timeline({ data }: { data: EditorData }) {
     update()
     const interval = setInterval(update, 250)
     return () => clearInterval(interval)
-  }, [data.transitions, keyframes, scrollLeft, viewportWidth, pxPerSec])
+  }, [localTransitions, keyframes, scrollLeft, viewportWidth, pxPerSec])
 
   // Build adjacency lookup: which transition comes before/after each transition?
-  const sortedTransitions = [...data.transitions]
+  const sortedTransitions = [...localTransitions]
     .filter((tr) => tr.hasSelectedVideo && kfMap.has(tr.from) && kfMap.has(tr.to))
     .sort((a, b) => kfMap.get(a.from)!.timeSeconds - kfMap.get(b.from)!.timeSeconds)
 
@@ -901,7 +968,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
     // Update local data + persist
     for (const u of updates) {
-      const kf = data.keyframes.find((k) => k.id === u.id)
+      const kf = localKeyframes.find((k) => k.id === u.id)
       if (kf) kf.timestamp = u.timestamp
       try {
         await updateKeyframeTimestamp({
@@ -924,22 +991,22 @@ export function Timeline({ data }: { data: EditorData }) {
           prompt: '',
         },
       })
-      router.invalidate()
+      refreshTimeline()
     } catch (e) {
       console.error('Failed to add keyframe:', e)
     }
-  }, [currentTime, data.projectName, router])
+  }, [currentTime, data.projectName, refreshTimeline])
 
   const handleDeleteKeyframe = useCallback(async (id: string) => {
     try {
       const result = await deleteKeyframe({ data: { projectName: data.projectName, keyframeId: id } })
       console.log('deleteKeyframe result:', result)
       setSelectedKeyframe(null)
-      router.invalidate()
+      refreshTimeline()
     } catch (e) {
       console.error('Failed to delete keyframe:', e)
     }
-  }, [data.projectName, router])
+  }, [data.projectName, refreshTimeline])
 
   const handleTransitionRemapChange = useCallback(async (transitionId: string, targetDuration: number) => {
     await updateTransitionRemap({ data: { projectName: data.projectName, transitionId, targetDuration } })
@@ -948,8 +1015,8 @@ export function Timeline({ data }: { data: EditorData }) {
   const handleDeleteTransition = useCallback(async (id: string) => {
     await deleteTransition({ data: { projectName: data.projectName, transitionId: id } })
     setSelectedTransition(null)
-    router.invalidate()
-  }, [data.projectName, router])
+    refreshTimeline()
+  }, [data.projectName, refreshTimeline])
 
   const handleRetryRender = useCallback(async (tr: Transition) => {
     const selectedVariant = tr.selected ?? 'none'
@@ -962,8 +1029,26 @@ export function Timeline({ data }: { data: EditorData }) {
   const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string) => {
     const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
     await postAssignPoolVideo(data.projectName, transitionId, poolPath)
-    router.invalidate()
-  }, [data.projectName, router])
+    refreshTimeline()
+  }, [data.projectName, refreshTimeline])
+
+  const handleDropVideoOnKeyframe = useCallback(async (keyframeId: string, poolPath: string) => {
+    if (poolPath.endsWith('.png') || poolPath.endsWith('.jpg') || poolPath.endsWith('.jpeg')) {
+      // Image drop → assign as keyframe image
+      const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
+      await postAssignKeyframeImage(data.projectName, keyframeId, poolPath)
+      invalidateEntry(`kf:${keyframeId}`)
+      refreshTimeline()
+    } else {
+      // Video drop → assign to transition starting from this keyframe
+      const tr = localTransitions.find((t) => t.from === keyframeId)
+      if (tr) {
+        const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+        await postAssignPoolVideo(data.projectName, tr.id, poolPath)
+        refreshTimeline()
+      }
+    }
+  }, [localTransitions, data.projectName, refreshTimeline])
 
   // Effect clipboard for copy/paste (supports multiple)
   const effectClipboard = useRef<UserEffect[]>([])
@@ -973,14 +1058,14 @@ export function Timeline({ data }: { data: EditorData }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea')) return
 
-      if (e.key === 'Delete') {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedKeyframeIds.size > 0) {
           const ids = [...selectedKeyframeIds]
           if (!confirm(`Delete ${ids.length} keyframes?`)) return
           batchDeleteKeyframes({ data: { projectName: data.projectName, keyframeIds: ids } }).then(() => {
             setSelectedKeyframeIds(new Set())
             setSelectedKeyframe(null)
-            router.invalidate()
+            refreshTimeline()
           }).catch((err) => { console.error('Batch delete failed:', err); alert(`Batch delete failed: ${err}`) })
         } else if (selectedKeyframe) handleDeleteKeyframe(selectedKeyframe.id)
         else if (selectedEffectIds.size > 0) {
@@ -1154,7 +1239,7 @@ export function Timeline({ data }: { data: EditorData }) {
                   ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
                   : ''}
                 beats={data.beats}
-                audioEvents={data.audioEvents}
+                audioEvents={filteredAudioEvents}
                 userEffects={userEffects}
                 suppressions={suppressions}
                 currentTime={currentTime}
@@ -1199,6 +1284,18 @@ export function Timeline({ data }: { data: EditorData }) {
             {formatTime(currentTime)} / {formatTime(effectiveDuration)}
           </div>
 
+          {/* Jump to playhead */}
+          <button
+            onClick={() => {
+              const el = scrollRef.current
+              if (el) el.scrollLeft = currentTime * pxPerSec - el.clientWidth / 2
+            }}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
+            title="Center timeline on playhead"
+          >
+            ◎
+          </button>
+
           {/* Add keyframe at playhead */}
           <button
             onClick={handleAddKeyframe}
@@ -1230,7 +1327,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 try {
                   const { postSplitTransition } = await import('@/lib/beatlab-client')
                   await postSplitTransition(data.projectName, activeTransition.id, currentTime)
-                  router.invalidate()
+                  refreshTimeline()
                 } catch (e) {
                   console.error('Split failed:', e)
                   alert(`Split failed: ${e}`)
@@ -1246,8 +1343,8 @@ export function Timeline({ data }: { data: EditorData }) {
           <button
             onClick={async () => {
               const scope = selectedKeyframeIds.size > 1
-                ? data.transitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
-                : data.transitions
+                ? localTransitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
+                : localTransitions
               const missing = scope.filter((tr) => tr.hasSelectedVideo && !tr.action)
               const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
               if (missing.length === 0) { alert('All matching transitions already have action prompts.'); return }
@@ -1260,7 +1357,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 } catch (e) { console.error(`Failed for ${tr.id}:`, e) }
               }
               alert(`Generated ${done}/${missing.length} action prompts.`)
-              router.invalidate()
+              refreshTimeline()
             }}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-purple-400/70 hover:text-purple-300 px-2 py-1 rounded transition-colors"
             title={selectedKeyframeIds.size > 1 ? 'Generate action prompts for selected keyframes\' transitions' : 'Generate action prompts for all transitions missing one'}
@@ -1271,8 +1368,8 @@ export function Timeline({ data }: { data: EditorData }) {
           <button
             onClick={async () => {
               const scope = selectedKeyframeIds.size > 1
-                ? data.transitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
-                : data.transitions
+                ? localTransitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
+                : localTransitions
               const missing = scope.filter((tr) => tr.action && !tr.hasSelectedVideo)
               const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
               if (missing.length === 0) { alert('All matching transitions already have video candidates.'); return }
@@ -1300,7 +1397,7 @@ export function Timeline({ data }: { data: EditorData }) {
               const result = await postAddTrack(data.projectName)
               if (result.id) {
                 setSelectedTrackId(result.id)
-                router.invalidate()
+                refreshTimeline()
               }
             }}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-teal-400/70 hover:text-teal-300 px-2 py-1 rounded transition-colors"
@@ -1308,6 +1405,24 @@ export function Timeline({ data }: { data: EditorData }) {
           >
             + Track
           </button>
+
+          {selectedKeyframeIds.size > 0 && (
+            <button
+              onClick={async () => {
+                const ids = [...selectedKeyframeIds]
+                if (!confirm(`Delete ${ids.length} keyframes?`)) return
+                try {
+                  await batchDeleteKeyframes({ data: { projectName: data.projectName, keyframeIds: ids } })
+                  setSelectedKeyframeIds(new Set())
+                  setSelectedKeyframe(null)
+                  refreshTimeline()
+                } catch (e) { alert(`Delete failed: ${e}`) }
+              }}
+              className="text-xs bg-red-900/50 hover:bg-red-800/60 text-red-400 hover:text-red-300 px-2 py-1 rounded transition-colors"
+            >
+              Delete {selectedKeyframeIds.size} KFs
+            </button>
+          )}
 
           <button
             onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}
@@ -1390,14 +1505,14 @@ export function Timeline({ data }: { data: EditorData }) {
             />
 
             {/* Audio description track */}
-            {data.audioDescriptions.length > 0 && (
+            {aiAudioDescriptions.length > 0 && (
               <div className="relative shrink-0 border-b border-gray-800">
                 <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                   Desc
                 </div>
                 <AudioDescriptionTrack
-                  descriptions={data.audioDescriptions}
-                  audioEvents={data.audioEvents}
+                  descriptions={aiAudioDescriptions}
+                  audioEvents={aiAudioEvents}
                   pxPerSec={pxPerSec}
                   scrollLeft={scrollLeft}
                   viewportWidth={viewportWidth}
@@ -1450,6 +1565,15 @@ export function Timeline({ data }: { data: EditorData }) {
                       scrollRef={scrollRef}
                       scrollLeft={scrollLeft}
                       viewportWidth={viewportWidth}
+                      onDropVideo={handleDropVideoOnKeyframe}
+                      onDropStagedImage={async (kfId, stagingId, variant) => {
+                        try {
+                          const { promoteStagedCandidate } = await import('@/routes/project/$name/editor')
+                          await promoteStagedCandidate({ data: { projectName: data.projectName, keyframeId: kfId, stagingId, variant } })
+                          invalidateEntry(`kf:${kfId}`)
+                          refreshTimeline()
+                        } catch (e) { console.error('Drop staged image failed:', e) }
+                      }}
                     />
                     <TransitionTrack
                       transitions={tTrs}
@@ -1488,7 +1612,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 Audio
               </div>
               {/* Beat markers */}
-              <BeatMarkers beats={data.beats} audioEvents={data.audioEvents} pxPerSec={pxPerSec} />
+              <BeatMarkers beats={data.beats} audioEvents={aiAudioEvents} pxPerSec={pxPerSec} />
               {data.audioFile && (
                 <AudioTrack
                   audioUrl={beatlabFileUrl(data.projectName, data.audioFile)}
@@ -1556,13 +1680,13 @@ export function Timeline({ data }: { data: EditorData }) {
             </div>
 
             {/* Rules track */}
-            {data.audioRules.length > 0 && (
+            {aiAudioRules.length > 0 && (
               <div className="relative shrink-0 border-t border-gray-800">
                 <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                   Rules
                 </div>
                 <RulesTrack
-                  rules={data.audioRules}
+                  rules={aiAudioRules}
                   pxPerSec={pxPerSec}
                   scrollLeft={scrollLeft}
                   viewportWidth={viewportWidth}
@@ -1654,8 +1778,8 @@ export function Timeline({ data }: { data: EditorData }) {
               alert(`Insert failed: ${e}`)
             }
           }}
-          activeKeyframes={data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
-          activeTransitions={data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
+          activeKeyframes={localKeyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
+          activeTransitions={localTransitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
         />
       ) : showSections ? (
         <NarrativeSectionPanel
@@ -1724,6 +1848,8 @@ export function Timeline({ data }: { data: EditorData }) {
             }
           }}
           onDataChange={() => router.invalidate()}
+          audioDescriptions={aiAudioDescriptions}
+          audioEvents={aiAudioEvents}
         />
       ) : selectedTransition ? (
         <TransitionPanel
@@ -1731,7 +1857,7 @@ export function Timeline({ data }: { data: EditorData }) {
           transition={selectedTransition}
           projectName={data.projectName}
           motionPrompt={data.meta.motionPrompt}
-          audioDescriptions={data.audioDescriptions}
+          audioDescriptions={aiAudioDescriptions}
           keyframes={keyframes}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
@@ -1741,7 +1867,7 @@ export function Timeline({ data }: { data: EditorData }) {
         <AudioDescriptionPanel
           key={selectedAudioDescription.sectionIndex}
           section={selectedAudioDescription}
-          audioEvents={data.audioEvents.filter(
+          audioEvents={aiAudioEvents.filter(
             (ev) => ev.time >= selectedAudioDescription.startTime && ev.time <= selectedAudioDescription.endTime
           )}
           projectName={data.projectName}
@@ -1754,7 +1880,22 @@ export function Timeline({ data }: { data: EditorData }) {
           section={selectedRuleSection}
           projectName={data.projectName}
           onClose={() => setSelectedRuleSection(null)}
-          onUpdate={() => router.invalidate()}
+          onUpdate={reloadAudioIntelligence}
+          onRulesChange={(sectionRules) => {
+            setLocalRules((prev) => {
+              const sStart = selectedRuleSection.start
+              const sEnd = selectedRuleSection.end
+              const other = prev.filter((r) => {
+                const s = r._start ?? r._group_start ?? 0
+                const e = r._end ?? r._group_end ?? 0
+                return !(s === sStart && e === sEnd)
+              })
+              const next = [...other, ...sectionRules]
+              const changed = sectionRules.map((r) => `${r.stem}→${r.effect}${(r as Record<string,unknown>)._disabled ? '[OFF]' : ''}`).join(', ')
+              console.log(`[Timeline] localRules updated: removed ${prev.length - other.length}, added ${sectionRules.length} (${changed})`)
+              return next
+            })
+          }}
         />
       ) : selectedEffect ? (
         <EffectEditor
@@ -1908,28 +2049,32 @@ const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
 const DESC_PANEL_MIN_WIDTH = 240
 
-function RuleEditorPanel({ section, projectName, onClose, onUpdate }: {
+function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChange }: {
   section: RuleSection
   projectName: string
   onClose: () => void
   onUpdate: () => void
+  onRulesChange?: (rules: import('@/lib/beatlab-client').AudioRule[]) => void
 }) {
   const [rules, setRules] = useState(section.rules.map((r) => ({ ...r })))
   const [saving, setSaving] = useState(false)
 
-  const handleRuleChange = useCallback((idx: number, field: string, value: number) => {
-    setRules((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r))
-  }, [])
+  const handleRuleChange = useCallback((idx: number, field: string, value: number | string) => {
+    setRules((prev) => {
+      const next = prev.map((r, i) => i === idx ? { ...r, [field]: value } : r)
+      onRulesChange?.(next)
+      return next
+    })
+  }, [onRulesChange])
 
   const handleSave = useCallback(async () => {
     setSaving(true)
     try {
-      // We need to update the full rules array — fetch all, replace this section's rules, save
+      // Fetch all rules, replace this section's rules, save + reapply
       const allRes = await window.fetch(`${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/audio-intelligence`)
       const allData = await allRes.json() as { rules: import('@/lib/beatlab-client').AudioRule[] }
       const allRules = allData.rules || []
 
-      // Replace rules matching this section's time range
       const sectionStart = section.start
       const sectionEnd = section.end
       const otherRules = allRules.filter((r) => {
@@ -1939,8 +2084,12 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate }: {
       })
       const updated = [...otherRules, ...rules]
 
-      const { postUpdateRules } = await import('@/lib/beatlab-client')
-      await postUpdateRules(projectName, updated)
+      // Save rules AND regenerate events in one call
+      const sectionRuleSummary = rules.map((r) => `${r.stem}/${r.band}→${r.effect}${(r as Record<string,unknown>)._disabled ? ' [OFF]' : ''}`).join(', ')
+      console.log(`[RuleEditor] Sending ${updated.length} rules (${otherRules.length} other + ${rules.length} section): ${sectionRuleSummary}`)
+      const { postReapplyRules } = await import('@/lib/beatlab-client')
+      const result = await postReapplyRules(projectName, updated, section.start, section.end)
+      console.log(`[RuleEditor] Saved ${updated.length} rules, regenerated ${result.eventCount} events`)
       onUpdate()
     } catch (e) {
       alert(`Save failed: ${e}`)
@@ -1949,10 +2098,12 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate }: {
     }
   }, [rules, projectName, section, onUpdate])
 
+  const RULE_EFFECTS = ['zoom_pulse', 'zoom_bounce', 'shake_x', 'shake_y', 'flash', 'hard_cut', 'contrast_pop', 'glow_swell', 'echo', 'echo_pulse'] as const
   const EFFECT_COLORS: Record<string, string> = {
     zoom_pulse: 'text-blue-400', zoom_bounce: 'text-blue-300', shake_x: 'text-red-400',
     shake_y: 'text-red-300', flash: 'text-yellow-400', hard_cut: 'text-yellow-500',
     contrast_pop: 'text-purple-400', glow_swell: 'text-emerald-400', echo: 'text-teal-400',
+    echo_pulse: 'text-teal-300',
   }
 
   return (
@@ -1967,23 +2118,36 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate }: {
             onClick={handleSave}
             disabled={saving}
             className="text-[10px] text-green-400 hover:text-green-300 disabled:text-gray-600"
-          >{saving ? 'Saving...' : 'Save'}</button>
+          >{saving ? 'Applying...' : 'Save & Apply'}</button>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
         </div>
       </div>
 
       <div className="p-2 space-y-2">
         {rules.map((r, i) => (
-          <div key={i} className="bg-gray-800/50 rounded p-2 space-y-1.5">
-            <div className="flex items-center justify-between">
+          <div key={i} className={`rounded p-2 space-y-1.5 ${(r as Record<string, unknown>)._disabled ? 'bg-gray-800/20 opacity-40' : 'bg-gray-800/50'}`}>
+            <div className="flex items-center justify-between gap-1">
+              <button
+                onClick={() => handleRuleChange(i, '_disabled', (r as Record<string, unknown>)._disabled ? '' : 'true')}
+                className={`text-[10px] w-4 h-4 flex items-center justify-center rounded shrink-0 ${(r as Record<string, unknown>)._disabled ? 'text-gray-600' : 'text-green-400'}`}
+                title={(r as Record<string, unknown>)._disabled ? 'Enable rule' : 'Disable rule'}
+              >{(r as Record<string, unknown>)._disabled ? '○' : '●'}</button>
               <span className="text-[10px] font-mono text-gray-300">{r.stem}/{r.band}</span>
-              <span className={`text-[10px] font-medium ${EFFECT_COLORS[r.effect] || 'text-gray-400'}`}>{r.effect}</span>
+              <button
+                onClick={() => {
+                  const idx = RULE_EFFECTS.indexOf(r.effect as typeof RULE_EFFECTS[number])
+                  const next = RULE_EFFECTS[(idx + 1) % RULE_EFFECTS.length]
+                  handleRuleChange(i, 'effect', next)
+                }}
+                className={`text-[10px] font-medium cursor-pointer hover:underline ${EFFECT_COLORS[r.effect] || 'text-gray-400'}`}
+                title="Click to cycle effect type"
+              >{r.effect}</button>
             </div>
 
             {/* Intensity scale */}
             <div className="flex items-center gap-2">
               <span className="text-[9px] text-gray-500 w-14 shrink-0">Intensity</span>
-              <input type="range" min={0} max={200} step={5}
+              <input type="range" min={0} max={500} step={5}
                 value={Math.round(r.intensity_scale * 100)}
                 onChange={(e) => handleRuleChange(i, 'intensity_scale', parseInt(e.target.value, 10) / 100)}
                 className="flex-1 h-1.5 accent-amber-500" />
