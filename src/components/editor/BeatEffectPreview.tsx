@@ -2,6 +2,16 @@ import { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 
 import type { Beat } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
 
+import type { BlendMode } from '@/lib/beatlab-client'
+
+export type TrackLayer = {
+  frameA: ImageBitmap | null
+  frameB: ImageBitmap | null
+  blendFactor: number
+  opacity: number
+  blendMode: BlendMode
+}
+
 type BeatEffectPreviewProps = {
   src: string
   beats: Beat[]
@@ -13,10 +23,11 @@ type BeatEffectPreviewProps = {
   className?: string
   canvasWidth?: number
   canvasHeight?: number
-  // Crossfade pair: frameA is outgoing, frameB is incoming, blendFactor controls mix
+  // Single-track (legacy) or multi-track layers
   transitionFrameA?: ImageBitmap | null
   transitionFrameB?: ImageBitmap | null
-  blendFactor?: number // 0.0 = all A, 1.0 = all B
+  blendFactor?: number
+  layers?: TrackLayer[]
 }
 
 const VERTEX_SHADER = `
@@ -75,6 +86,39 @@ const FRAGMENT_SHADER = `
   }
 `
 
+
+// Compositor shader: blends a layer onto an accumulator with blend modes
+const COMPOSITE_SHADER = `
+  precision mediump float;
+  varying vec2 v_texCoord;
+  uniform sampler2D u_base;    // accumulator
+  uniform sampler2D u_layerA;  // track frame A
+  uniform sampler2D u_layerB;  // track frame B
+  uniform float u_layerBlend;  // crossfade A->B
+  uniform float u_opacity;
+  uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add
+
+  void main() {
+    vec4 base = texture2D(u_base, v_texCoord);
+    vec4 lA = texture2D(u_layerA, v_texCoord);
+    vec4 lB = texture2D(u_layerB, v_texCoord);
+    vec3 layer = mix(lA.rgb, lB.rgb, u_layerBlend);
+
+    vec3 blended;
+    if (u_blendMode == 1) { blended = base.rgb * layer; }                                      // multiply
+    else if (u_blendMode == 2) { blended = 1.0 - (1.0 - base.rgb) * (1.0 - layer); }          // screen
+    else if (u_blendMode == 3) { blended = mix(2.0*base.rgb*layer, 1.0-2.0*(1.0-base.rgb)*(1.0-layer), step(0.5, base.rgb)); } // overlay
+    else if (u_blendMode == 4) { blended = abs(base.rgb - layer); }                            // difference
+    else if (u_blendMode == 5) { blended = min(base.rgb + layer, 1.0); }                       // add
+    else { blended = layer; }                                                                   // normal
+
+    gl_FragColor = vec4(mix(base.rgb, blended, u_opacity), 1.0);
+  }
+`
+
+const BLEND_MODE_MAP: Record<string, number> = {
+  normal: 0, multiply: 1, screen: 2, overlay: 3, difference: 4, add: 5, 'soft-light': 3, // soft-light → overlay fallback
+}
 
 function isTimeSuppressed(time: number, suppressions: BeatSuppression[], effectType?: string): boolean {
   return suppressions.some((s) => {
@@ -177,7 +221,7 @@ export type BeatEffectPreviewHandle = {
   getCanvas: () => HTMLCanvasElement | null
 }
 
-export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectPreviewProps>(function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0 }, ref) {
+export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectPreviewProps>(function BeatEffectPreview({ src, beats, audioEvents = [], userEffects = [], suppressions = [], currentTime, isPlaying, className, canvasWidth = 256, canvasHeight = 144, transitionFrameA, transitionFrameB, blendFactor = 0, layers }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useImperativeHandle(ref, () => ({
@@ -192,6 +236,13 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     decayLoc: WebGLUniformLocation
     blendLoc: WebGLUniformLocation
     echoLoc: WebGLUniformLocation
+    // Compositor
+    compProgram: WebGLProgram
+    compBaseTex: WebGLTexture
+    compFbo: WebGLFramebuffer
+    compAccumTex: WebGLTexture
+    compFbo2: WebGLFramebuffer
+    compAccumTex2: WebGLTexture
   } | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const animRef = useRef<number>(0)
@@ -261,6 +312,38 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     gl.uniform1i(gl.getUniformLocation(program, 'u_imageA'), 0)
     gl.uniform1i(gl.getUniformLocation(program, 'u_imageB'), 1)
 
+    // ── Compositor program ───────────────────────────────────
+    const compVs = gl.createShader(gl.VERTEX_SHADER)!
+    gl.shaderSource(compVs, VERTEX_SHADER)
+    gl.compileShader(compVs)
+    const compFs = gl.createShader(gl.FRAGMENT_SHADER)!
+    gl.shaderSource(compFs, COMPOSITE_SHADER)
+    gl.compileShader(compFs)
+    const compProgram = gl.createProgram()!
+    gl.attachShader(compProgram, compVs)
+    gl.attachShader(compProgram, compFs)
+    gl.bindAttribLocation(compProgram, 0, 'a_position')
+    gl.bindAttribLocation(compProgram, 1, 'a_texCoord')
+    gl.linkProgram(compProgram)
+
+    // FBO helper
+    function makeFbo() {
+      const tex = gl!.createTexture()!
+      gl!.bindTexture(gl!.TEXTURE_2D, tex)
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, canvas.width, canvas.height, 0, gl!.RGBA, gl!.UNSIGNED_BYTE, null)
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR)
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MAG_FILTER, gl!.LINEAR)
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE)
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE)
+      const fbo = gl!.createFramebuffer()!
+      gl!.bindFramebuffer(gl!.FRAMEBUFFER, fbo)
+      gl!.framebufferTexture2D(gl!.FRAMEBUFFER, gl!.COLOR_ATTACHMENT0, gl!.TEXTURE_2D, tex, 0)
+      gl!.bindFramebuffer(gl!.FRAMEBUFFER, null)
+      return { fbo, tex }
+    }
+    const accum1 = makeFbo()
+    const accum2 = makeFbo()
+
     return {
       gl,
       program,
@@ -270,6 +353,12 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       decayLoc: gl.getUniformLocation(program, 'u_decay')!,
       blendLoc: gl.getUniformLocation(program, 'u_blend')!,
       echoLoc: gl.getUniformLocation(program, 'u_echo')!,
+      compProgram,
+      compBaseTex: textureA, // reuse for uploads
+      compFbo: accum1.fbo,
+      compAccumTex: accum1.tex,
+      compFbo2: accum2.fbo,
+      compAccumTex2: accum2.tex,
     }
   }, [])
 
@@ -312,29 +401,115 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
   const render = useCallback((intensity: number, decay: number, blend: number, echoMix: number = 0) => {
     const ctx = glRef.current
     if (!ctx) return
-
-    const sourceA = transitionFrameA || imgRef.current
-    if (!sourceA) return
-    const sourceB = transitionFrameB || sourceA
     const { gl } = ctx
     const canvas = canvasRef.current
     if (!canvas) return
 
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceA)
+    const activeLayers = layers && layers.length > 0 ? layers : null
 
-    gl.activeTexture(gl.TEXTURE1)
-    gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceB)
+    if (activeLayers && activeLayers.length > 1) {
+      // ── Multi-track compositing ──
+      // Pass 1: render bottom layer directly to accumulator FBO
+      const bottom = activeLayers[0]
+      const bottomA = bottom.frameA || imgRef.current
+      if (!bottomA) return
+      const bottomB = bottom.frameB || bottomA
 
-    gl.viewport(0, 0, canvas.width, canvas.height)
-    gl.uniform1f(ctx.intensityLoc, intensity)
-    gl.uniform1f(ctx.decayLoc, decay)
-    gl.uniform1f(ctx.blendLoc, blend)
-    gl.uniform1f(ctx.echoLoc, echoMix)
-    gl.drawArrays(gl.TRIANGLES, 0, 6)
-  }, [transitionFrameA, transitionFrameB])
+      gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.compFbo)
+      gl.viewport(0, 0, canvas.width, canvas.height)
+      gl.useProgram(ctx.program)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bottomA)
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bottomB)
+      gl.uniform1f(ctx.intensityLoc, 0)
+      gl.uniform1f(ctx.decayLoc, 0)
+      gl.uniform1f(ctx.blendLoc, bottom.blendFactor)
+      gl.uniform1f(ctx.echoLoc, 0)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+      // Pass 2..N: composite each subsequent layer onto accumulator
+      let readFbo = ctx.compFbo
+      let readTex = ctx.compAccumTex
+      let writeFbo = ctx.compFbo2
+      let writeTex = ctx.compAccumTex2
+
+      for (let i = 1; i < activeLayers.length; i++) {
+        const layer = activeLayers[i]
+        const layerA = layer.frameA
+        if (!layerA) { /* skip empty layers — ping-pong so accumulator stays current */ const tmp = readFbo; readFbo = writeFbo; writeFbo = tmp; const tmpT = readTex; readTex = writeTex; writeTex = tmpT; continue }
+        const layerB = layer.frameB || layerA
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, writeFbo)
+        gl.viewport(0, 0, canvas.width, canvas.height)
+        gl.useProgram(ctx.compProgram)
+
+        // unit 0 = accumulator (base)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, readTex)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_base'), 0)
+
+        // unit 1 = layer frame A
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layerA)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
+
+        // unit 2 = layer frame B
+        gl.activeTexture(gl.TEXTURE2)
+        gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layerB)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
+
+        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_layerBlend'), layer.blendFactor)
+        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_opacity'), layer.opacity)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_blendMode'), BLEND_MODE_MAP[layer.blendMode] ?? 0)
+        gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+        // Ping-pong
+        const tmp = readFbo; readFbo = writeFbo; writeFbo = tmp
+        const tmpT = readTex; readTex = writeTex; writeTex = tmpT
+      }
+
+      // Final pass: draw composited result to screen with beat effects
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.viewport(0, 0, canvas.width, canvas.height)
+      gl.useProgram(ctx.program)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, readTex)
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, readTex) // same tex for both slots (no crossfade at this stage)
+      gl.uniform1f(ctx.intensityLoc, intensity)
+      gl.uniform1f(ctx.decayLoc, decay)
+      gl.uniform1f(ctx.blendLoc, 0) // no crossfade, already composited
+      gl.uniform1f(ctx.echoLoc, echoMix)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+    } else {
+      // ── Single-track (original path) ──
+      const singleLayer = activeLayers?.[0]
+      const sourceA = singleLayer?.frameA || transitionFrameA || imgRef.current
+      if (!sourceA) return
+      const sourceB = singleLayer?.frameB || transitionFrameB || sourceA
+      const singleBlend = singleLayer?.blendFactor ?? blend
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceA)
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceB)
+      gl.viewport(0, 0, canvas.width, canvas.height)
+      gl.useProgram(ctx.program)
+      gl.uniform1f(ctx.intensityLoc, intensity)
+      gl.uniform1f(ctx.decayLoc, decay)
+      gl.uniform1f(ctx.blendLoc, singleBlend)
+      gl.uniform1f(ctx.echoLoc, echoMix)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+    }
+  }, [transitionFrameA, transitionFrameB, layers])
 
   // Render loop when playing
   useEffect(() => {

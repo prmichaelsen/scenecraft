@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import type { Transition } from '@/routes/project/$name/editor'
 
@@ -13,6 +13,7 @@ type TransitionTrackProps = {
   onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
   onRemapChange: (transitionId: string, targetDuration: number) => void
   onRetryRender?: (tr: Transition) => void
+  onDropVideo?: (transitionId: string, poolPath: string) => void
   renderProgress?: Record<string, number>
   scrollLeft: number
   viewportWidth: number
@@ -28,12 +29,14 @@ export function TransitionTrack({
   onBoundaryDragEnd,
   onRemapChange,
   onRetryRender,
+  onDropVideo,
   renderProgress,
   duration,
   scrollLeft,
   viewportWidth,
 }: TransitionTrackProps) {
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const dragState = useRef<{ dragging: boolean; keyframeId: string; transitionId: string; otherKfTime: number; startX: number; startTime: number; minTime: number; maxTime: number } | null>(null)
   const didDrag = useRef(false)
 
@@ -131,13 +134,31 @@ export function TransitionTrack({
 
             {/* Transition bar */}
             <div
-              className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer pointer-events-auto transition-colors bg-orange-500/15 hover:bg-orange-500/25 border-t border-orange-500/30 ${
-                isSelected ? 'ring-1 ring-orange-500' : ''
+              className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer pointer-events-auto transition-colors border-t ${
+                dropTarget === tr.id
+                  ? 'bg-green-500/30 border-green-500/60 ring-1 ring-green-500'
+                  : `bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/30 ${isSelected ? 'ring-1 ring-orange-500' : ''}`
               }`}
               onClick={(e) => {
                 if (didDrag.current) { didDrag.current = false; return }
                 e.stopPropagation()
                 onTransitionClick(tr)
+              }}
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes('application/x-beatlab-pool-path')) {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'copy'
+                  setDropTarget(tr.id)
+                }
+              }}
+              onDragLeave={() => setDropTarget((prev) => prev === tr.id ? null : prev)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDropTarget(null)
+                const poolPath = e.dataTransfer.getData('application/x-beatlab-pool-path')
+                if (poolPath && onDropVideo) {
+                  onDropVideo(tr.id, poolPath)
+                }
               }}
             >
               {/* Left edge drag handle */}

@@ -256,6 +256,13 @@ export const duplicateKeyframe = createServerFn({ method: 'POST' })
     return postDuplicateKeyframe(data.projectName, data.keyframeId, data.timestamp)
   })
 
+export const batchDeleteKeyframes = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeIds: string[] }) => input)
+  .handler(async ({ data }) => {
+    const { postBatchDeleteKeyframes } = await import('@/lib/beatlab-client')
+    return postBatchDeleteKeyframes(data.projectName, data.keyframeIds)
+  })
+
 export const deleteKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string }) => input)
   .handler(async ({ data }) => {

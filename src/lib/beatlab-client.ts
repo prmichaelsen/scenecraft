@@ -6,6 +6,10 @@ export function beatlabFileUrl(project: string, path: string): string {
   return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/files/${path}`
 }
 
+export function beatlabThumbnailUrl(project: string, path: string): string {
+  return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/thumbnail/${path}`
+}
+
 // --- Server-side API functions ---
 
 export async function fetchProjects() {
@@ -68,6 +72,16 @@ export async function postDuplicateKeyframe(project: string, keyframeId: string,
   })
   if (!res.ok) throw new Error(`Failed to duplicate keyframe: ${res.status} ${await res.text()}`)
   return res.json() as Promise<{ success: boolean; keyframe: { id: string; timestamp: string } }>
+}
+
+export async function postBatchDeleteKeyframes(project: string, keyframeIds: string[]) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/batch-delete-keyframes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeIds }),
+  })
+  if (!res.ok) throw new Error(`Failed to batch delete keyframes: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ success: boolean; deleted: string[] }>
 }
 
 export async function postDeleteKeyframe(project: string, keyframeId: string) {
@@ -148,8 +162,11 @@ export type AudioRule = {
   layer_with: string[]
   layer_threshold: number
   rationale: string
-  _start: number
-  _end: number
+  _start?: number
+  _end?: number
+  _group_name?: string
+  _group_start?: number
+  _group_end?: number
 }
 
 export async function fetchAudioIntelligence(project: string) {
@@ -247,6 +264,16 @@ export async function postReorderTracks(project: string, trackIds: string[]) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trackIds }),
   })
+}
+
+export async function postUpdateRules(project: string, rules: AudioRule[]) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rules }),
+  })
+  if (!res.ok) throw new Error(`Failed to update rules: ${res.status}`)
+  return res.json()
 }
 
 export async function fetchMarkers(project: string): Promise<{ id: string; time: number; label: string }[]> {

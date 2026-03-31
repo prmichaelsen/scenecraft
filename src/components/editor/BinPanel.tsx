@@ -208,6 +208,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     projectName={projectName}
                     isSelected={false}
                     onSelect={() => {}}
+                    draggable
                   />
                 ))}
               </div>
@@ -284,6 +285,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           poolSelection?.type === 'segment' && poolSelection.entry.name === entry.name
                             ? null : { type: 'segment', entry }
                         )}
+                        draggable
                       />
                     ))}
                   </div>
@@ -378,7 +380,7 @@ async function loadPoolBlobUrl(path: string, fetchUrl: string): Promise<string> 
   return bu
 }
 
-function PoolVideoCard({ entry, projectName, isSelected, onSelect }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void }) {
+function PoolVideoCard({ entry, projectName, isSelected, onSelect, draggable }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void; draggable?: boolean }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => poolBlobCache.get(entry.path) ?? null)
   const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
@@ -406,6 +408,23 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect }: { entry: Po
   return (
     <div
       className={`relative rounded overflow-hidden bg-gray-800 group cursor-pointer border-2 transition-colors ${isSelected ? 'border-orange-500' : 'border-transparent hover:border-gray-600'}`}
+      draggable={!!draggable}
+      onDragStart={draggable ? (e) => {
+        e.dataTransfer.setData('application/x-beatlab-pool-path', entry.path)
+        e.dataTransfer.effectAllowed = 'copy'
+        // Position drag preview bottom-right of cursor
+        const preview = e.currentTarget.cloneNode(true) as HTMLElement
+        preview.style.width = '120px'
+        preview.style.height = '68px'
+        preview.style.opacity = '0.85'
+        preview.style.borderRadius = '4px'
+        preview.style.overflow = 'hidden'
+        preview.style.position = 'absolute'
+        preview.style.top = '-9999px'
+        document.body.appendChild(preview)
+        e.dataTransfer.setDragImage(preview, -12, -8)
+        requestAnimationFrame(() => document.body.removeChild(preview))
+      } : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={onSelect}

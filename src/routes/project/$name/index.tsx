@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { useState, useCallback } from 'react'
-import { beatlabFileUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
+import { useState, useCallback, useRef } from 'react'
+import { beatlabFileUrl, beatlabThumbnailUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
 
 const getProjectFiles = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string; path?: string }) => input)
@@ -188,27 +188,13 @@ function ProjectPage() {
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                   {videoFiles.map((file) => (
-                    <button
+                    <VideoTile
                       key={file.name}
-                      onClick={() => setPreview(file)}
-                      className={`relative rounded-lg overflow-hidden border-2 transition-colors bg-black ${
-                        preview?.name === file.name ? 'border-purple-500' : 'border-gray-800 hover:border-gray-600'
-                      }`}
-                    >
-                      <video
-                        src={`${beatlabFileUrl(name, file.path)}#t=0.1`}
-                        className="w-full aspect-video object-cover"
-                        muted
-                        playsInline
-                        preload="metadata"
-                        onMouseEnter={(e) => { e.currentTarget.currentTime = 0; e.currentTarget.play().catch(() => {}) }}
-                        onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }}
-                      />
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1.5 py-1">
-                        <div className="text-[10px] text-gray-300 truncate">{file.name}</div>
-                        <div className="text-[9px] text-gray-500">{formatSize(file.size || 0)}</div>
-                      </div>
-                    </button>
+                      file={file}
+                      project={name}
+                      selected={preview?.name === file.name}
+                      onSelect={() => setPreview(file)}
+                    />
                   ))}
                 </div>
               </div>
@@ -286,6 +272,51 @@ function ProjectPage() {
         )}
       </div>
     </div>
+  )
+}
+
+function VideoTile({ file, project, selected, onSelect }: { file: FileEntry; project: string; selected: boolean; onSelect: () => void }) {
+  const [hovering, setHovering] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  return (
+    <button
+      onClick={onSelect}
+      className={`relative rounded-lg overflow-hidden border-2 transition-colors bg-black ${
+        selected ? 'border-purple-500' : 'border-gray-800 hover:border-gray-600'
+      }`}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => {
+        setHovering(false)
+        if (videoRef.current) {
+          videoRef.current.pause()
+          videoRef.current.currentTime = 0
+        }
+      }}
+    >
+      {/* Poster image — always loaded, lightweight */}
+      <img
+        src={beatlabThumbnailUrl(project, file.path)}
+        alt={file.name}
+        className={`w-full aspect-video object-cover ${hovering ? 'hidden' : ''}`}
+        loading="lazy"
+      />
+      {/* Video — only mounted on hover */}
+      {hovering && (
+        <video
+          ref={videoRef}
+          src={beatlabFileUrl(project, file.path)}
+          className="w-full aspect-video object-cover"
+          muted
+          playsInline
+          autoPlay
+        />
+      )}
+      <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1.5 py-1">
+        <div className="text-[10px] text-gray-300 truncate">{file.name}</div>
+        <div className="text-[9px] text-gray-500">{formatSize(file.size || 0)}</div>
+      </div>
+    </button>
   )
 }
 

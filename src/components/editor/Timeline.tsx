@@ -3,9 +3,9 @@ import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates } from '@/routes/project/$name/editor'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
-import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker } from '@/lib/beatlab-client'
+import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, postDeleteTrack, type BlendMode, type Track } from '@/lib/beatlab-client'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 import { VideoTrack } from './VideoTrack'
@@ -21,7 +21,7 @@ import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { SuppressionTrack } from './SuppressionTrack'
-import { RulesTrack } from './RulesTrack'
+import { RulesTrack, type RuleSection } from './RulesTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
@@ -29,6 +29,66 @@ import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { AudioDescriptionTrack } from './AudioDescriptionTrack'
 import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
+
+const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light']
+
+function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete }: {
+  track: Track
+  isActive: boolean
+  onSelect: () => void
+  onUpdate: (updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) => void
+  onDelete?: () => void
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 px-2 py-1 border-b border-gray-800 shrink-0 cursor-pointer ${isActive ? 'bg-blue-900/20 border-l-2 border-l-blue-500' : 'bg-gray-950/50'}`}
+      onClick={onSelect}
+    >
+      {/* Enable/disable */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onUpdate({ enabled: !track.enabled }) }}
+        className={`text-[10px] w-4 h-4 flex items-center justify-center rounded ${track.enabled ? 'text-green-400' : 'text-gray-600'}`}
+        title={track.enabled ? 'Disable track' : 'Enable track'}
+      >
+        {track.enabled ? '●' : '○'}
+      </button>
+
+      {/* Track name */}
+      <span className="text-[10px] text-gray-400 font-medium truncate min-w-0 flex-1">{track.name}</span>
+
+      {/* Blend mode */}
+      <select
+        value={track.blendMode}
+        onChange={(e) => { e.stopPropagation(); onUpdate({ blendMode: e.target.value as BlendMode }) }}
+        onClick={(e) => e.stopPropagation()}
+        className="text-[9px] bg-gray-800 text-gray-500 rounded px-1 py-0.5 border-none focus:outline-none cursor-pointer"
+      >
+        {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+
+      {/* Opacity */}
+      <input
+        type="range"
+        min={0} max={100} step={1}
+        value={Math.round(track.baseOpacity * 100)}
+        onChange={(e) => { e.stopPropagation(); onUpdate({ baseOpacity: parseInt(e.target.value, 10) / 100 }) }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-12 h-2 accent-gray-500"
+        title={`Opacity: ${Math.round(track.baseOpacity * 100)}%`}
+      />
+      <span className="text-[8px] text-gray-600 w-6 text-right">{Math.round(track.baseOpacity * 100)}%</span>
+
+      {/* Delete */}
+      {onDelete && (
+        <button
+          onClick={(e) => { e.stopPropagation(); if (confirm(`Delete track "${track.name}"?`)) onDelete() }}
+          className="text-[10px] text-red-500/50 hover:text-red-400"
+          title="Delete track"
+        >×</button>
+      )}
+    </div>
+  )
+}
 
 function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate }: {
   markers: { id: string; time: number; label: string }[]
@@ -266,6 +326,8 @@ export function Timeline({ data }: { data: EditorData }) {
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
   const [poolSelection, setPoolSelection] = useState<PoolSelection | null>(null)
   const nextFxId = useRef(data.userEffects.length + 1)
+  const [selectedTrackId, setSelectedTrackId] = useState<string>(data.tracks[0]?.id || 'track_1')
+  const [selectedRuleSection, setSelectedRuleSection] = useState<RuleSection | null>(null)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
@@ -338,6 +400,15 @@ export function Timeline({ data }: { data: EditorData }) {
     timeSeconds: dragOverrides[kf.id] ?? parseTimestamp(kf.timestamp),
   })).sort((a, b) => a.timeSeconds - b.timeSeconds)
 
+  // Group by track
+  const sortedTracks = [...data.tracks].sort((a, b) => a.zOrder - b.zOrder)
+  const trackKeyframes = new Map<string, KeyframeWithTime[]>()
+  const trackTransitions = new Map<string, Transition[]>()
+  for (const track of sortedTracks) {
+    trackKeyframes.set(track.id, keyframes.filter((kf) => kf.trackId === track.id))
+    trackTransitions.set(track.id, data.transitions.filter((tr) => tr.trackId === track.id))
+  }
+
   // Use audio duration if available, otherwise estimate from keyframes
   const effectiveDuration = duration > 0 ? duration : (
     keyframes.length > 0 ? Math.max(...keyframes.map((kf) => kf.timeSeconds)) + 10 : 60
@@ -390,18 +461,25 @@ export function Timeline({ data }: { data: EditorData }) {
     setPlayheadPosition(currentTime)
   }, [currentTime])
 
-  // Poll frame decode progress for render bars — unified map for both transitions and keyframes
+  // Poll frame decode progress for render bars — show for all transitions in viewport
   // Keys: tr_001, tr_002 (transition IDs) and kf_001, kf_002 (keyframe IDs) — no collisions
   const [renderProgress, setRenderProgress] = useState<Record<string, number>>({})
   const prevProgressRef = useRef<string>('')
   useEffect(() => {
+    const BUFFER_SEC = 5 // small buffer beyond viewport edges
+    const viewStartSec = Math.max(0, scrollLeft / pxPerSec - BUFFER_SEC)
+    const viewEndSec = (scrollLeft + viewportWidth) / pxPerSec + BUFFER_SEC
+
     const update = () => {
       const progress: Record<string, number> = {}
 
       for (const tr of data.transitions) {
         if (!tr.hasSelectedVideo) continue
         const fromKf = kfMap.get(tr.from)
-        if (fromKf && Math.abs(fromKf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
+        const toKf = kfMap.get(tr.to)
+        if (!fromKf || !toKf) continue
+        // Skip if transition is entirely outside viewport
+        if (toKf.timeSeconds < viewStartSec || fromKf.timeSeconds > viewEndSec) continue
         const selectedVariant = tr.selected ?? 'none'
         const key = `tr:${tr.id}:v${selectedVariant}`
         const p = getLoadProgress(key)
@@ -417,7 +495,7 @@ export function Timeline({ data }: { data: EditorData }) {
     update()
     const interval = setInterval(update, 250)
     return () => clearInterval(interval)
-  }, [data.transitions, keyframes])
+  }, [data.transitions, keyframes, scrollLeft, viewportWidth, pxPerSec])
 
   // Build adjacency lookup: which transition comes before/after each transition?
   const sortedTransitions = [...data.transitions]
@@ -490,6 +568,40 @@ export function Timeline({ data }: { data: EditorData }) {
     }
 
     return { frameA, frameB: null, blendFactor: 0 }
+  })()
+
+  // Compute per-track layers for multi-track compositing
+  const trackLayers: import('./BeatEffectPreview').TrackLayer[] = (() => {
+    if (sortedTracks.length <= 1) return [] // single-track uses legacy path
+    return sortedTracks.filter((t) => t.enabled).map((track) => {
+      const tKfs = trackKeyframes.get(track.id) || []
+      const tTrs = trackTransitions.get(track.id) || []
+      // Find current keyframe for this track
+      const curKf = [...tKfs].reverse().find((kf) => kf.timeSeconds <= currentTime)
+      // Find active transition for this track
+      const tKfMap = new Map(tKfs.map((kf) => [kf.id, kf]))
+      const activeTr = tTrs.find((tr) => {
+        const from = tKfMap.get(tr.from)
+        const to = tKfMap.get(tr.to)
+        if (!from || !to || !tr.hasSelectedVideo) return false
+        return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
+      })
+      if (activeTr) {
+        const from = tKfMap.get(activeTr.from)!
+        const to = tKfMap.get(activeTr.to)!
+        const progress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
+        const variant = activeTr.selected ?? 'none'
+        const key = `tr:${activeTr.id}:v${variant}`
+        const frameA = getFrameAtProgress(key, progress)
+        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode } as import('./BeatEffectPreview').TrackLayer
+      }
+      if (curKf) {
+        const kfKey = `kf:${curKf.id}`
+        const frameA = getFrameAtProgress(kfKey, 0)
+        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode } as import('./BeatEffectPreview').TrackLayer
+      }
+      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode } as import('./BeatEffectPreview').TrackLayer
+    })
   })()
 
   // Check if the active transition's frames are still loading
@@ -601,6 +713,7 @@ export function Timeline({ data }: { data: EditorData }) {
     setShowSettings(false)
     setSelectedAudioDescription(null)
     setShowDownloadPreview(false)
+    setSelectedRuleSection(null)
   }, [])
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime, shiftKey?: boolean) => {
@@ -615,8 +728,6 @@ export function Timeline({ data }: { data: EditorData }) {
         }
         return next
       })
-      // Also set as the active keyframe for panel display
-      setSelectedKeyframe(kf)
       return
     }
     // Normal click: clear multi-select, toggle single
@@ -848,6 +959,12 @@ export function Timeline({ data }: { data: EditorData }) {
     preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
   }, [data.projectName])
 
+  const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string) => {
+    const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+    await postAssignPoolVideo(data.projectName, transitionId, poolPath)
+    router.invalidate()
+  }, [data.projectName, router])
+
   // Effect clipboard for copy/paste (supports multiple)
   const effectClipboard = useRef<UserEffect[]>([])
 
@@ -857,7 +974,15 @@ export function Timeline({ data }: { data: EditorData }) {
       if ((e.target as HTMLElement)?.closest('input, textarea')) return
 
       if (e.key === 'Delete') {
-        if (selectedKeyframe) handleDeleteKeyframe(selectedKeyframe.id)
+        if (selectedKeyframeIds.size > 0) {
+          const ids = [...selectedKeyframeIds]
+          if (!confirm(`Delete ${ids.length} keyframes?`)) return
+          batchDeleteKeyframes({ data: { projectName: data.projectName, keyframeIds: ids } }).then(() => {
+            setSelectedKeyframeIds(new Set())
+            setSelectedKeyframe(null)
+            router.invalidate()
+          }).catch((err) => { console.error('Batch delete failed:', err); alert(`Batch delete failed: ${err}`) })
+        } else if (selectedKeyframe) handleDeleteKeyframe(selectedKeyframe.id)
         else if (selectedEffectIds.size > 0) {
           const remaining = userEffects.filter((fx) => !selectedEffectIds.has(fx.id))
           setUserEffects(remaining)
@@ -1040,6 +1165,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 transitionFrameA={crossfadeData.frameA}
                 transitionFrameB={crossfadeData.frameB}
                 blendFactor={crossfadeData.blendFactor}
+                layers={trackLayers.length > 1 ? trackLayers : undefined}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
@@ -1170,6 +1296,20 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
+            onClick={async () => {
+              const result = await postAddTrack(data.projectName)
+              if (result.id) {
+                setSelectedTrackId(result.id)
+                router.invalidate()
+              }
+            }}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-teal-400/70 hover:text-teal-300 px-2 py-1 rounded transition-colors"
+            title="Add a new video track"
+          >
+            + Track
+          </button>
+
+          <button
             onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showBin ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Show deleted keyframes bin"
@@ -1252,7 +1392,7 @@ export function Timeline({ data }: { data: EditorData }) {
             {/* Audio description track */}
             {data.audioDescriptions.length > 0 && (
               <div className="relative shrink-0 border-b border-gray-800">
-                <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                   Desc
                 </div>
                 <AudioDescriptionTrack
@@ -1271,47 +1411,66 @@ export function Timeline({ data }: { data: EditorData }) {
               </div>
             )}
 
-            {/* Video track */}
-            <div
-              className="relative cursor-pointer shrink-0"
-              style={{ height: videoTrackHeight }}
-              onClick={handleTrackClick}
-            >
-              <div className="absolute left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
-                Video
-              </div>
-              {/* Section color bands */}
-              <SectionBands sections={data.sections} pxPerSec={pxPerSec} />
-              <VideoTrack
-                keyframes={keyframes}
-                pxPerSec={pxPerSec}
-                projectName={data.projectName}
-                selectedId={selectedKeyframe?.id ?? null}
-                selectedIds={selectedKeyframeIds}
-                duration={effectiveDuration}
-                onKeyframeClick={handleKeyframeClick}
-                onKeyframeDrag={handleKeyframeDrag}
-                onKeyframeDragEnd={handleKeyframeDragEnd}
-                scrollRef={scrollRef}
-                scrollLeft={scrollLeft}
-                viewportWidth={viewportWidth}
-              />
-              <TransitionTrack
-                transitions={data.transitions}
-                keyframes={keyframes}
-                pxPerSec={pxPerSec}
-                selectedId={selectedTransition?.id ?? null}
-                duration={effectiveDuration}
-                onTransitionClick={handleTransitionClick}
-                onBoundaryDrag={handleKeyframeDrag}
-                onBoundaryDragEnd={handleKeyframeDragEnd}
-                onRemapChange={handleTransitionRemapChange}
-                onRetryRender={handleRetryRender}
-                renderProgress={renderProgress}
-                scrollLeft={scrollLeft}
-                viewportWidth={viewportWidth}
-              />
-            </div>
+            {/* Video tracks */}
+            {sortedTracks.map((track) => {
+              const tKfs = trackKeyframes.get(track.id) || []
+              const tTrs = trackTransitions.get(track.id) || []
+              const isActive = track.id === selectedTrackId
+              return (
+                <div key={track.id}>
+                  {/* Track header */}
+                  <TrackHeader
+                    track={track}
+                    isActive={isActive}
+                    onSelect={() => setSelectedTrackId(track.id)}
+                    onUpdate={(updates) => {
+                      postUpdateTrack(data.projectName, track.id, updates).then(() => router.invalidate())
+                    }}
+                    onDelete={sortedTracks.length > 1 ? () => {
+                      postDeleteTrack(data.projectName, track.id).then(() => router.invalidate())
+                    } : undefined}
+                  />
+                  {/* Track content */}
+                  <div
+                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''}`}
+                    style={{ height: videoTrackHeight }}
+                    onClick={handleTrackClick}
+                  >
+                    {isActive && <SectionBands sections={data.sections} pxPerSec={pxPerSec} />}
+                    <VideoTrack
+                      keyframes={tKfs}
+                      pxPerSec={pxPerSec}
+                      projectName={data.projectName}
+                      selectedId={selectedKeyframe?.id ?? null}
+                      selectedIds={selectedKeyframeIds}
+                      duration={effectiveDuration}
+                      onKeyframeClick={handleKeyframeClick}
+                      onKeyframeDrag={handleKeyframeDrag}
+                      onKeyframeDragEnd={handleKeyframeDragEnd}
+                      scrollRef={scrollRef}
+                      scrollLeft={scrollLeft}
+                      viewportWidth={viewportWidth}
+                    />
+                    <TransitionTrack
+                      transitions={tTrs}
+                      keyframes={tKfs}
+                      pxPerSec={pxPerSec}
+                      selectedId={selectedTransition?.id ?? null}
+                      duration={effectiveDuration}
+                      onTransitionClick={handleTransitionClick}
+                      onBoundaryDrag={handleKeyframeDrag}
+                      onBoundaryDragEnd={handleKeyframeDragEnd}
+                      onRemapChange={handleTransitionRemapChange}
+                      onRetryRender={handleRetryRender}
+                      onDropVideo={handleDropVideoOnTransition}
+                      renderProgress={renderProgress}
+                      scrollLeft={scrollLeft}
+                      viewportWidth={viewportWidth}
+                    />
+                  </div>
+                </div>
+              )
+            })}
 
             {/* Draggable divider */}
             <div
@@ -1325,7 +1484,7 @@ export function Timeline({ data }: { data: EditorData }) {
               style={audioTrackHeight ? { height: audioTrackHeight } : { minHeight: 80 }}
               onClick={handleTrackClick}
             >
-              <div className="absolute left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+              <div className="sticky left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                 Audio
               </div>
               {/* Beat markers */}
@@ -1352,7 +1511,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Effects track */}
             <div className="relative h-8 shrink-0 cursor-crosshair">
-              <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                 FX
               </div>
               <EffectsTrack
@@ -1379,7 +1538,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Suppression track */}
             <div className="relative h-6 shrink-0 border-t border-gray-800 cursor-crosshair">
-              <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-10 bg-gray-950/80">
+              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                 Mute
               </div>
               <SuppressionTrack
@@ -1399,7 +1558,7 @@ export function Timeline({ data }: { data: EditorData }) {
             {/* Rules track */}
             {data.audioRules.length > 0 && (
               <div className="relative shrink-0 border-t border-gray-800">
-                <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80">
+                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
                   Rules
                 </div>
                 <RulesTrack
@@ -1407,6 +1566,11 @@ export function Timeline({ data }: { data: EditorData }) {
                   pxPerSec={pxPerSec}
                   scrollLeft={scrollLeft}
                   viewportWidth={viewportWidth}
+                  selectedSectionKey={selectedRuleSection?.key ?? null}
+                  onSectionClick={(sec) => {
+                    closeAllPanels()
+                    setSelectedRuleSection((prev) => prev?.key === sec.key ? null : sec)
+                  }}
                 />
               </div>
             )}
@@ -1584,6 +1748,14 @@ export function Timeline({ data }: { data: EditorData }) {
           onClose={() => setSelectedAudioDescription(null)}
           onKeyframeInserted={() => router.invalidate()}
         />
+      ) : selectedRuleSection ? (
+        <RuleEditorPanel
+          key={selectedRuleSection.key}
+          section={selectedRuleSection}
+          projectName={data.projectName}
+          onClose={() => setSelectedRuleSection(null)}
+          onUpdate={() => router.invalidate()}
+        />
       ) : selectedEffect ? (
         <EffectEditor
           effect={selectedEffect}
@@ -1735,6 +1907,128 @@ function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: n
 const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
 const DESC_PANEL_MIN_WIDTH = 240
+
+function RuleEditorPanel({ section, projectName, onClose, onUpdate }: {
+  section: RuleSection
+  projectName: string
+  onClose: () => void
+  onUpdate: () => void
+}) {
+  const [rules, setRules] = useState(section.rules.map((r) => ({ ...r })))
+  const [saving, setSaving] = useState(false)
+
+  const handleRuleChange = useCallback((idx: number, field: string, value: number) => {
+    setRules((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r))
+  }, [])
+
+  const handleSave = useCallback(async () => {
+    setSaving(true)
+    try {
+      // We need to update the full rules array — fetch all, replace this section's rules, save
+      const allRes = await window.fetch(`${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/audio-intelligence`)
+      const allData = await allRes.json() as { rules: import('@/lib/beatlab-client').AudioRule[] }
+      const allRules = allData.rules || []
+
+      // Replace rules matching this section's time range
+      const sectionStart = section.start
+      const sectionEnd = section.end
+      const otherRules = allRules.filter((r) => {
+        const s = r._start ?? r._group_start ?? 0
+        const e = r._end ?? r._group_end ?? 0
+        return !(s === sectionStart && e === sectionEnd)
+      })
+      const updated = [...otherRules, ...rules]
+
+      const { postUpdateRules } = await import('@/lib/beatlab-client')
+      await postUpdateRules(projectName, updated)
+      onUpdate()
+    } catch (e) {
+      alert(`Save failed: ${e}`)
+    } finally {
+      setSaving(false)
+    }
+  }, [rules, projectName, section, onUpdate])
+
+  const EFFECT_COLORS: Record<string, string> = {
+    zoom_pulse: 'text-blue-400', zoom_bounce: 'text-blue-300', shake_x: 'text-red-400',
+    shake_y: 'text-red-300', flash: 'text-yellow-400', hard_cut: 'text-yellow-500',
+    contrast_pop: 'text-purple-400', glow_swell: 'text-emerald-400', echo: 'text-teal-400',
+  }
+
+  return (
+    <div className="w-80 shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
+        <div>
+          <span className="text-xs text-amber-400 font-medium">{section.groupName || 'Rules'}</span>
+          <span className="text-[10px] text-gray-500 ml-2">{section.start.toFixed(0)}s – {section.end.toFixed(0)}s</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="text-[10px] text-green-400 hover:text-green-300 disabled:text-gray-600"
+          >{saving ? 'Saving...' : 'Save'}</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
+        </div>
+      </div>
+
+      <div className="p-2 space-y-2">
+        {rules.map((r, i) => (
+          <div key={i} className="bg-gray-800/50 rounded p-2 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono text-gray-300">{r.stem}/{r.band}</span>
+              <span className={`text-[10px] font-medium ${EFFECT_COLORS[r.effect] || 'text-gray-400'}`}>{r.effect}</span>
+            </div>
+
+            {/* Intensity scale */}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-gray-500 w-14 shrink-0">Intensity</span>
+              <input type="range" min={0} max={200} step={5}
+                value={Math.round(r.intensity_scale * 100)}
+                onChange={(e) => handleRuleChange(i, 'intensity_scale', parseInt(e.target.value, 10) / 100)}
+                className="flex-1 h-1.5 accent-amber-500" />
+              <span className="text-[9px] text-gray-400 w-8 text-right font-mono">×{r.intensity_scale.toFixed(2)}</span>
+            </div>
+
+            {/* Duration */}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-gray-500 w-14 shrink-0">Duration</span>
+              <input type="range" min={10} max={300} step={10}
+                value={Math.round(r.duration * 100)}
+                onChange={(e) => handleRuleChange(i, 'duration', parseInt(e.target.value, 10) / 100)}
+                className="flex-1 h-1.5 accent-amber-500" />
+              <span className="text-[9px] text-gray-400 w-8 text-right font-mono">{r.duration.toFixed(1)}s</span>
+            </div>
+
+            {/* Min strength */}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-gray-500 w-14 shrink-0">Min str</span>
+              <input type="range" min={0} max={100} step={5}
+                value={Math.round(r.min_strength * 100)}
+                onChange={(e) => handleRuleChange(i, 'min_strength', parseInt(e.target.value, 10) / 100)}
+                className="flex-1 h-1.5 accent-amber-500" />
+              <span className="text-[9px] text-gray-400 w-8 text-right font-mono">{r.min_strength.toFixed(2)}</span>
+            </div>
+
+            {/* Max strength */}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-gray-500 w-14 shrink-0">Max str</span>
+              <input type="range" min={0} max={100} step={5}
+                value={Math.round(r.max_strength * 100)}
+                onChange={(e) => handleRuleChange(i, 'max_strength', parseInt(e.target.value, 10) / 100)}
+                className="flex-1 h-1.5 accent-amber-500" />
+              <span className="text-[9px] text-gray-400 w-8 text-right font-mono">{r.max_strength.toFixed(2)}</span>
+            </div>
+
+            {r.rationale && (
+              <div className="text-[8px] text-gray-600 italic mt-1">{r.rationale}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function AudioDescriptionPanel({ section, audioEvents, projectName, onClose, onKeyframeInserted }: {
   section: import('@/lib/beatlab-client').AudioDescription
