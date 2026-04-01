@@ -219,7 +219,9 @@ export type PoolEntry = {
   size: number
 }
 
-export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'difference' | 'add' | 'soft-light'
+export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'difference' | 'add' | 'soft-light' | 'chroma-key'
+
+export type ChromaKeyConfig = { color: [number, number, number]; threshold: number; feather: number }
 
 export type Track = {
   id: string
@@ -229,6 +231,7 @@ export type Track = {
   baseOpacity: number
   enabled: boolean
   opacityKeyframes: { id: string; time: number; opacity: number }[]
+  chromaKey?: ChromaKeyConfig
 }
 
 export async function fetchTracks(project: string): Promise<Track[]> {
@@ -360,12 +363,12 @@ export async function fetchPool(project: string) {
   return res.json() as Promise<{ keyframes: PoolEntry[]; segments: PoolEntry[] }>
 }
 
-export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number, refinementPrompt?: string) {
-  console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count, refinementPrompt ? `refine: ${refinementPrompt.slice(0, 50)}` : '')
+export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number, refinementPrompt?: string, freeform?: boolean) {
+  console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count, refinementPrompt ? `refine: ${refinementPrompt.slice(0, 50)}` : '', freeform ? 'freeform' : '')
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keyframeId, count, ...(refinementPrompt ? { refinementPrompt } : {}) }),
+    body: JSON.stringify({ keyframeId, count, ...(refinementPrompt ? { refinementPrompt } : {}), ...(freeform ? { freeform: true } : {}) }),
   })
   if (!res.ok) {
     const text = await res.text()

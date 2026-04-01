@@ -10,6 +10,7 @@ export type TrackLayer = {
   blendFactor: number
   opacity: number
   blendMode: BlendMode
+  chromaKey?: { color: [number, number, number]; threshold: number; feather: number }
 }
 
 type BeatEffectPreviewProps = {
@@ -124,7 +125,10 @@ const COMPOSITE_SHADER = `
   uniform sampler2D u_layerB;  // track frame B
   uniform float u_layerBlend;  // crossfade A->B
   uniform float u_opacity;
-  uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add
+  uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add,6=chroma-key
+  uniform vec3 u_keyColor;     // chroma key target color
+  uniform float u_keyThreshold;// how close to key color = transparent (0-1)
+  uniform float u_keyFeather;  // edge softness (0-0.5)
 
   void main() {
     vec4 base = texture2D(u_base, v_texCoord);
@@ -138,6 +142,13 @@ const COMPOSITE_SHADER = `
     else if (u_blendMode == 3) { blended = mix(2.0*base.rgb*layer, 1.0-2.0*(1.0-base.rgb)*(1.0-layer), step(0.5, base.rgb)); } // overlay
     else if (u_blendMode == 4) { blended = abs(base.rgb - layer); }                            // difference
     else if (u_blendMode == 5) { blended = min(base.rgb + layer, 1.0); }                       // add
+    else if (u_blendMode == 6) {                                                                // chroma key
+      float dist = distance(layer, u_keyColor);
+      float alpha = smoothstep(u_keyThreshold, u_keyThreshold + u_keyFeather, dist);
+      blended = mix(base.rgb, layer, alpha);
+      gl_FragColor = vec4(blended, 1.0);
+      return;
+    }
     else { blended = layer; }                                                                   // normal
 
     gl_FragColor = vec4(mix(base.rgb, blended, u_opacity), 1.0);
@@ -145,7 +156,7 @@ const COMPOSITE_SHADER = `
 `
 
 const BLEND_MODE_MAP: Record<string, number> = {
-  normal: 0, multiply: 1, screen: 2, overlay: 3, difference: 4, add: 5, 'soft-light': 3, // soft-light → overlay fallback
+  normal: 0, multiply: 1, screen: 2, overlay: 3, difference: 4, add: 5, 'soft-light': 3, 'chroma-key': 6,
 }
 
 // Map detailed AI effect names to suppression categories
@@ -498,6 +509,13 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
         gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_layerBlend'), layer.blendFactor)
         gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_opacity'), layer.opacity)
         gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_blendMode'), BLEND_MODE_MAP[layer.blendMode] ?? 0)
+
+        // Chroma key uniforms
+        const ck = layer.chromaKey
+        gl.uniform3f(gl.getUniformLocation(ctx.compProgram, 'u_keyColor'), ck?.color[0] ?? 0, ck?.color[1] ?? 1, ck?.color[2] ?? 0)
+        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyThreshold'), ck?.threshold ?? 0.3)
+        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyFeather'), ck?.feather ?? 0.1)
+
         gl.drawArrays(gl.TRIANGLES, 0, 6)
 
         // Ping-pong

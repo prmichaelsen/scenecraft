@@ -219,6 +219,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         baseOpacity: (t.baseOpacity as number) ?? 1.0,
         enabled: t.enabled !== false,
         opacityKeyframes: (t.opacityKeyframes as { id: string; time: number; opacity: number }[]) || [],
+        chromaKey: t.chromaKey as import('@/lib/beatlab-client').ChromaKeyConfig | undefined,
       })),
     }
   })
@@ -425,9 +426,9 @@ export const generateKeyframeVariations = createServerFn({ method: 'POST' })
   })
 
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; keyframeId: string; count?: number; refinementPrompt?: string }) => input)
+  .inputValidator((input: { projectName: string; keyframeId: string; count?: number; refinementPrompt?: string; freeform?: boolean }) => input)
   .handler(async ({ data }) => {
-    return postGenerateKeyframeCandidates(data.projectName, data.keyframeId, data.count, data.refinementPrompt)
+    return postGenerateKeyframeCandidates(data.projectName, data.keyframeId, data.count, data.refinementPrompt, data.freeform)
   })
 
 export const generateTransitionAction = createServerFn({ method: 'POST' })

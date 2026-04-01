@@ -31,14 +31,15 @@ import { SettingsPanel } from './SettingsPanel'
 import { AudioDescriptionTrack } from './AudioDescriptionTrack'
 import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
 
-const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light']
+const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
 
-function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete }: {
+function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSettings }: {
   track: Track
   isActive: boolean
   onSelect: () => void
   onUpdate: (updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) => void
   onDelete?: () => void
+  onOpenSettings?: () => void
 }) {
   return (
     <div
@@ -66,6 +67,14 @@ function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete }: {
       >
         {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
+
+      {track.blendMode === 'chroma-key' && onOpenSettings && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onOpenSettings() }}
+          className="text-[10px] text-amber-400 hover:text-amber-300"
+          title="Chroma key settings"
+        >⚙</button>
+      )}
 
       {/* Opacity */}
       <input
@@ -340,6 +349,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const nextFxId = useRef(data.userEffects.length + 1)
   const [selectedTrackId, setSelectedTrackId] = useState<string>(data.tracks[0]?.id || 'track_1')
   const [selectedRuleSection, setSelectedRuleSection] = useState<RuleSection | null>(null)
+  const [chromaKeyTrackId, setChromaKeyTrackId] = useState<string | null>(null)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
@@ -411,7 +421,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [aiAudioEvents, setAiAudioEvents] = useState(data.audioEvents)
   const [aiAudioRules, setAiAudioRules] = useState(data.audioRules)
   const [aiAudioOnsets, setAiAudioOnsets] = useState(data.audioOnsets)
-  const [aiAudioDescriptions, setAiAudioDescriptions] = useState(data.audioDescriptions)
+  const [aiAudioDescriptions] = useState(data.audioDescriptions)
   const aiLoadedRef = useRef(false)
   useEffect(() => {
     if (aiLoadedRef.current) return
@@ -671,14 +681,14 @@ export function Timeline({ data }: { data: EditorData }) {
         const variant = activeTr.selected ?? 'none'
         const key = `tr:${activeTr.id}:v${variant}`
         const frameA = getFrameAtProgress(key, progress)
-        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`
         const frameA = getFrameAtProgress(kfKey, 0)
-        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
-      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode } as import('./BeatEffectPreview').TrackLayer
+      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
   })()
 
@@ -792,6 +802,7 @@ export function Timeline({ data }: { data: EditorData }) {
     setSelectedAudioDescription(null)
     setShowDownloadPreview(false)
     setSelectedRuleSection(null)
+    setChromaKeyTrackId(null)
   }, [])
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime, shiftKey?: boolean) => {
@@ -1579,6 +1590,10 @@ export function Timeline({ data }: { data: EditorData }) {
                     onDelete={sortedTracks.length > 1 ? () => {
                       postDeleteTrack(data.projectName, track.id).then(() => router.invalidate())
                     } : undefined}
+                    onOpenSettings={() => {
+                      closeAllPanels()
+                      setChromaKeyTrackId(track.id)
+                    }}
                   />
                   {/* Track content */}
                   <div
@@ -1909,6 +1924,14 @@ export function Timeline({ data }: { data: EditorData }) {
           onClose={() => setSelectedAudioDescription(null)}
           onKeyframeInserted={() => router.invalidate()}
         />
+      ) : chromaKeyTrackId ? (
+        <ChromaKeyPanel
+          track={data.tracks.find((t) => t.id === chromaKeyTrackId) || data.tracks[0]}
+          onClose={() => setChromaKeyTrackId(null)}
+          onUpdate={(config) => {
+            postUpdateTrack(data.projectName, chromaKeyTrackId!, { chromaKey: config } as never).then(() => router.invalidate())
+          }}
+        />
       ) : selectedRuleSection ? (
         <RuleEditorPanel
           key={selectedRuleSection.key}
@@ -2083,6 +2106,86 @@ function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: n
 const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
 const DESC_PANEL_MIN_WIDTH = 240
+
+function ChromaKeyPanel({ track, onClose, onUpdate }: {
+  track: Track
+  onClose: () => void
+  onUpdate: (config: import('@/lib/beatlab-client').ChromaKeyConfig) => void
+}) {
+  const STORAGE_KEY = 'beatlab-side-panel-width'
+  const [color, setColor] = useState<[number, number, number]>(track.chromaKey?.color || [0, 1, 0])
+  const [threshold, setThreshold] = useState(track.chromaKey?.threshold ?? 0.3)
+  const [feather, setFeather] = useState(track.chromaKey?.feather ?? 0.1)
+
+  const hexColor = `#${color.map((c) => Math.round(c * 255).toString(16).padStart(2, '0')).join('')}`
+
+  return (
+    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto" style={{ width: parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10) }}>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+        <span className="text-xs text-amber-400 font-medium">Chroma Key — {track.name}</span>
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
+      </div>
+      <div className="p-3 space-y-4">
+        <div className="text-[10px] text-gray-500">
+          Remove a specific color from this track's frames. Pixels matching the key color become transparent, revealing the track below.
+        </div>
+
+        {/* Key color picker */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Key Color</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={hexColor}
+              onChange={(e) => {
+                const hex = e.target.value
+                const r = parseInt(hex.slice(1, 3), 16) / 255
+                const g = parseInt(hex.slice(3, 5), 16) / 255
+                const b = parseInt(hex.slice(5, 7), 16) / 255
+                setColor([r, g, b])
+              }}
+              className="w-10 h-8 rounded border border-gray-700 cursor-pointer"
+            />
+            <span className="text-[10px] text-gray-400 font-mono">{hexColor}</span>
+            <div className="flex gap-1">
+              <button onClick={() => setColor([0, 1, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-green-800 text-green-300">Green</button>
+              <button onClick={() => setColor([0, 0, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-blue-800 text-blue-300">Blue</button>
+              <button onClick={() => setColor([0, 0, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">Black</button>
+              <button onClick={() => setColor([1, 1, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-white text-gray-800">White</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Threshold */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Threshold: {threshold.toFixed(2)}</label>
+          <input type="range" min={0} max={100} step={1}
+            value={Math.round(threshold * 100)}
+            onChange={(e) => setThreshold(parseInt(e.target.value, 10) / 100)}
+            className="w-full h-1.5 accent-amber-500" />
+          <div className="text-[9px] text-gray-600">How close to the key color a pixel must be to become transparent. Lower = stricter match.</div>
+        </div>
+
+        {/* Feather */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Feather: {feather.toFixed(2)}</label>
+          <input type="range" min={0} max={50} step={1}
+            value={Math.round(feather * 100)}
+            onChange={(e) => setFeather(parseInt(e.target.value, 10) / 100)}
+            className="w-full h-1.5 accent-amber-500" />
+          <div className="text-[9px] text-gray-600">Edge softness. Higher = smoother transition between keyed and visible pixels.</div>
+        </div>
+
+        <button
+          onClick={() => onUpdate({ color, threshold, feather })}
+          className="w-full text-xs bg-amber-600 hover:bg-amber-500 text-white py-2 rounded transition-colors"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChange }: {
   section: RuleSection

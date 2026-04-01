@@ -548,6 +548,22 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
 
       <button
         onClick={async () => {
+          if (!kf.prompt) { alert('Add a prompt first (Details tab).'); return }
+          try {
+            const result = await generateKeyframeCandidates({
+              data: { projectName, keyframeId: kf.id, count: generationCount, freeform: true },
+            })
+            if (result.jobId) jobCtx.startJob(entityKey, result.jobId)
+          } catch (e) { alert(`Freeform failed: ${e}`) }
+        }}
+        disabled={generating || !kf.prompt}
+        className="w-full text-xs bg-green-700 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+      >
+        {generating ? 'Generating...' : 'Freeform Generate (no base image)'}
+      </button>
+
+      <button
+        onClick={async () => {
           try {
             const result = await generateKeyframeVariations({ data: { projectName, keyframeId: kf.id, count: generationCount } })
             if (result.jobId) jobCtx.startJob(entityKey, result.jobId)
