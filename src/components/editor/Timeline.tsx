@@ -1467,12 +1467,22 @@ export function Timeline({ data }: { data: EditorData }) {
 
           <button
             onClick={async () => {
-              const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
-              await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ time: currentTime }),
-              })
+              try {
+                const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
+                const res = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ time: currentTime }),
+                })
+                if (!res.ok) {
+                  const text = await res.text()
+                  console.error('Bench capture failed:', res.status, text)
+                  alert(`Bench capture failed: ${res.status} ${text}`)
+                }
+              } catch (e) {
+                console.error('Bench capture error:', e)
+                alert(`Bench capture error: ${e}`)
+              }
             }}
             disabled={!currentKeyframe}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-green-400 hover:text-green-300 disabled:text-gray-600 disabled:hover:bg-gray-800 px-2 py-1 rounded transition-colors"
@@ -1915,6 +1925,32 @@ export function Timeline({ data }: { data: EditorData }) {
           keyframes={keyframes}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
+          onDuplicateToNext={async () => {
+            const sorted = [...localTransitions].sort((a, b) => {
+              const aFrom = keyframes.find((k) => k.id === a.from)
+              const bFrom = keyframes.find((k) => k.id === b.from)
+              return (aFrom?.timeSeconds ?? 0) - (bFrom?.timeSeconds ?? 0)
+            })
+            const idx = sorted.findIndex((t) => t.id === selectedTransition.id)
+            const next = idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null
+            if (!next) { alert('No next transition'); return }
+            const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+            await postDuplicateTransitionVideo(data.projectName, selectedTransition.id, next.id)
+            refreshTimeline()
+          }}
+          onDuplicateToPrev={async () => {
+            const sorted = [...localTransitions].sort((a, b) => {
+              const aFrom = keyframes.find((k) => k.id === a.from)
+              const bFrom = keyframes.find((k) => k.id === b.from)
+              return (aFrom?.timeSeconds ?? 0) - (bFrom?.timeSeconds ?? 0)
+            })
+            const idx = sorted.findIndex((t) => t.id === selectedTransition.id)
+            const prev = idx > 0 ? sorted[idx - 1] : null
+            if (!prev) { alert('No previous transition'); return }
+            const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+            await postDuplicateTransitionVideo(data.projectName, selectedTransition.id, prev.id)
+            refreshTimeline()
+          }}
           onDataChange={() => refreshTimeline()}
         />
       ) : selectedAudioDescription ? (

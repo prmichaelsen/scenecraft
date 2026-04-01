@@ -289,6 +289,16 @@ export async function postGenerateKeyframeVariations(project: string, keyframeId
   return res.json() as Promise<{ jobId: string; keyframeId: string }>
 }
 
+export async function postDuplicateTransitionVideo(project: string, sourceId: string, targetId: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-transition-video`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceId, targetId }),
+  })
+  if (!res.ok) throw new Error(`Failed: ${res.status}`)
+  return res.json()
+}
+
 export async function postAssignKeyframeImage(project: string, keyframeId: string, sourcePath: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-keyframe-image`, {
     method: 'POST',

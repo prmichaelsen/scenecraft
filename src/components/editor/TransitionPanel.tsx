@@ -22,6 +22,8 @@ type TransitionPanelProps = {
   keyframes: KfWithTime[]
   onClose: () => void
   onDelete: () => void
+  onDuplicateToNext: () => void
+  onDuplicateToPrev: () => void
   onDataChange: () => void
 }
 
@@ -33,6 +35,8 @@ export function TransitionPanel({
   keyframes,
   onClose,
   onDelete,
+  onDuplicateToNext,
+  onDuplicateToPrev,
   onDataChange,
 }: TransitionPanelProps) {
   const [width, setWidth] = useState(() => {
@@ -113,6 +117,16 @@ export function TransitionPanel({
             >
               Bench
             </button>
+            <button
+              onClick={onDuplicateToPrev}
+              className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
+              title="Copy video to previous transition"
+            >&larr; Dup</button>
+            <button
+              onClick={onDuplicateToNext}
+              className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
+              title="Copy video to next transition"
+            >Dup &rarr;</button>
             <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"

@@ -44,15 +44,15 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration }: PlayheadPr
   return (
     <div
       ref={containerRef}
-      className="absolute top-0 h-full z-10"
+      className="absolute top-0 h-full z-10 pointer-events-none"
       style={{ left: x, width: 1 }}
     >
       {/* Visible line */}
-      <div className="absolute top-0 left-0 w-px h-full bg-red-500 pointer-events-none" />
+      <div className="absolute top-0 left-0 w-px h-full bg-red-500" />
 
-      {/* Draggable cap — wider hit target */}
+      {/* Draggable cap — wider hit target, only this captures clicks */}
       <div
-        className="absolute -top-0 -left-2 w-4 h-4 cursor-grab active:cursor-grabbing z-20"
+        className="absolute -top-0 -left-2 w-4 h-4 cursor-grab active:cursor-grabbing z-20 pointer-events-auto"
         onMouseDown={handleMouseDown}
       >
         <div className="absolute left-1.5 top-0.5 w-3 h-3 bg-red-500 rounded-full pointer-events-none" />
