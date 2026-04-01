@@ -793,6 +793,11 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       onClick={onSelect}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/x-beatlab-pool-path', videoPath)
+        e.dataTransfer.effectAllowed = 'copy'
+      }}
     >
       {blobUrl ? (
         <video
