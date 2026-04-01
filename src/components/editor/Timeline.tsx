@@ -1054,21 +1054,24 @@ export function Timeline({ data }: { data: EditorData }) {
     refreshTimeline()
   }, [data.projectName, refreshTimeline])
 
+  const handleDropImageOnKeyframe = useCallback(async (keyframeId: string, imagePath: string) => {
+    const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
+    await postAssignKeyframeImage(data.projectName, keyframeId, imagePath)
+    invalidateEntry(`kf:${keyframeId}`)
+    refreshTimeline()
+  }, [data.projectName, refreshTimeline])
+
   const handleDropVideoOnKeyframe = useCallback(async (keyframeId: string, poolPath: string) => {
-    if (poolPath.endsWith('.png') || poolPath.endsWith('.jpg') || poolPath.endsWith('.jpeg')) {
-      // Image drop → assign as keyframe image
-      const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
-      await postAssignKeyframeImage(data.projectName, keyframeId, poolPath)
-      invalidateEntry(`kf:${keyframeId}`)
+    // Fallback: if somehow an image arrives here, route to image handler
+    if (/\.(png|jpe?g|webp)$/i.test(poolPath)) {
+      return handleDropImageOnKeyframe(keyframeId, poolPath)
+    }
+    // Video drop → assign to transition starting from this keyframe
+    const tr = localTransitions.find((t) => t.from === keyframeId)
+    if (tr) {
+      const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+      await postAssignPoolVideo(data.projectName, tr.id, poolPath)
       refreshTimeline()
-    } else {
-      // Video drop → assign to transition starting from this keyframe
-      const tr = localTransitions.find((t) => t.from === keyframeId)
-      if (tr) {
-        const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
-        await postAssignPoolVideo(data.projectName, tr.id, poolPath)
-        refreshTimeline()
-      }
     }
   }, [localTransitions, data.projectName, refreshTimeline])
 
@@ -1616,6 +1619,7 @@ export function Timeline({ data }: { data: EditorData }) {
                       scrollLeft={scrollLeft}
                       viewportWidth={viewportWidth}
                       onDropVideo={handleDropVideoOnKeyframe}
+                      onDropImage={handleDropImageOnKeyframe}
                       onDropStagedImage={async (kfId, stagingId, variant) => {
                         try {
                           const { promoteStagedCandidate } = await import('@/routes/project/$name/editor')
@@ -1823,7 +1827,7 @@ export function Timeline({ data }: { data: EditorData }) {
               }
               await postInsertPoolItem(data.projectName, selection.type, selection.entry.path, insertTime)
               setPoolSelection(null)
-              router.invalidate()
+              refreshTimeline()
             } catch (e) {
               alert(`Insert failed: ${e}`)
             }
@@ -1861,7 +1865,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: selectedKeyframe.id, newTimestamp: tmpTs } }),
                 updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: prev.id, newTimestamp: curTs } }),
               ])
-              router.invalidate()
+              refreshTimeline()
             } catch (e) { console.error('Move left failed:', e) }
           }}
           onMoveRight={async () => {
@@ -1876,7 +1880,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: selectedKeyframe.id, newTimestamp: tmpTs } }),
                 updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: next.id, newTimestamp: curTs } }),
               ])
-              router.invalidate()
+              refreshTimeline()
             } catch (e) { console.error('Move right failed:', e) }
           }}
           onDuplicate={async () => {
@@ -1891,13 +1895,13 @@ export function Timeline({ data }: { data: EditorData }) {
               await duplicateKeyframe({
                 data: { projectName: data.projectName, keyframeId: selectedKeyframe.id, timestamp: ts },
               })
-              router.invalidate()
+              refreshTimeline()
             } catch (e) {
               console.error('Duplicate failed:', e)
               alert(`Duplicate failed: ${e}`)
             }
           }}
-          onDataChange={() => router.invalidate()}
+          onDataChange={() => refreshTimeline()}
           audioDescriptions={aiAudioDescriptions}
           audioEvents={aiAudioEvents}
         />
@@ -1911,7 +1915,7 @@ export function Timeline({ data }: { data: EditorData }) {
           keyframes={keyframes}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
-          onDataChange={() => router.invalidate()}
+          onDataChange={() => refreshTimeline()}
         />
       ) : selectedAudioDescription ? (
         <AudioDescriptionPanel
@@ -1922,7 +1926,7 @@ export function Timeline({ data }: { data: EditorData }) {
           )}
           projectName={data.projectName}
           onClose={() => setSelectedAudioDescription(null)}
-          onKeyframeInserted={() => router.invalidate()}
+          onKeyframeInserted={() => refreshTimeline()}
         />
       ) : chromaKeyTrackId ? (
         <ChromaKeyPanel

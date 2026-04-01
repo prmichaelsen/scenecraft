@@ -16,6 +16,7 @@ type VideoTrackProps = {
   scrollLeft: number
   viewportWidth: number
   onDropVideo?: (keyframeId: string, poolPath: string) => void
+  onDropImage?: (keyframeId: string, imagePath: string) => void
   onDropStagedImage?: (keyframeId: string, stagingId: string, variant: number) => void
 }
 
@@ -44,6 +45,7 @@ export function VideoTrack({
   scrollLeft,
   viewportWidth,
   onDropVideo,
+  onDropImage,
   onDropStagedImage,
 }: VideoTrackProps) {
   const dragState = useRef<DragState | null>(null)
@@ -171,8 +173,13 @@ export function VideoTrack({
               e.preventDefault()
               setDropTarget(null)
               const poolPath = e.dataTransfer.getData('application/x-beatlab-pool-path')
-              if (poolPath && onDropVideo) {
-                onDropVideo(kf.id, poolPath)
+              if (poolPath) {
+                const isImage = /\.(png|jpg|jpeg|webp)$/i.test(poolPath)
+                if (isImage && onDropImage) {
+                  onDropImage(kf.id, poolPath)
+                } else if (!isImage && onDropVideo) {
+                  onDropVideo(kf.id, poolPath)
+                }
                 return
               }
               const stagingId = e.dataTransfer.getData('application/x-beatlab-staging-id')
