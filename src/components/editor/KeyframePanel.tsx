@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
-import { updateKeyframePrompt, generateKeyframeCandidates, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
+import { updateKeyframePrompt, generateKeyframeCandidates, generateKeyframeVariations, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
 import { beatlabFileUrl, fetchDirectoryListing, type FileEntry, type AudioEvent, type AudioDescription } from '@/lib/beatlab-client'
 import { invalidateEntry } from '@/lib/frame-cache'
@@ -31,7 +31,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
     const stored = localStorage.getItem(STORAGE_KEY)
     return stored ? Math.max(MIN_WIDTH, parseInt(stored, 10)) : DEFAULT_WIDTH
   })
-  const [tab, setTab] = useState<'details' | 'candidates'>('details')
+  const [tab, setTab] = useState<'details' | 'candidates' | 'bench'>('details')
   const isDragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -135,14 +135,22 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
           >
             Candidates{kf.candidates.length > 0 ? ` (${kf.candidates.length})` : ''}
           </button>
+          <button
+            onClick={() => setTab('bench')}
+            className={`flex-1 text-xs py-2 transition-colors ${tab === 'bench' ? 'text-gray-200 border-b-2 border-green-500' : 'text-gray-500 hover:text-gray-400'}`}
+          >
+            Bench
+          </button>
         </div>
 
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto">
           {tab === 'details' ? (
             <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} />
-          ) : (
+          ) : tab === 'candidates' ? (
             <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
+          ) : (
+            <BenchTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           )}
         </div>
       </div>
@@ -259,7 +267,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
       {hasImage ? (
         <div className="p-3">
           <img
-            src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
+            src={`${beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
             alt={kf.id}
             className="w-full rounded"
           />
@@ -399,6 +407,19 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
     setCandidates(kf.candidates)
   }, [kf.id, kf.candidates])
 
+  // Refresh candidates from disk on mount (catches async generation results)
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/keyframes`)
+      .then((r) => r.json())
+      .then((data) => {
+        const fresh = (data.keyframes || []).find((k: { id: string }) => k.id === kf.id)
+        if (fresh?.candidates?.length > 0 && fresh.candidates.length !== candidates.length) {
+          const mapped = fresh.candidates.map((c: string | { path: string }) => typeof c === 'string' ? c : c.path).filter(Boolean)
+          if (mapped.length > 0) setCandidates(mapped)
+        }
+      }).catch(() => {})
+  }, [kf.id, projectName])
+
   // Apply completed job result
   useEffect(() => {
     if (job?.status === 'completed' && job.result) {
@@ -451,6 +472,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
     if (typeof kf.selected === 'number') setSelectedIdx(kf.selected)
   }, [kf.id, kf.selected])
   const [selecting, setSelecting] = useState(false)
+  const [selectGeneration, setSelectGeneration] = useState(0)
   const [showModal, setShowModal] = useState(false)
 
   const handleSelect = useCallback(async (variantNum: number) => {
@@ -462,6 +484,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
       })
       console.log(`[KeyframePanel] selected ${kf.id} v${variantNum} OK`)
       setSelectedIdx(variantNum)
+      setSelectGeneration((g) => g + 1)
       kf.selected = variantNum
       // Invalidate frame cache so preview + video track update
       invalidateEntry(`kf:${kf.id}`)
@@ -522,6 +545,20 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
       >
         {generating ? 'Generating with Imagen...' : refinementPrompt ? 'Refine Selected Image' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
       </button>
+
+      <button
+        onClick={async () => {
+          try {
+            const result = await generateKeyframeVariations({ data: { projectName, keyframeId: kf.id, count: generationCount } })
+            if (result.jobId) jobCtx.startJob(entityKey, result.jobId)
+          } catch (e) { alert(`Variations failed: ${e}`) }
+        }}
+        disabled={generating}
+        className="w-full text-xs bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+      >
+        {generating ? 'Generating...' : 'Generate Variations (AI prompts)'}
+      </button>
+
       {generating && (
         <div className="text-[10px] text-gray-500 text-center">
           {jobStatus || 'Generating styled image candidates...'}
@@ -578,14 +615,20 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
             return (
               <div
                 key={candidatePath}
-                className={`relative rounded overflow-hidden border-2 cursor-pointer transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
-                onClick={() => handleSelect(variantNum)}
+                className={`relative rounded overflow-hidden border-2 transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-beatlab-pool-path', relativePath)
+                  e.dataTransfer.effectAllowed = 'copy'
+                }}
               >
                 <img
                   src={imgUrl}
                   alt={variantLabel(candidatePath)}
-                  className="w-full aspect-video object-cover"
+                  className="w-full aspect-video object-cover cursor-pointer"
                   loading="lazy"
+                  onClick={(e) => { e.stopPropagation(); handleSelect(variantNum) }}
+                  draggable={false}
                 />
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
                   <div className="flex items-center justify-between">
@@ -602,6 +645,92 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
               </div>
             )
           })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void }) {
+  const [items, setItems] = useState<import('@/lib/beatlab-client').BenchItem[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    import('@/lib/beatlab-client').then(({ fetchBench }) =>
+      fetchBench(projectName).then((all) => {
+        setItems(all.filter((b) => b.type === 'keyframe'))
+        setLoading(false)
+      })
+    ).catch(() => setLoading(false))
+  }, [projectName])
+
+  const handleBenchCurrent = useCallback(async () => {
+    const { postAddToBench, fetchBench } = await import('@/lib/beatlab-client')
+    await postAddToBench(projectName, 'keyframe', kf.id)
+    const all = await fetchBench(projectName)
+    setItems(all.filter((b) => b.type === 'keyframe'))
+  }, [projectName, kf.id])
+
+  const handleApply = useCallback(async (benchItem: import('@/lib/beatlab-client').BenchItem) => {
+    // Copy the benched image as this keyframe's selected image
+    const { postSetBaseImage } = await import('@/lib/beatlab-client')
+    // The bench sourcePath is relative to the project — extract the still name or use assign
+    // Use set-base-image if it's a still, otherwise we need a different approach
+    // For benched keyframes, sourcePath is like "selected_keyframes/kf_XXX.png"
+    const fileName = benchItem.sourcePath.split('/').pop() || ''
+    await postSetBaseImage(projectName, kf.id, fileName)
+    kf.hasSelectedImage = true
+    invalidateEntry(`kf:${kf.id}`)
+    onDataChange()
+  }, [projectName, kf, onDataChange])
+
+  const handleRemove = useCallback(async (benchId: string) => {
+    const { postRemoveFromBench } = await import('@/lib/beatlab-client')
+    await postRemoveFromBench(projectName, benchId)
+    setItems((prev) => prev.filter((b) => b.id !== benchId))
+  }, [projectName])
+
+  if (loading) return <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
+
+  return (
+    <div className="p-2 space-y-2">
+      <button
+        onClick={handleBenchCurrent}
+        disabled={!kf.hasSelectedImage}
+        className="w-full text-xs bg-green-700 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+      >
+        Bench Current Keyframe
+      </button>
+
+      {items.length === 0 ? (
+        <div className="text-center text-sm text-gray-600 py-4">No keyframes in bench</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {items.map((item) => (
+            <div key={item.id} className="relative rounded overflow-hidden border-2 border-transparent hover:border-green-500 transition-colors group">
+              <img
+                src={beatlabFileUrl(projectName, item.sourcePath)}
+                alt={item.label || item.id}
+                className="w-full aspect-video object-cover cursor-pointer"
+                loading="lazy"
+                onClick={() => handleApply(item)}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-beatlab-pool-path', item.sourcePath)
+                  e.dataTransfer.effectAllowed = 'copy'
+                }}
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                <div className="text-[10px] text-gray-300 truncate">{item.label || item.sourcePath.split('/').pop()}</div>
+              </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleRemove(item.id) }}
+                className="absolute top-1 right-1 text-red-400/60 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded px-1"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>

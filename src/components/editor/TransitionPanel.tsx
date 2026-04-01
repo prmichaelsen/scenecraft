@@ -498,17 +498,25 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
   const handleSelect = useCallback(async (variantIndex: number) => {
     setSelecting(true)
     const selectionKey = `${transition.id}_slot_0`
+    const isDeselect = selectedVariant === variantIndex
     try {
       await selectTransitions({
-        data: { projectName, selections: { [selectionKey]: variantIndex } },
+        data: { projectName, selections: { [selectionKey]: isDeselect ? null as unknown as number : variantIndex } },
       })
       const oldVariant = selectedVariant ?? 'none'
       invalidateEntry(`tr:${transition.id}:v${oldVariant}`)
-      invalidateEntry(`tr:${transition.id}:v${variantIndex}`)
-      setSelectedVariant(variantIndex)
-      transition.selected = variantIndex
-      transition.hasSelectedVideo = true
-      autoSave(projectName, `Selected ${transition.id} v${variantIndex}`)
+      if (isDeselect) {
+        setSelectedVariant(null)
+        transition.selected = null
+        transition.hasSelectedVideo = false
+        autoSave(projectName, `Deselected ${transition.id}`)
+      } else {
+        invalidateEntry(`tr:${transition.id}:v${variantIndex}`)
+        setSelectedVariant(variantIndex)
+        transition.selected = variantIndex
+        transition.hasSelectedVideo = true
+        autoSave(projectName, `Selected ${transition.id} v${variantIndex}`)
+      }
     } finally {
       setSelecting(false)
     }
@@ -879,6 +887,26 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
       ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
     }
 
+    // Axis labels
+    ctx.fillStyle = '#666'
+    ctx.font = '8px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('Timeline Position →', W / 2, H - 1)
+    ctx.save()
+    ctx.translate(8, H / 2)
+    ctx.rotate(-Math.PI / 2)
+    ctx.fillText('Video Progress →', 0, 0)
+    ctx.restore()
+    // Corner labels
+    ctx.fillStyle = '#555'
+    ctx.font = '7px monospace'
+    ctx.textAlign = 'left'
+    ctx.fillText('0%', PAD, H - PAD + 9)
+    ctx.textAlign = 'right'
+    ctx.fillText('100%', W - PAD, H - PAD + 9)
+    ctx.textAlign = 'left'
+    ctx.fillText('100%', 1, PAD + 3)
+
     // Linear reference (diagonal)
     ctx.strokeStyle = '#555'
     ctx.lineWidth = 1
@@ -1028,8 +1056,9 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
         onMouseLeave={handleMouseUp}
         onDoubleClick={handleDoubleClick}
       />
-      <div className="text-[9px] text-gray-600">
-        Click to add point. Drag to adjust. Double-click to remove. {points.length > 2 ? `${points.length - 2} control points` : 'Linear'}
+      <div className="text-[9px] text-gray-600 space-y-0.5">
+        <div><span className="text-gray-500">Click</span> canvas to add point · <span className="text-gray-500">Drag</span> to adjust · <span className="text-gray-500">Double-click</span> to remove</div>
+        <div>{points.length > 2 ? `${points.length - 2} control points · ` : ''}Dashed line = linear (1:1). Curve above = slow start, fast end. Curve below = fast start, slow end.</div>
       </div>
     </div>
   )

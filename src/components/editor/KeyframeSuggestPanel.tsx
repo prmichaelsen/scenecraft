@@ -56,17 +56,19 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
     fetchSectionSettings(projectName, section.label).then((settings) => {
       if (settings.still) setSelectedStill(settings.still)
       const savedSuggestions = (settings as { suggestions?: unknown }).suggestions
-      if (Array.isArray(savedSuggestions) && savedSuggestions.length > 0) {
+      if (Array.isArray(savedSuggestions) && savedSuggestions.length > 0 && audioEvents.length > 0) {
         setSuggestions(
-          savedSuggestions.map((r: Record<string, unknown>) => ({
-            eventIndex: r.eventIndex as number,
-            event: audioEvents[r.eventIndex as number],
-            prompt: (r.prompt as string) || '',
-            keyframeId: (r.keyframeId as string) || null,
-            candidates: (r.candidates as string[]) || [],
-            selectedCandidate: (r.selectedCandidate as number) || null,
-            status: (r.status as EventSuggestion['status']) || (r.keyframeId ? 'candidates-ready' : 'prompt-only'),
-          }))
+          savedSuggestions
+            .filter((r: Record<string, unknown>) => (r.eventIndex as number) < audioEvents.length && audioEvents[r.eventIndex as number])
+            .map((r: Record<string, unknown>) => ({
+              eventIndex: r.eventIndex as number,
+              event: audioEvents[r.eventIndex as number],
+              prompt: (r.prompt as string) || '',
+              keyframeId: (r.keyframeId as string) || null,
+              candidates: (r.candidates as string[]) || [],
+              selectedCandidate: (r.selectedCandidate as number) || null,
+              status: (r.status as EventSuggestion['status']) || (r.keyframeId ? 'candidates-ready' : 'prompt-only'),
+            }))
         )
       }
     }).finally(() => setLoaded(true))
@@ -112,7 +114,7 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
         },
       })
       setSuggestions(
-        result.suggestions.map((r) => ({
+        result.suggestions.filter((r) => r.eventIndex < audioEvents.length && audioEvents[r.eventIndex]).map((r) => ({
           eventIndex: r.eventIndex,
           event: audioEvents[r.eventIndex],
           prompt: r.prompt,
@@ -175,8 +177,17 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
           setSuggestions([])
         }}
       />
-      <div className="text-[10px] text-gray-500 uppercase tracking-wider">
-        Suggestions ({suggestions.length})
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+          Suggestions ({suggestions.length})
+        </div>
+        <button
+          onClick={handleGeneratePrompts}
+          disabled={generatingPrompts}
+          className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+        >
+          {generatingPrompts ? 'Regenerating...' : 'Regenerate All'}
+        </button>
       </div>
       {suggestions.map((s, idx) => (
         <EventSuggestionRow
@@ -247,6 +258,7 @@ function EventSuggestionRow({
   const entityKey = `suggest:${stagingIdStable}:candidates`
   const job = useJobState(entityKey)
   const [editingPrompt, setEditingPrompt] = useState(false)
+  const [expandedImage, setExpandedImage] = useState<{ path: string; variantNum: number } | null>(null)
   const [promptDraft, setPromptDraft] = useState(s.prompt)
 
   // On mount, fetch actual candidates from staging dir
@@ -577,9 +589,9 @@ function EventSuggestionRow({
               const pathMatch = path.match(/v(\d+)\.png$/)
               const variantNum = pathMatch ? parseInt(pathMatch[1], 10) : ci + 1
               return (
-                <button
+                <div
                   key={ci}
-                  onClick={() => handleKeep(variantNum)}
+                  className="relative rounded-md overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors group/cand"
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData('application/x-beatlab-staging-path', path)
@@ -587,22 +599,51 @@ function EventSuggestionRow({
                     e.dataTransfer.setData('application/x-beatlab-variant', String(variantNum))
                     e.dataTransfer.effectAllowed = 'copy'
                   }}
-                  className="relative rounded-md overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors cursor-grab active:cursor-grabbing"
-                  title={`Click to insert at event time, or drag onto a keyframe`}
                 >
                   <img
                     src={beatlabFileUrl(projectName, path)}
                     alt={`v${variantNum}`}
-                    className="w-full aspect-[16/9] object-cover pointer-events-none"
+                    className="w-full aspect-[16/9] object-cover cursor-pointer"
+                    onClick={() => setExpandedImage({ path, variantNum })}
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1.5 py-0.5 flex items-center justify-between">
                     <span className="text-[9px] text-gray-300 font-mono">v{variantNum}</span>
-                    <span className="text-[9px] text-teal-400">Insert / Drag</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleKeep(variantNum) }}
+                      className="text-[9px] text-teal-400 hover:text-teal-300"
+                    >Insert</button>
                   </div>
-                </button>
+                </div>
               )
             })}
           </div>
+
+          {/* Expanded image modal */}
+          {expandedImage && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setExpandedImage(null)}>
+              <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+                <img
+                  src={beatlabFileUrl(projectName, expandedImage.path)}
+                  alt={`v${expandedImage.variantNum}`}
+                  className="max-w-full max-h-[85vh] object-contain rounded-lg"
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-black/80 rounded-b-lg px-4 py-2 flex items-center justify-between">
+                  <span className="text-sm text-gray-300 font-mono">v{expandedImage.variantNum}</span>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { handleKeep(expandedImage.variantNum); setExpandedImage(null) }}
+                      className="text-sm text-teal-400 hover:text-teal-300 font-medium"
+                    >Insert at event time</button>
+                    <button
+                      onClick={() => setExpandedImage(null)}
+                      className="text-sm text-gray-500 hover:text-gray-300"
+                    >Close</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={handleGenerateMore}

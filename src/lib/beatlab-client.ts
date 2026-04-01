@@ -276,6 +276,16 @@ export async function fetchUnselectedCandidates(project: string): Promise<Unsele
   return data.candidates
 }
 
+export async function postGenerateKeyframeVariations(project: string, keyframeId: string, count?: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-variations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, count: count || 4 }),
+  })
+  if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ jobId: string; keyframeId: string }>
+}
+
 export async function postAssignKeyframeImage(project: string, keyframeId: string, sourcePath: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-keyframe-image`, {
     method: 'POST',

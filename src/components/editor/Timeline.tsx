@@ -109,7 +109,7 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
       className="relative h-5 shrink-0 border-b border-gray-800 cursor-crosshair"
       onClick={(e) => {
         const rect = e.currentTarget.getBoundingClientRect()
-        const x = e.clientX - rect.left + scrollLeft
+        const x = e.clientX - rect.left
         const time = x / pxPerSec
         onAdd(time)
       }}
@@ -130,8 +130,7 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
                 setEditingId(m.id)
                 setEditText(m.label)
               }}
-              onContextMenu={(e) => {
-                e.preventDefault()
+              onDoubleClick={(e) => {
                 e.stopPropagation()
                 onRemove(m.id)
               }}
@@ -300,7 +299,19 @@ const MAX_AUDIO_HEIGHT = 400
 
 export function Timeline({ data }: { data: EditorData }) {
   const router = useRouter()
-  const [currentTime, setCurrentTime] = useState(0)
+  const [currentTime, setCurrentTime] = useState(() => {
+    if (typeof window === 'undefined') return 0
+    const stored = localStorage.getItem(`beatlab-playhead-${data.projectName}`)
+    return stored ? parseFloat(stored) : 0
+  })
+  // Persist playhead position to localStorage (debounced)
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      localStorage.setItem(`beatlab-playhead-${data.projectName}`, String(currentTime))
+    }, 500)
+    return () => clearTimeout(handle)
+  }, [currentTime, data.projectName])
+
   const [duration, setDuration] = useState(0)
   const [pxPerSec, setPxPerSec] = useState(() => {
     if (typeof window === 'undefined') return 20
@@ -409,7 +420,7 @@ export function Timeline({ data }: { data: EditorData }) {
       if (ai.audioEvents.length > 0) setAiAudioEvents(ai.audioEvents)
       if (ai.audioRules.length > 0) setAiAudioRules(ai.audioRules)
       if (Object.keys(ai.audioOnsets).length > 0) setAiAudioOnsets(ai.audioOnsets)
-      if (ai.audioDescriptions && (ai.audioDescriptions as unknown[]).length > 0) setAiAudioDescriptions(ai.audioDescriptions as typeof aiAudioDescriptions)
+      // Note: audioDescriptions come from descriptions.md (route loader), NOT from audio intelligence
     }).catch(() => {})
   }, [data.projectName])
 
@@ -1406,6 +1417,14 @@ export function Timeline({ data }: { data: EditorData }) {
             + Track
           </button>
 
+          <button
+            onClick={() => { const was = showDownloadPreview; closeAllPanels(); if (!was) setShowDownloadPreview(true) }}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showDownloadPreview ? 'bg-green-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-green-400/70 hover:text-green-300'}`}
+            title="Download preview as WebM"
+          >
+            {recording ? `Rec ${Math.round(recording.progress * 100)}%` : 'Preview'}
+          </button>
+
           {selectedKeyframeIds.size > 0 && (
             <button
               onClick={async () => {
@@ -1430,6 +1449,22 @@ export function Timeline({ data }: { data: EditorData }) {
             title="Show deleted keyframes bin"
           >
             Bin
+          </button>
+
+          <button
+            onClick={async () => {
+              const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
+              await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ time: currentTime }),
+              })
+            }}
+            disabled={!currentKeyframe}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-green-400 hover:text-green-300 disabled:text-gray-600 disabled:hover:bg-gray-800 px-2 py-1 rounded transition-colors"
+            title="Capture the full-res frame at playhead (no effects) and save to bench"
+          >
+            Bench Keyframe
           </button>
 
           <button
@@ -1507,7 +1542,7 @@ export function Timeline({ data }: { data: EditorData }) {
             {/* Audio description track */}
             {aiAudioDescriptions.length > 0 && (
               <div className="relative shrink-0 border-b border-gray-800">
-                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
+                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
                   Desc
                 </div>
                 <AudioDescriptionTrack
@@ -1608,7 +1643,7 @@ export function Timeline({ data }: { data: EditorData }) {
               style={audioTrackHeight ? { height: audioTrackHeight } : { minHeight: 80 }}
               onClick={handleTrackClick}
             >
-              <div className="sticky left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
+              <div className="sticky left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
                 Audio
               </div>
               {/* Beat markers */}
@@ -1635,7 +1670,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Effects track */}
             <div className="relative h-8 shrink-0 cursor-crosshair">
-              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
+              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
                 FX
               </div>
               <EffectsTrack
@@ -1662,7 +1697,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Suppression track */}
             <div className="relative h-6 shrink-0 border-t border-gray-800 cursor-crosshair">
-              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
+              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
                 Mute
               </div>
               <SuppressionTrack
@@ -1682,7 +1717,7 @@ export function Timeline({ data }: { data: EditorData }) {
             {/* Rules track */}
             {aiAudioRules.length > 0 && (
               <div className="relative shrink-0 border-t border-gray-800">
-                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit">
+                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
                   Rules
                 </div>
                 <RulesTrack

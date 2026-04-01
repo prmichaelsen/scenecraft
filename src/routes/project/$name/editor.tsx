@@ -283,7 +283,6 @@ export const getAudioIntelligenceData = createServerFn({ method: 'GET' })
       audioEvents: aiData.events || [],
       audioRules: aiData.rules || [],
       audioOnsets: (aiData as Record<string, unknown>).onsets as Record<string, Record<string, { time: number; strength: number }[]>> || {},
-      audioDescriptions: aiData.sections || [],
     }
   })
 
@@ -416,6 +415,13 @@ export const generateStagedCandidate = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { postGenerateStagedCandidate } = await import('@/lib/beatlab-client')
     return postGenerateStagedCandidate(data.projectName, data.prompt, data.stillName, data.stagingId, data.count)
+  })
+
+export const generateKeyframeVariations = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
+  .handler(async ({ data }) => {
+    const { postGenerateKeyframeVariations } = await import('@/lib/beatlab-client')
+    return postGenerateKeyframeVariations(data.projectName, data.keyframeId, data.count)
   })
 
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })

@@ -68,7 +68,7 @@ export function SuppressionTrack({
     }
 
     document.addEventListener('mouseup', handleMouseUp)
-  }, [pxPerSec, onAddSuppression])
+  }, [pxPerSec, onAddSuppression, scrollLeft])
 
   return (
     <div
