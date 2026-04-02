@@ -34,10 +34,11 @@ type BeatEffectPreviewProps = {
 const VERTEX_SHADER = `
   attribute vec2 a_position;
   attribute vec2 a_texCoord;
+  uniform float u_flipY;
   varying vec2 v_texCoord;
   void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
-    v_texCoord = a_texCoord;
+    v_texCoord = vec2(a_texCoord.x, mix(a_texCoord.y, 1.0 - a_texCoord.y, u_flipY));
   }
 `
 
@@ -266,6 +267,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     glowSwellLoc: WebGLUniformLocation
     flashLoc: WebGLUniformLocation
     echoLoc: WebGLUniformLocation
+    flipYLoc: WebGLUniformLocation
     // Compositor
     compProgram: WebGLProgram
     compBaseTex: WebGLTexture
@@ -387,6 +389,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       glowSwellLoc: gl.getUniformLocation(program, 'u_glowSwell')!,
       flashLoc: gl.getUniformLocation(program, 'u_flash')!,
       echoLoc: gl.getUniformLocation(program, 'u_echo')!,
+      flipYLoc: gl.getUniformLocation(program, 'u_flipY')!,
       compProgram,
       compBaseTex: textureA, // reuse for uploads
       compFbo: accum1.fbo,
@@ -463,6 +466,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.compFbo)
       gl.viewport(0, 0, canvas.width, canvas.height)
       gl.useProgram(ctx.program)
+      gl.uniform1f(ctx.flipYLoc, 0)
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bottomA)
@@ -523,10 +527,11 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
         const tmpT = readTex; readTex = writeTex; writeTex = tmpT
       }
 
-      // Final pass: draw composited result to screen with beat effects
+      // Final pass: draw composited result to screen with beat effects (flip Y for FBO texture)
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       gl.viewport(0, 0, canvas.width, canvas.height)
       gl.useProgram(ctx.program)
+      gl.uniform1f(ctx.flipYLoc, 1)
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, readTex)
       gl.activeTexture(gl.TEXTURE1)
@@ -543,6 +548,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       const singleBlend = singleLayer?.blendFactor ?? blend
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.uniform1f(ctx.flipYLoc, 0)
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceA)

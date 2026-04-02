@@ -70,7 +70,7 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef }
   return (
     <div
       ref={containerRef}
-      className="absolute top-0 h-full z-10 pointer-events-none"
+      className="absolute top-0 h-full z-30 pointer-events-none"
       style={{ left: x, width: 1 }}
     >
       {/* Visible line */}

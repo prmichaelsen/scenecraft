@@ -5,7 +5,7 @@ import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/p
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData } from '@/routes/project/$name/editor'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
-import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, postDeleteTrack, type BlendMode, type Track } from '@/lib/beatlab-client'
+import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, postDeleteTrack, postReorderTracks, type BlendMode, type Track } from '@/lib/beatlab-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
@@ -33,13 +33,15 @@ import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
 
 const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
 
-function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSettings }: {
+function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSettings, onMoveUp, onMoveDown }: {
   track: Track
   isActive: boolean
   onSelect: () => void
   onUpdate: (updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) => void
   onDelete?: () => void
   onOpenSettings?: () => void
+  onMoveUp?: () => void
+  onMoveDown?: () => void
 }) {
   return (
     <div
@@ -88,6 +90,21 @@ function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSett
       />
       <span className="text-[8px] text-gray-600 w-6 text-right">{Math.round(track.baseOpacity * 100)}%</span>
 
+      {/* Reorder */}
+      {onMoveUp && (
+        <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>
+      )}
+      {onMoveDown && (
+        <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>
+      )}
+
+      {/* Hide */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onUpdate({ hidden: true } as never) }}
+        className="text-[10px] text-gray-500 hover:text-gray-300"
+        title="Hide track from timeline"
+      >⊘</button>
+
       {/* Delete */}
       {onDelete && (
         <button
@@ -100,7 +117,7 @@ function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSett
   )
 }
 
-function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate }: {
+function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate, sectionMarkers, onSectionMarkerClick }: {
   markers: { id: string; time: number; label: string }[]
   pxPerSec: number
   scrollLeft: number
@@ -108,6 +125,8 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
   onAdd: (time: number) => void
   onRemove: (id: string) => void
   onUpdate: (id: string, label: string) => void
+  sectionMarkers?: { id: string; time: number; label: string }[]
+  onSectionMarkerClick?: (sectionId: string) => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
@@ -175,6 +194,27 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
                 />
               </div>
             )}
+          </div>
+        )
+      })}
+      {/* Blue section markers */}
+      {sectionMarkers?.map((sm) => {
+        const x = sm.time * pxPerSec
+        if (x < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
+        return (
+          <div key={`sec-${sm.id}`} className="absolute top-0 h-full group/sec" style={{ left: x - 5 }}>
+            <div
+              className="w-[10px] h-full cursor-pointer pointer-events-auto relative flex flex-col items-center"
+              onClick={(e) => { e.stopPropagation(); onSectionMarkerClick?.(sm.id) }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" className="shrink-0">
+                <polygon points="5,10 0,0 10,0" fill="currentColor" className="text-blue-500/80 group-hover/sec:text-blue-400" />
+              </svg>
+              <div className="w-px flex-1 bg-blue-500/40 group-hover/sec:bg-blue-400/60" />
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sec:block bg-gray-800 text-[10px] text-blue-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none max-w-[200px] truncate">
+                {sm.label}
+              </div>
+            </div>
           </div>
         )
       })}
@@ -341,6 +381,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showImport, setShowImport] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [showSections, setShowSections] = useState(false)
+  const [scrollToSectionId, setScrollToSectionId] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showDownloadPreview, setShowDownloadPreview] = useState(false)
   const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/beatlab-client').AudioDescription | null>(null)
@@ -495,7 +536,10 @@ export function Timeline({ data }: { data: EditorData }) {
     })
   }, [aiAudioEvents, aiAudioOnsets, localRules])
 
-  const sortedTracks = [...data.tracks].sort((a, b) => a.zOrder - b.zOrder)
+  // Highest zOrder = top of compositor = first in DOM (top of track list)
+  const allTracks = [...data.tracks].sort((a, b) => b.zOrder - a.zOrder)
+  const sortedTracks = allTracks.filter((t) => !(t as Record<string, unknown>).hidden)
+  const hiddenTracks = allTracks.filter((t) => (t as Record<string, unknown>).hidden)
   const trackKeyframes = new Map<string, KeyframeWithTime[]>()
   const trackTransitions = new Map<string, Transition[]>()
   for (const track of sortedTracks) {
@@ -609,8 +653,15 @@ export function Timeline({ data }: { data: EditorData }) {
   const CROSSFADE_FRAMES = 4 // 4 frames each side = 8 frame overlap at 24fps (~333ms)
   const crossfadeData = (() => {
     if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) {
-      // No transition — show current keyframe from frame cache
+      // No transition — check if we're in a gap or at a keyframe hold
       if (currentKeyframe) {
+        const hasOutgoing = localTransitions.some((tr) => tr.from === currentKeyframe.id)
+        const kfIdx = keyframes.findIndex((k) => k.id === currentKeyframe.id)
+        const nextKf = kfIdx >= 0 && kfIdx < keyframes.length - 1 ? keyframes[kfIdx + 1] : null
+        // Gap: no outgoing transition and we're past the keyframe
+        if (!hasOutgoing && nextKf && currentTime > currentKeyframe.timeSeconds + 0.1) {
+          return { frameA: null, frameB: null, blendFactor: 0 }
+        }
         const kfKey = `kf:${currentKeyframe.id}`
         const kfFrame = getFrameAtProgress(kfKey, 0)
         if (kfFrame) return { frameA: kfFrame, frameB: null, blendFactor: 0 }
@@ -667,7 +718,8 @@ export function Timeline({ data }: { data: EditorData }) {
   // Compute per-track layers for multi-track compositing
   const trackLayers: import('./BeatEffectPreview').TrackLayer[] = (() => {
     if (sortedTracks.length <= 1) return [] // single-track uses legacy path
-    return sortedTracks.filter((t) => t.enabled).map((track) => {
+    // Compositor renders bottom-to-top (ascending zOrder)
+    return [...sortedTracks].reverse().filter((t) => t.enabled).map((track) => {
       const tKfs = trackKeyframes.get(track.id) || []
       const tTrs = trackTransitions.get(track.id) || []
       // Find current keyframe for this track
@@ -690,6 +742,16 @@ export function Timeline({ data }: { data: EditorData }) {
         return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
+        // Check if we're in a gap: curKf exists but no transition connects it forward
+        const hasOutgoing = tTrs.some((tr) => tr.from === curKf.id)
+        const nextKfIdx = tKfs.findIndex((k) => k.id === curKf.id) + 1
+        const nextKf = nextKfIdx < tKfs.length ? tKfs[nextKfIdx] : null
+        // In a gap if: no outgoing transition AND we're past this kf's "hold" region
+        // Hold region = the kf itself (show its image at its exact time) but not beyond
+        if (!hasOutgoing && nextKf && currentTime > curKf.timeSeconds + 0.1) {
+          // Gap — return transparent
+          return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        }
         const kfKey = `kf:${curKf.id}`
         const frameA = getFrameAtProgress(kfKey, 0)
         return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
@@ -1437,6 +1499,22 @@ export function Timeline({ data }: { data: EditorData }) {
             + Track
           </button>
 
+          {hiddenTracks.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) {
+                  postUpdateTrack(data.projectName, e.target.value, { hidden: false } as never).then(() => router.invalidate())
+                }
+              }}
+              className="text-[10px] bg-gray-800 text-gray-500 rounded px-1 py-1 border-none focus:outline-none cursor-pointer"
+              title="Show hidden tracks"
+            >
+              <option value="">Show ({hiddenTracks.length})</option>
+              {hiddenTracks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          )}
+
           <button
             onClick={() => { const was = showDownloadPreview; closeAllPanels(); if (!was) setShowDownloadPreview(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showDownloadPreview ? 'bg-green-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-green-400/70 hover:text-green-300'}`}
@@ -1539,60 +1617,73 @@ export function Timeline({ data }: { data: EditorData }) {
         {/* Timeline tracks */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-x-auto overflow-y-hidden relative"
+          className="flex-1 overflow-x-auto overflow-y-auto relative"
           onWheel={handleWheel}
           onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
         >
           <div style={{ width: Math.max(totalWidth, 800), minHeight: '100%' }} className="relative flex flex-col">
-            {/* Time ruler */}
-            <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
+            {/* Sticky header: time ruler, markers, descriptions */}
+            <div className="sticky top-0 z-20 bg-gray-950">
+              {/* Time ruler */}
+              <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
 
-            {/* Marker track */}
-            <MarkerTrack
-              markers={markers}
-              pxPerSec={pxPerSec}
-              scrollLeft={scrollLeft}
-              viewportWidth={viewportWidth}
-              onAdd={(time) => {
-                const id = `m_${Date.now()}`
-                const t = Math.round(time * 100) / 100
-                setMarkers((prev) => [...prev, { id, time: t, label: '' }])
-                postAddMarker(data.projectName, id, t).catch(() => {})
-              }}
-              onRemove={(id) => {
-                setMarkers((prev) => prev.filter((m) => m.id !== id))
-                postRemoveMarker(data.projectName, id).catch(() => {})
-              }}
-              onUpdate={(id, label) => {
-                setMarkers((prev) => prev.map((m) => m.id === id ? { ...m, label } : m))
-                postUpdateMarker(data.projectName, id, label).catch(() => {})
-              }}
-            />
+              {/* Marker track */}
+              <MarkerTrack
+                markers={markers}
+                pxPerSec={pxPerSec}
+                scrollLeft={scrollLeft}
+                viewportWidth={viewportWidth}
+                onAdd={(time) => {
+                  const id = `m_${Date.now()}`
+                  const t = Math.round(time * 100) / 100
+                  setMarkers((prev) => [...prev, { id, time: t, label: '' }])
+                  postAddMarker(data.projectName, id, t).catch(() => {})
+                }}
+                onRemove={(id) => {
+                  setMarkers((prev) => prev.filter((m) => m.id !== id))
+                  postRemoveMarker(data.projectName, id).catch(() => {})
+                }}
+                onUpdate={(id, label) => {
+                  setMarkers((prev) => prev.map((m) => m.id === id ? { ...m, label } : m))
+                  postUpdateMarker(data.projectName, id, label).catch(() => {})
+                }}
+                sectionMarkers={data.narrativeSections.map((s) => {
+                  const parts = s.start.split(':')
+                  const time = parts.length === 2 ? parseInt(parts[0], 10) * 60 + parseFloat(parts[1]) : 0
+                  return { id: s.id, time, label: s.label }
+                })}
+                onSectionMarkerClick={(sectionId) => {
+                  closeAllPanels()
+                  setShowSections(true)
+                  setScrollToSectionId(sectionId)
+                }}
+              />
 
-            {/* Audio description track */}
-            {aiAudioDescriptions.length > 0 && (
-              <div className="relative shrink-0 border-b border-gray-800">
-                <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
-                  Desc
+              {/* Audio description track */}
+              {aiAudioDescriptions.length > 0 && (
+                <div className="relative shrink-0 border-b border-gray-800">
+                  <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
+                    Desc
+                  </div>
+                  <AudioDescriptionTrack
+                    descriptions={aiAudioDescriptions}
+                    audioEvents={aiAudioEvents}
+                    pxPerSec={pxPerSec}
+                    scrollLeft={scrollLeft}
+                    viewportWidth={viewportWidth}
+                    onSectionClick={(sec) => {
+                      closeAllPanels()
+                      setSelectedAudioDescription((prev) =>
+                        prev?.sectionIndex === sec.sectionIndex ? null : sec
+                      )
+                    }}
+                  />
                 </div>
-                <AudioDescriptionTrack
-                  descriptions={aiAudioDescriptions}
-                  audioEvents={aiAudioEvents}
-                  pxPerSec={pxPerSec}
-                  scrollLeft={scrollLeft}
-                  viewportWidth={viewportWidth}
-                  onSectionClick={(sec) => {
-                    closeAllPanels()
-                    setSelectedAudioDescription((prev) =>
-                      prev?.sectionIndex === sec.sectionIndex ? null : sec
-                    )
-                  }}
-                />
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Video tracks */}
-            {sortedTracks.map((track) => {
+            {sortedTracks.map((track, trackIdx) => {
               const tKfs = trackKeyframes.get(track.id) || []
               const tTrs = trackTransitions.get(track.id) || []
               const isActive = track.id === selectedTrackId
@@ -1613,12 +1704,22 @@ export function Timeline({ data }: { data: EditorData }) {
                       closeAllPanels()
                       setChromaKeyTrackId(track.id)
                     }}
+                    onMoveUp={trackIdx > 0 ? () => {
+                      const ids = sortedTracks.map((t) => t.id)
+                      ;[ids[trackIdx - 1], ids[trackIdx]] = [ids[trackIdx], ids[trackIdx - 1]]
+                      postReorderTracks(data.projectName, ids).then(() => router.invalidate())
+                    } : undefined}
+                    onMoveDown={trackIdx < sortedTracks.length - 1 ? () => {
+                      const ids = sortedTracks.map((t) => t.id)
+                      ;[ids[trackIdx], ids[trackIdx + 1]] = [ids[trackIdx + 1], ids[trackIdx]]
+                      postReorderTracks(data.projectName, ids).then(() => router.invalidate())
+                    } : undefined}
                   />
                   {/* Track content */}
                   <div
-                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''}`}
+                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'border-l-2 border-l-blue-500' : ''}`}
                     style={{ height: videoTrackHeight }}
-                    onClick={handleTrackClick}
+                    onClick={(e) => { setSelectedTrackId(track.id); handleTrackClick(e) }}
                   >
                     {isActive && <SectionBands sections={data.sections} pxPerSec={pxPerSec} />}
                     <VideoTrack
@@ -1854,11 +1955,14 @@ export function Timeline({ data }: { data: EditorData }) {
         <NarrativeSectionPanel
           sections={data.narrativeSections}
           projectName={data.projectName}
-          onClose={() => setShowSections(false)}
+          onClose={() => { setShowSections(false); setScrollToSectionId(null) }}
           onSeek={(time) => {
             if (seekFnRef.current) seekFnRef.current(time)
             else setCurrentTime(time)
           }}
+          onSectionsChange={() => router.invalidate()}
+          currentTime={currentTime}
+          scrollToId={scrollToSectionId}
         />
       ) : selectedKeyframe ? (
         <KeyframePanel

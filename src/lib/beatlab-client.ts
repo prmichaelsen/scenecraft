@@ -232,6 +232,7 @@ export type Track = {
   enabled: boolean
   opacityKeyframes: { id: string; time: number; opacity: number }[]
   chromaKey?: ChromaKeyConfig
+  hidden?: boolean
 }
 
 export async function fetchTracks(project: string): Promise<Track[]> {

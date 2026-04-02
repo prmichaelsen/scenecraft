@@ -230,6 +230,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         enabled: t.enabled !== false,
         opacityKeyframes: (t.opacityKeyframes as { id: string; time: number; opacity: number }[]) || [],
         chromaKey: t.chromaKey as import('@/lib/beatlab-client').ChromaKeyConfig | undefined,
+        hidden: !!t.hidden,
       })),
     }
   })

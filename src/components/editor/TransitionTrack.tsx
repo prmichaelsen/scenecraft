@@ -128,7 +128,7 @@ export function TransitionTrack({
             {/* Duration label above transition bar */}
             {width > 30 && (
               <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center pointer-events-none">
-                <span className="text-[8px] font-mono text-gray-600">{timelineDur.toFixed(1)}s</span>
+                <span className="text-[8px] font-mono text-gray-600">{timelineDur.toFixed(2)}s</span>
               </div>
             )}
 
@@ -191,7 +191,7 @@ export function TransitionTrack({
 
             {/* Hover tooltip */}
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-xs text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none">
-              {tr.id}: {tr.from} → {tr.to} ({timelineDur.toFixed(1)}s on timeline, {tr.durationSeconds.toFixed(1)}s video)
+              {tr.id}: {tr.from} → {tr.to} ({timelineDur.toFixed(2)}s on timeline, {tr.durationSeconds.toFixed(2)}s video)
               {speed && <span className="text-orange-400 ml-1">{speed}x</span>}
               {hasCandidates && <span className="text-orange-400 ml-1">{Object.values(tr.candidates).reduce((s, a) => s + a.length, 0)} videos</span>}
             </div>

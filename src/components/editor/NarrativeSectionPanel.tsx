@@ -11,6 +11,9 @@ type NarrativeSectionPanelProps = {
   projectName: string
   onClose: () => void
   onSeek: (time: number) => void
+  onSectionsChange: () => void
+  currentTime: number
+  scrollToId?: string | null
 }
 
 function parseTs(ts: string): number {
@@ -19,7 +22,13 @@ function parseTs(ts: string): number {
   return 0
 }
 
-export function NarrativeSectionPanel({ sections: initialSections, projectName, onClose, onSeek }: NarrativeSectionPanelProps) {
+function toTs(s: number): string {
+  const m = Math.floor(s / 60)
+  const sec = s - m * 60
+  return `${m}:${sec < 10 ? '0' : ''}${sec.toFixed(2)}`
+}
+
+export function NarrativeSectionPanel({ sections: initialSections, projectName, onClose, onSeek, onSectionsChange, currentTime, scrollToId }: NarrativeSectionPanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -61,10 +70,52 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
   }, [])
 
   const [sections, setSections] = useState(initialSections)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(scrollToId || null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { setSections(initialSections) }, [initialSections])
+
+  // Scroll to section when scrollToId changes
+  useEffect(() => {
+    if (scrollToId) setExpandedId(scrollToId)
+  }, [scrollToId])
+
+  const handleAddSection = useCallback(() => {
+    const ts = toTs(currentTime)
+    const newId = `section_${Date.now()}`
+
+    setSections((prev) => {
+      const sorted = [...prev].sort((a, b) => parseTs(a.start) - parseTs(b.start))
+      // Find the section that contains the current time and split it
+      const containingIdx = sorted.findIndex((s, i) => {
+        const start = parseTs(s.start)
+        const end = s.end ? parseTs(s.end) : (i < sorted.length - 1 ? parseTs(sorted[i + 1].start) : Infinity)
+        return currentTime >= start && currentTime < end
+      })
+
+      const newSection: NarrativeSection = {
+        id: newId, label: `Section at ${ts}`, start: ts, end: '',
+        mood: '', energy: '', instruments: [], motifs: [], events: [],
+        visual_direction: '', notes: '',
+      }
+
+      if (containingIdx >= 0) {
+        // Set the containing section's end to the split point
+        sorted[containingIdx] = { ...sorted[containingIdx], end: ts }
+      }
+
+      // Insert after the containing section
+      const insertIdx = containingIdx >= 0 ? containingIdx + 1 : sorted.length
+      sorted.splice(insertIdx, 0, newSection)
+      return sorted
+    })
+    setExpandedId(newId)
+  }, [currentTime])
+
+  const handleDeleteSection = useCallback((id: string) => {
+    setSections((prev) => prev.filter((s) => s.id !== id))
+    if (expandedId === id) setExpandedId(null)
+  }, [expandedId])
 
   const handleFieldChange = useCallback((sectionId: string, field: string, value: string | string[]) => {
     setSections((prev) => prev.map((s) =>
@@ -76,10 +127,11 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
     setSaving(true)
     try {
       await postUpdateNarrative(projectName, sections)
+      onSectionsChange()
     } finally {
       setSaving(false)
     }
-  }, [projectName, sections])
+  }, [projectName, sections, onSectionsChange])
 
   return (
     <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col relative" style={{ width }}>
@@ -91,6 +143,12 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
         <div className="text-sm font-medium">Sections</div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleAddSection}
+            className="text-[10px] text-blue-400 hover:text-blue-300"
+          >
+            + Add
+          </button>
           <button
             onClick={handleSave}
             disabled={saving}
@@ -117,6 +175,7 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
                 onToggle={() => setExpandedId(expandedId === section.id ? null : section.id)}
                 onChange={handleFieldChange}
                 onSeek={() => onSeek(parseTs(section.start))}
+                onDelete={() => handleDeleteSection(section.id)}
               />
             ))}
           </div>
@@ -126,12 +185,13 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
   )
 }
 
-function SectionCard({ section, expanded, onToggle, onChange, onSeek }: {
+function SectionCard({ section, expanded, onToggle, onChange, onSeek, onDelete }: {
   section: NarrativeSection
   expanded: boolean
   onToggle: () => void
   onChange: (id: string, field: string, value: string | string[]) => void
   onSeek: () => void
+  onDelete: () => void
 }) {
   const s = section
   const cardRef = useRef<HTMLDivElement>(null)
@@ -160,6 +220,12 @@ function SectionCard({ section, expanded, onToggle, onChange, onSeek }: {
           className="text-[10px] text-blue-400 hover:text-blue-300 opacity-0 group-hover:opacity-100"
         >
           seek
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          className="text-[10px] text-red-400/60 hover:text-red-400 opacity-0 group-hover:opacity-100"
+        >
+          del
         </button>
       </div>
 
