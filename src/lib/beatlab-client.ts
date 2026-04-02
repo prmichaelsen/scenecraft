@@ -289,6 +289,22 @@ export async function postGenerateKeyframeVariations(project: string, keyframeId
   return res.json() as Promise<{ jobId: string; keyframeId: string }>
 }
 
+export async function postUpdateKeyframeLabel(project: string, keyframeId: string, label: string, labelColor: string) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-label`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, label, labelColor }),
+  })
+}
+
+export async function postUpdateTransitionLabel(project: string, transitionId: string, label: string, labelColor: string, tags?: string[]) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-label`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, label, labelColor, ...(tags ? { tags } : {}) }),
+  })
+}
+
 export async function postDuplicateTransitionVideo(project: string, sourceId: string, targetId: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-transition-video`, {
     method: 'POST',

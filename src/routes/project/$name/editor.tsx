@@ -64,6 +64,8 @@ export type Keyframe = {
   context: KeyframeContext | null
   candidates: string[]
   trackId: string
+  label: string
+  labelColor: string
 }
 
 export type Beat = {
@@ -90,6 +92,9 @@ export type Transition = {
   selected: number | string | null  // variant number (1-based), imported path, or null
   remap: { method: string; target_duration: number; curve_points?: [number, number][] }
   trackId: string
+  label: string
+  labelColor: string
+  tags: string[]
 }
 
 export type EditorData = {
@@ -156,6 +161,8 @@ const getEditorData = createServerFn({ method: 'GET' })
             ).filter(Boolean)
           : [],
         trackId: (kf.trackId as string) || 'track_1',
+        label: (kf.label as string) || '',
+        labelColor: (kf.labelColor as string) || '',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         // Flatten slot-based candidates to a simple list
@@ -196,6 +203,9 @@ const getEditorData = createServerFn({ method: 'GET' })
           selected,
           remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
           trackId: (tr.trackId as string) || 'track_1',
+          label: (tr.label as string) || '',
+          labelColor: (tr.labelColor as string) || '',
+          tags: Array.isArray(tr.tags) ? tr.tags as string[] : [],
         }
       }),
       audioFile: kfData.audioFile || null,
@@ -244,6 +254,8 @@ export const getTimelineData = createServerFn({ method: 'GET' })
             ).filter(Boolean)
           : [],
         trackId: (kf.trackId as string) || 'track_1',
+        label: (kf.label as string) || '',
+        labelColor: (kf.labelColor as string) || '',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         const candidates = Array.isArray(tr.candidates) ? tr.candidates as string[]
@@ -271,6 +283,9 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           selected,
           remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
           trackId: (tr.trackId as string) || 'track_1',
+          label: (tr.label as string) || '',
+          labelColor: (tr.labelColor as string) || '',
+          tags: Array.isArray(tr.tags) ? tr.tags as string[] : [],
         }
       }),
     }

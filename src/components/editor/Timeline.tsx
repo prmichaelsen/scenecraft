@@ -123,7 +123,7 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
         onAdd(time)
       }}
     >
-      <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 pointer-events-none">
+      <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
         Markers
       </div>
       {markers.map((m) => {
@@ -131,9 +131,9 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
         if (x < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
         const isEditing = editingId === m.id
         return (
-          <div key={m.id} className="absolute top-0 h-full group" style={{ left: x }}>
+          <div key={m.id} className="absolute top-0 h-full group" style={{ left: x - 5 }}>
             <div
-              className="w-2 h-full bg-amber-500/70 hover:bg-amber-400 cursor-pointer pointer-events-auto relative"
+              className="w-[10px] h-full cursor-pointer pointer-events-auto relative flex flex-col items-center"
               onClick={(e) => {
                 e.stopPropagation()
                 setEditingId(m.id)
@@ -144,6 +144,13 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
                 onRemove(m.id)
               }}
             >
+              {/* Wedge/triangle marker */}
+              <svg width="10" height="10" viewBox="0 0 10 10" className="shrink-0">
+                <polygon points="5,10 0,0 10,0" fill="currentColor" className="text-amber-500/80 group-hover:text-amber-400" />
+              </svg>
+              {/* Vertical line from tip */}
+              <div className="w-px flex-1 bg-amber-500/40 group-hover:bg-amber-400/60" />
+            </div>
               {/* Hover tooltip */}
               {!isEditing && m.label && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-[10px] text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none max-w-[200px] truncate">

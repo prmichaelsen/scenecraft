@@ -811,6 +811,17 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-beatlab-pool-path', videoPath)
         e.dataTransfer.effectAllowed = 'copy'
+        const preview = e.currentTarget.cloneNode(true) as HTMLElement
+        preview.style.width = '120px'
+        preview.style.height = '68px'
+        preview.style.opacity = '0.85'
+        preview.style.borderRadius = '4px'
+        preview.style.overflow = 'hidden'
+        preview.style.position = 'absolute'
+        preview.style.top = '-9999px'
+        document.body.appendChild(preview)
+        e.dataTransfer.setDragImage(preview, -12, -8)
+        requestAnimationFrame(() => document.body.removeChild(preview))
       }}
     >
       {blobUrl ? (
@@ -851,14 +862,13 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     transition.remap.curve_points || [[0, 0], [1, 1]]
   )
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // Logical size — canvas backing pixels scale with devicePixelRatio
   const W = 240
   const H = 150
   const PAD = 12
 
-  // Convert normalized [0-1, 0-1] to logical canvas coords
   const toCanvas = (x: number, y: number): [number, number] => [
     PAD + x * (W - 2 * PAD),
     H - PAD - y * (H - 2 * PAD),
@@ -868,7 +878,6 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     Math.max(0, Math.min(1, (H - PAD - cy) / (H - 2 * PAD))),
   ]
 
-  // Convert mouse event to logical canvas coords (accounts for CSS scaling)
   const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
     const canvas = canvasRef.current
     if (!canvas) return null
@@ -879,7 +888,6 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     ]
   }
 
-  // Draw the curve (scale for devicePixelRatio for crisp rendering)
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -910,13 +918,12 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     ctx.fillStyle = '#666'
     ctx.font = '8px monospace'
     ctx.textAlign = 'center'
-    ctx.fillText('Timeline Position →', W / 2, H - 1)
+    ctx.fillText('Timeline Position \u2192', W / 2, H - 1)
     ctx.save()
     ctx.translate(8, H / 2)
     ctx.rotate(-Math.PI / 2)
-    ctx.fillText('Video Progress →', 0, 0)
+    ctx.fillText('Video Frame \u2192', 0, 0)
     ctx.restore()
-    // Corner labels
     ctx.fillStyle = '#555'
     ctx.font = '7px monospace'
     ctx.textAlign = 'left'
@@ -938,11 +945,12 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     ctx.stroke()
     ctx.setLineDash([])
 
-    // Curve
-    ctx.strokeStyle = '#f97316'
-    ctx.lineWidth = 2
-    ctx.beginPath()
     const sorted = [...points].sort((a, b) => a[0] - b[0])
+
+    // Resulting remap curve (drawn from pins)
+    ctx.strokeStyle = '#f9731666'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
     for (let i = 0; i < sorted.length; i++) {
       const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
       if (i === 0) ctx.moveTo(cx, cy)
@@ -950,18 +958,68 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     }
     ctx.stroke()
 
-    // Control points
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+    // Pin lines and markers for intermediate points
+    for (let i = 1; i < sorted.length - 1; i++) {
+      const [timelinePos, videoFrame] = sorted[i]
+      const [cx, cy] = toCanvas(timelinePos, videoFrame)
+      const [, bottomY] = toCanvas(0, 0)
+      const isHovered = hoveredIdx === i
+      const isDragging = draggingIdx === i
+
+      // Vertical pin line from bottom axis up to pin point
+      ctx.strokeStyle = isDragging ? '#fb923c' : isHovered ? '#f97316aa' : '#f9731644'
+      ctx.lineWidth = 1
+      ctx.setLineDash([2, 2])
       ctx.beginPath()
-      ctx.arc(cx, cy, 5, 0, Math.PI * 2)
-      ctx.fillStyle = i === 0 || i === sorted.length - 1 ? '#666' : '#f97316'
+      ctx.moveTo(cx, bottomY)
+      ctx.lineTo(cx, cy)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // Horizontal guide line from left axis to pin point
+      ctx.strokeStyle = isDragging ? '#fb923c' : isHovered ? '#f97316aa' : '#f9731633'
+      ctx.lineWidth = 0.5
+      ctx.setLineDash([2, 3])
+      ctx.beginPath()
+      ctx.moveTo(PAD, cy)
+      ctx.lineTo(cx, cy)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // Pin diamond marker
+      const size = isDragging ? 6 : isHovered ? 5.5 : 5
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - size)
+      ctx.lineTo(cx + size, cy)
+      ctx.lineTo(cx, cy + size)
+      ctx.lineTo(cx - size, cy)
+      ctx.closePath()
+      ctx.fillStyle = isDragging ? '#fb923c' : '#f97316'
       ctx.fill()
       ctx.strokeStyle = '#fff'
       ctx.lineWidth = 1
       ctx.stroke()
+
+      // Frame % label next to pin
+      ctx.fillStyle = isHovered || isDragging ? '#fbbf24' : '#f97316'
+      ctx.font = '7px monospace'
+      ctx.textAlign = cx > W / 2 ? 'right' : 'left'
+      const labelX = cx > W / 2 ? cx - 8 : cx + 8
+      ctx.fillText(`${Math.round(videoFrame * 100)}%`, labelX, cy + 3)
     }
-  }, [points])
+
+    // Endpoint markers (circles, non-interactive)
+    for (const i of [0, sorted.length - 1]) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      ctx.beginPath()
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2)
+      ctx.fillStyle = '#555'
+      ctx.fill()
+      ctx.strokeStyle = '#888'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+  }, [points, hoveredIdx, draggingIdx])
 
   const save = useCallback(async (newPoints: [number, number][]) => {
     setSaving(true)
@@ -986,18 +1044,18 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     if (!pos) return
     const [cx, cy] = pos
 
-    // Check if clicking an existing point
+    // Check if clicking an existing pin
     const sorted = [...points].sort((a, b) => a[0] - b[0])
     for (let i = 0; i < sorted.length; i++) {
       const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
       if (Math.hypot(cx - px, cy - py) < 10) {
-        if (i === 0 || i === sorted.length - 1) return // Can't drag endpoints
+        if (i === 0 || i === sorted.length - 1) return
         setDraggingIdx(i)
         return
       }
     }
 
-    // Click on empty space — add a point
+    // Click on empty space — add a pin (Y = video frame, fixed; X = timeline position)
     const [nx, ny] = fromCanvas(cx, cy)
     const newPoints: [number, number][] = [...points, [nx, ny]]
     newPoints.sort((a, b) => a[0] - b[0])
@@ -1006,20 +1064,36 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
   }, [points, save])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (draggingIdx === null) return
     const pos = mouseToCanvas(e)
     if (!pos) return
-    const [nx, ny] = fromCanvas(pos[0], pos[1])
 
-    setPoints((prev) => {
-      const sorted = [...prev].sort((a, b) => a[0] - b[0])
-      // Constrain X between neighbors
-      const minX = sorted[draggingIdx - 1]?.[0] ?? 0
-      const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
-      sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), ny]
-      return sorted
-    })
-  }, [draggingIdx])
+    if (draggingIdx !== null) {
+      // Horizontal drag only — Y (video frame) stays locked
+      const [nx] = fromCanvas(pos[0], pos[1])
+      setPoints((prev) => {
+        const sorted = [...prev].sort((a, b) => a[0] - b[0])
+        const minX = sorted[draggingIdx - 1]?.[0] ?? 0
+        const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
+        const lockedY = sorted[draggingIdx][1]
+        sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), lockedY]
+        return sorted
+      })
+      return
+    }
+
+    // Hover detection for visual feedback
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    let found: number | null = null
+    for (let i = 1; i < sorted.length - 1; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      const [cx, cy] = pos
+      if (Math.hypot(cx - px, cy - py) < 10) {
+        found = i
+        break
+      }
+    }
+    setHoveredIdx(found)
+  }, [draggingIdx, points])
 
   const handleMouseUp = useCallback(() => {
     if (draggingIdx !== null) {
@@ -1040,6 +1114,7 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
         const newPoints = sorted.filter((_, j) => j !== i)
         setPoints(newPoints)
         save(newPoints)
+        setHoveredIdx(null)
         return
       }
     }
@@ -1049,18 +1124,21 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
     const defaultPoints: [number, number][] = [[0, 0], [1, 1]]
     setPoints(defaultPoints)
     save(defaultPoints)
+    setHoveredIdx(null)
   }, [save])
+
+  const pinCount = points.length - 2
 
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Time Remap</div>
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Keyframe Pins</div>
         <button
           onClick={handleReset}
-          disabled={saving || points.length <= 2}
+          disabled={saving || pinCount <= 0}
           className="text-[10px] text-gray-500 hover:text-gray-300 disabled:text-gray-700 transition-colors"
         >
-          Reset
+          Clear Pins
         </button>
       </div>
       <canvas
@@ -1072,12 +1150,12 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
         onDoubleClick={handleDoubleClick}
       />
       <div className="text-[9px] text-gray-600 space-y-0.5">
-        <div><span className="text-gray-500">Click</span> canvas to add point · <span className="text-gray-500">Drag</span> to adjust · <span className="text-gray-500">Double-click</span> to remove</div>
-        <div>{points.length > 2 ? `${points.length - 2} control points · ` : ''}Dashed line = linear (1:1). Curve above = slow start, fast end. Curve below = fast start, slow end.</div>
+        <div><span className="text-gray-500">Click</span> to pin a frame · <span className="text-gray-500">Drag</span> left/right to reposition · <span className="text-gray-500">Double-click</span> to remove</div>
+        <div>{pinCount > 0 ? `${pinCount} pin${pinCount > 1 ? 's' : ''} · ` : ''}Pinned frames lock to their timeline position. Playback speed adjusts between pins.</div>
       </div>
     </div>
   )

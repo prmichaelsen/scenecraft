@@ -213,9 +213,13 @@ export function VideoTrack({
               </div>
             )}
 
-            {/* Section label */}
-            <div className="absolute bottom-0.5 left-3 text-[8px] text-gray-500 truncate max-w-[60px]">
-              {kf.section}
+            {/* Label / section */}
+            <div className="absolute bottom-0.5 left-3 text-[8px] truncate max-w-[80px]" style={kf.labelColor ? { color: kf.labelColor } : undefined}>
+              {kf.label ? (
+                <span className="font-medium">{kf.label}</span>
+              ) : (
+                <span className="text-gray-500">{kf.section}</span>
+              )}
             </div>
 
             {/* Duration overlay during drag */}

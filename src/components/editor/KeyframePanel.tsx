@@ -281,6 +281,39 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
         <Field label="Timestamp" value={kf.timestamp} />
         <Field label="Section" value={kf.section} />
 
+        {/* Label + color */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Label</div>
+            <input
+              type="text"
+              value={kf.label || ''}
+              onChange={async (e) => {
+                kf.label = e.target.value
+                const { postUpdateKeyframeLabel } = await import('@/lib/beatlab-client')
+                postUpdateKeyframeLabel(projectName, kf.id, e.target.value, kf.labelColor || '').catch(() => {})
+              }}
+              onBlur={() => onDataChange()}
+              placeholder="Name this keyframe..."
+              className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Color</div>
+            <input
+              type="color"
+              value={kf.labelColor || '#9ca3af'}
+              onChange={async (e) => {
+                kf.labelColor = e.target.value
+                const { postUpdateKeyframeLabel } = await import('@/lib/beatlab-client')
+                postUpdateKeyframeLabel(projectName, kf.id, kf.label || '', e.target.value).catch(() => {})
+                onDataChange()
+              }}
+              className="w-8 h-7 rounded border border-gray-700 cursor-pointer"
+            />
+          </div>
+        </div>
+
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt</div>
@@ -472,7 +505,6 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
     if (typeof kf.selected === 'number') setSelectedIdx(kf.selected)
   }, [kf.id, kf.selected])
   const [selecting, setSelecting] = useState(false)
-  const [selectGeneration, setSelectGeneration] = useState(0)
   const [showModal, setShowModal] = useState(false)
 
   const handleSelect = useCallback(async (variantNum: number) => {
@@ -484,7 +516,6 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
       })
       console.log(`[KeyframePanel] selected ${kf.id} v${variantNum} OK`)
       setSelectedIdx(variantNum)
-      setSelectGeneration((g) => g + 1)
       kf.selected = variantNum
       // Invalidate frame cache so preview + video track update
       invalidateEntry(`kf:${kf.id}`)
@@ -636,6 +667,13 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
                 onDragStart={(e) => {
                   e.dataTransfer.setData('application/x-beatlab-pool-path', relativePath)
                   e.dataTransfer.effectAllowed = 'copy'
+                  const preview = e.currentTarget.cloneNode(true) as HTMLElement
+                  preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
+                  preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
+                  preview.style.position = 'absolute'; preview.style.top = '-9999px'
+                  document.body.appendChild(preview)
+                  e.dataTransfer.setDragImage(preview, -12, -8)
+                  requestAnimationFrame(() => document.body.removeChild(preview))
                 }}
               >
                 <img

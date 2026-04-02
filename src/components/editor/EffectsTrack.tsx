@@ -106,7 +106,7 @@ export function EffectsTrack({
   return (
     <div
       className="relative h-full overflow-visible"
-      onDoubleClick={handleTrackDoubleClick}
+      onClick={handleTrackDoubleClick}
       onMouseDown={handleTrackMouseDown}
     >
       {/* Effect markers */}
