@@ -213,7 +213,7 @@ function SectionCard({ section, expanded, onToggle, onChange, onSeek, onDelete }
         <span className="text-[10px] text-gray-600">{expanded ? '▼' : '▶'}</span>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-gray-300">{s.label}</div>
-          <div className="text-[10px] text-gray-500 truncate">{s.mood || 'No mood set'}</div>
+          <div className="text-[10px] text-gray-500 truncate">{s.notes || s.mood || 'No notes'}</div>
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); onSeek() }}

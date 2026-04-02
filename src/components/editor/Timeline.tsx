@@ -5,7 +5,7 @@ import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/p
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData } from '@/routes/project/$name/editor'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
-import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, postDeleteTrack, postReorderTracks, type BlendMode, type Track } from '@/lib/beatlab-client'
+import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/beatlab-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
@@ -31,88 +31,47 @@ import { SettingsPanel } from './SettingsPanel'
 import { AudioDescriptionTrack } from './AudioDescriptionTrack'
 import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
 
-const BLEND_MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
 
-function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSettings, onMoveUp, onMoveDown }: {
+
+function TrackHeader({ track, isActive, scrollLeft, onSelect, onUpdate, onOpenSettings, onMoveUp, onMoveDown }: {
   track: Track
   isActive: boolean
+  scrollLeft: number
   onSelect: () => void
   onUpdate: (updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) => void
-  onDelete?: () => void
   onOpenSettings?: () => void
   onMoveUp?: () => void
   onMoveDown?: () => void
 }) {
   return (
     <div
-      className={`flex items-center gap-2 px-2 py-1 border-b shrink-0 cursor-pointer ${isActive ? 'bg-blue-900/15 border-blue-500/40' : 'bg-gray-950/50 border-gray-800'}`}
+      className={`relative h-6 border-b shrink-0 cursor-pointer ${isActive ? 'bg-blue-900/15 border-blue-500/40' : 'bg-gray-950/50 border-gray-800'}`}
       onClick={onSelect}
     >
-      {/* Enable/disable */}
+      <div className="absolute top-0 h-full flex items-center gap-1.5 px-2 z-[5] bg-inherit" style={{ left: scrollLeft }}>
       <button
         onClick={(e) => { e.stopPropagation(); onUpdate({ enabled: !track.enabled }) }}
         className={`text-[10px] w-4 h-4 flex items-center justify-center rounded ${track.enabled ? 'text-green-400' : 'text-gray-600'}`}
         title={track.enabled ? 'Disable track' : 'Enable track'}
-      >
-        {track.enabled ? '●' : '○'}
-      </button>
+      >{track.enabled ? '●' : '○'}</button>
 
-      {/* Track name */}
-      <span className="text-[10px] text-gray-400 font-medium truncate min-w-0 flex-1">{track.name}</span>
+      <span className="text-[10px] text-gray-400 font-medium truncate">{track.name}</span>
 
-      {/* Blend mode */}
-      <select
-        value={track.blendMode}
-        onChange={(e) => { e.stopPropagation(); onUpdate({ blendMode: e.target.value as BlendMode }) }}
-        onClick={(e) => e.stopPropagation()}
-        className="text-[9px] bg-gray-800 text-gray-500 rounded px-1 py-0.5 border-none focus:outline-none cursor-pointer"
-      >
-        {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-      </select>
+      <button
+        onClick={(e) => { e.stopPropagation(); onOpenSettings?.() }}
+        className="text-[10px] text-gray-500 hover:text-gray-300"
+        title="Track settings"
+      >⚙</button>
 
-      {track.blendMode === 'chroma-key' && onOpenSettings && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onOpenSettings() }}
-          className="text-[10px] text-amber-400 hover:text-amber-300"
-          title="Chroma key settings"
-        >⚙</button>
-      )}
+      {onMoveUp && <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>}
+      {onMoveDown && <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>}
 
-      {/* Opacity */}
-      <input
-        type="range"
-        min={0} max={100} step={1}
-        value={Math.round(track.baseOpacity * 100)}
-        onChange={(e) => { e.stopPropagation(); onUpdate({ baseOpacity: parseInt(e.target.value, 10) / 100 }) }}
-        onClick={(e) => e.stopPropagation()}
-        className="w-12 h-2 accent-gray-500"
-        title={`Opacity: ${Math.round(track.baseOpacity * 100)}%`}
-      />
-      <span className="text-[8px] text-gray-600 w-6 text-right">{Math.round(track.baseOpacity * 100)}%</span>
-
-      {/* Reorder */}
-      {onMoveUp && (
-        <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>
-      )}
-      {onMoveDown && (
-        <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>
-      )}
-
-      {/* Hide */}
       <button
         onClick={(e) => { e.stopPropagation(); onUpdate({ hidden: true } as never) }}
         className="text-[10px] text-gray-500 hover:text-gray-300"
-        title="Hide track from timeline"
+        title="Hide track"
       >⊘</button>
-
-      {/* Delete */}
-      {onDelete && (
-        <button
-          onClick={(e) => { e.stopPropagation(); if (confirm(`Delete track "${track.name}"?`)) onDelete() }}
-          className="text-[10px] text-red-500/50 hover:text-red-400"
-          title="Delete track"
-        >×</button>
-      )}
+      </div>
     </div>
   )
 }
@@ -125,7 +84,7 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
   onAdd: (time: number) => void
   onRemove: (id: string) => void
   onUpdate: (id: string, label: string) => void
-  sectionMarkers?: { id: string; time: number; label: string }[]
+  sectionMarkers?: { id: string; time: number; label: string; notes?: string }[]
   onSectionMarkerClick?: (sectionId: string) => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -211,8 +170,9 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
                 <polygon points="5,10 0,0 10,0" fill="currentColor" className="text-blue-500/80 group-hover/sec:text-blue-400" />
               </svg>
               <div className="w-px flex-1 bg-blue-500/40 group-hover/sec:bg-blue-400/60" />
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sec:block bg-gray-800 text-[10px] text-blue-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none max-w-[200px] truncate">
-                {sm.label}
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/sec:block bg-gray-800 text-[10px] px-2 py-1 rounded shadow-lg z-50 pointer-events-none max-w-[250px]">
+                <div className="text-blue-300 font-medium truncate">{sm.label}</div>
+                {sm.notes && <div className="text-gray-400 whitespace-pre-wrap mt-0.5">{sm.notes}</div>}
               </div>
             </div>
           </div>
@@ -396,7 +356,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const nextFxId = useRef(data.userEffects.length + 1)
   const [selectedTrackId, setSelectedTrackId] = useState<string>(data.tracks[0]?.id || 'track_1')
   const [selectedRuleSection, setSelectedRuleSection] = useState<RuleSection | null>(null)
-  const [chromaKeyTrackId, setChromaKeyTrackId] = useState<string | null>(null)
+  const [trackSettingsId, setTrackSettingsId] = useState<string | null>(null)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
@@ -536,7 +496,7 @@ export function Timeline({ data }: { data: EditorData }) {
     })
   }, [aiAudioEvents, aiAudioOnsets, localRules])
 
-  // Highest zOrder = top of compositor = first in DOM (top of track list)
+  // Sort tracks by zOrder descending — highest z (top of compositor) at top of track list
   const allTracks = [...data.tracks].sort((a, b) => b.zOrder - a.zOrder)
   const sortedTracks = allTracks.filter((t) => !(t as Record<string, unknown>).hidden)
   const hiddenTracks = allTracks.filter((t) => (t as Record<string, unknown>).hidden)
@@ -553,9 +513,12 @@ export function Timeline({ data }: { data: EditorData }) {
   )
   const totalWidth = effectiveDuration * pxPerSec
 
+  // Find the current keyframe — prefer one with a selected image (for the preview src)
   const currentKeyframe = [...keyframes]
-    .reverse()
-    .find((kf) => kf.timeSeconds <= currentTime)
+    .filter((kf) => kf.timeSeconds <= currentTime)
+    .sort((a, b) => b.timeSeconds - a.timeSeconds)
+    .find((kf) => kf.hasSelectedImage)
+    || [...keyframes].reverse().find((kf) => kf.timeSeconds <= currentTime)
 
   // Find active transition at current time (if any with selected video)
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
@@ -717,9 +680,13 @@ export function Timeline({ data }: { data: EditorData }) {
 
   // Compute per-track layers for multi-track compositing
   const trackLayers: import('./BeatEffectPreview').TrackLayer[] = (() => {
-    if (sortedTracks.length <= 1) return [] // single-track uses legacy path
-    // Compositor renders bottom-to-top (ascending zOrder), skip empty tracks
-    const layers = [...sortedTracks].reverse().filter((t) => t.enabled).map((track) => {
+    // Always build layers — compositor handles 1 or N tracks uniformly
+    // Compositor: first layer with content becomes base, subsequent layers paint ON TOP.
+    // Track 1 (zOrder 0) = base, Track 2 (zOrder 1) = overlaid on top. Ascending order.
+    const layers = [...data.tracks]
+      .filter((t) => t.enabled && !(t as Record<string, unknown>).hidden)
+      .sort((a, b) => a.zOrder - b.zOrder)
+      .map((track) => {
       const tKfs = trackKeyframes.get(track.id) || []
       const tTrs = trackTransitions.get(track.id) || []
       // Find current keyframe for this track
@@ -738,26 +705,25 @@ export function Timeline({ data }: { data: EditorData }) {
         const progress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
         const variant = activeTr.selected ?? 'none'
         const key = `tr:${activeTr.id}:v${variant}`
-        const frameA = getFrameAtProgress(key, progress)
+        let frameA = getFrameAtProgress(key, progress)
+        // Fallback: if transition has no video, show the from-keyframe image instead
+        if (!frameA) {
+          const kfKey = `kf:${from.id}`
+          frameA = getFrameAtProgress(kfKey, 0)
+        }
         return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
-        // Check if we're in a gap: curKf exists but no transition connects it forward
-        const hasOutgoing = tTrs.some((tr) => tr.from === curKf.id)
-        const nextKfIdx = tKfs.findIndex((k) => k.id === curKf.id) + 1
-        const nextKf = nextKfIdx < tKfs.length ? tKfs[nextKfIdx] : null
-        // In a gap if: no outgoing transition AND we're past this kf's "hold" region
-        // Hold region = the kf itself (show its image at its exact time) but not beyond
-        if (!hasOutgoing && nextKf && currentTime > curKf.timeSeconds + 0.1) {
-          // Gap — return transparent
-          return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
-        }
         const kfKey = `kf:${curKf.id}`
         const frameA = getFrameAtProgress(kfKey, 0)
-        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        if (!frameA && curKf.hasSelectedImage) {
+          console.warn(`[layer] ${track.id} curKf=${curKf.id} hasImage=true but frame=null (not loaded yet?)`)
+        }
+        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
+    return layers
   })()
 
   // Check if the active transition's frames are still loading
@@ -870,10 +836,11 @@ export function Timeline({ data }: { data: EditorData }) {
     setSelectedAudioDescription(null)
     setShowDownloadPreview(false)
     setSelectedRuleSection(null)
-    setChromaKeyTrackId(null)
+    setTrackSettingsId(null)
   }, [])
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime, shiftKey?: boolean) => {
+    setSelectedTrackId(kf.trackId)
     if (shiftKey) {
       // Shift-click: toggle in multi-select set
       setSelectedKeyframeIds((prev) => {
@@ -894,6 +861,7 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [closeAllPanels])
 
   const handleTransitionClick = useCallback((tr: Transition) => {
+    setSelectedTrackId(tr.trackId)
     closeAllPanels()
     setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
   }, [closeAllPanels])
@@ -1344,7 +1312,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 transitionFrameA={crossfadeData.frameA}
                 transitionFrameB={crossfadeData.frameB}
                 blendFactor={crossfadeData.blendFactor}
-                layers={trackLayers.length > 1 ? trackLayers : undefined}
+                layers={trackLayers.length > 0 ? trackLayers : undefined}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
@@ -1651,7 +1619,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 sectionMarkers={data.narrativeSections.map((s) => {
                   const parts = s.start.split(':')
                   const time = parts.length === 2 ? parseInt(parts[0], 10) * 60 + parseFloat(parts[1]) : 0
-                  return { id: s.id, time, label: s.label }
+                  return { id: s.id, time, label: s.label, notes: s.notes }
                 })}
                 onSectionMarkerClick={(sectionId) => {
                   closeAllPanels()
@@ -1694,26 +1662,29 @@ export function Timeline({ data }: { data: EditorData }) {
                   <TrackHeader
                     track={track}
                     isActive={isActive}
+                    scrollLeft={scrollLeft}
                     onSelect={() => setSelectedTrackId(track.id)}
                     onUpdate={(updates) => {
                       postUpdateTrack(data.projectName, track.id, updates).then(() => router.invalidate())
                     }}
-                    onDelete={sortedTracks.length > 1 ? () => {
-                      postDeleteTrack(data.projectName, track.id).then(() => router.invalidate())
-                    } : undefined}
                     onOpenSettings={() => {
                       closeAllPanels()
-                      setChromaKeyTrackId(track.id)
+                      setTrackSettingsId(track.id)
                     }}
                     onMoveUp={trackIdx > 0 ? () => {
-                      const ids = sortedTracks.map((t) => t.id)
-                      ;[ids[trackIdx - 1], ids[trackIdx]] = [ids[trackIdx], ids[trackIdx - 1]]
-                      postReorderTracks(data.projectName, ids).then(() => router.invalidate())
+                      // Swap z_order with the track above (higher z_order in descending list = previous index)
+                      const above = sortedTracks[trackIdx - 1]
+                      Promise.all([
+                        postUpdateTrack(data.projectName, track.id, { z_order: above.zOrder } as never),
+                        postUpdateTrack(data.projectName, above.id, { z_order: track.zOrder } as never),
+                      ]).then(() => router.invalidate())
                     } : undefined}
                     onMoveDown={trackIdx < sortedTracks.length - 1 ? () => {
-                      const ids = sortedTracks.map((t) => t.id)
-                      ;[ids[trackIdx], ids[trackIdx + 1]] = [ids[trackIdx + 1], ids[trackIdx]]
-                      postReorderTracks(data.projectName, ids).then(() => router.invalidate())
+                      const below = sortedTracks[trackIdx + 1]
+                      Promise.all([
+                        postUpdateTrack(data.projectName, track.id, { z_order: below.zOrder } as never),
+                        postUpdateTrack(data.projectName, below.id, { z_order: track.zOrder } as never),
+                      ]).then(() => router.invalidate())
                     } : undefined}
                   />
                   {/* Track content */}
@@ -2077,12 +2048,12 @@ export function Timeline({ data }: { data: EditorData }) {
           onClose={() => setSelectedAudioDescription(null)}
           onKeyframeInserted={() => refreshTimeline()}
         />
-      ) : chromaKeyTrackId ? (
-        <ChromaKeyPanel
-          track={data.tracks.find((t) => t.id === chromaKeyTrackId) || data.tracks[0]}
-          onClose={() => setChromaKeyTrackId(null)}
-          onUpdate={(config) => {
-            postUpdateTrack(data.projectName, chromaKeyTrackId!, { chromaKey: config } as never).then(() => router.invalidate())
+      ) : trackSettingsId ? (
+        <TrackSettingsPanel
+          track={data.tracks.find((t) => t.id === trackSettingsId) || data.tracks[0]}
+          onClose={() => setTrackSettingsId(null)}
+          onUpdate={(updates) => {
+            postUpdateTrack(data.projectName, trackSettingsId!, updates as never).then(() => router.invalidate())
           }}
         />
       ) : selectedRuleSection ? (
@@ -2367,12 +2338,16 @@ function SuppressionEditorPanel({ suppression, onUpdate, onResize, onDelete, onC
   )
 }
 
-function ChromaKeyPanel({ track, onClose, onUpdate }: {
+function TrackSettingsPanel({ track, onClose, onUpdate }: {
   track: Track
   onClose: () => void
-  onUpdate: (config: import('@/lib/beatlab-client').ChromaKeyConfig) => void
+  onUpdate: (updates: Partial<Track>) => void
 }) {
   const STORAGE_KEY = 'beatlab-side-panel-width'
+  const BLEND_MODES: import('@/lib/beatlab-client').BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
+
+  const [blendMode, setBlendMode] = useState(track.blendMode)
+  const [opacity, setOpacity] = useState(track.baseOpacity)
   const [color, setColor] = useState<[number, number, number]>(track.chromaKey?.color || [0, 1, 0])
   const [threshold, setThreshold] = useState(track.chromaKey?.threshold ?? 0.3)
   const [feather, setFeather] = useState(track.chromaKey?.feather ?? 0.1)
@@ -2382,66 +2357,100 @@ function ChromaKeyPanel({ track, onClose, onUpdate }: {
   return (
     <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto" style={{ width: parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10) }}>
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
-        <span className="text-xs text-amber-400 font-medium">Chroma Key — {track.name}</span>
+        <span className="text-xs text-amber-400 font-medium">Track Settings — {track.name}</span>
         <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
       </div>
       <div className="p-3 space-y-4">
-        <div className="text-[10px] text-gray-500">
-          Remove a specific color from this track's frames. Pixels matching the key color become transparent, revealing the track below.
+
+        {/* Blend Mode */}
+        <div className="space-y-1">
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Blend Mode</label>
+          <select
+            value={blendMode}
+            onChange={(e) => {
+              const v = e.target.value as import('@/lib/beatlab-client').BlendMode
+              setBlendMode(v)
+              onUpdate({ blendMode: v })
+            }}
+            className="w-full bg-gray-800 text-gray-200 text-xs px-2 py-1.5 rounded border border-gray-700"
+          >
+            {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
         </div>
 
-        {/* Key color picker */}
+        {/* Opacity */}
         <div className="space-y-1">
-          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Key Color</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={hexColor}
-              onChange={(e) => {
-                const hex = e.target.value
-                const r = parseInt(hex.slice(1, 3), 16) / 255
-                const g = parseInt(hex.slice(3, 5), 16) / 255
-                const b = parseInt(hex.slice(5, 7), 16) / 255
-                setColor([r, g, b])
-              }}
-              className="w-10 h-8 rounded border border-gray-700 cursor-pointer"
-            />
-            <span className="text-[10px] text-gray-400 font-mono">{hexColor}</span>
-            <div className="flex gap-1">
-              <button onClick={() => setColor([0, 1, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-green-800 text-green-300">Green</button>
-              <button onClick={() => setColor([0, 0, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-blue-800 text-blue-300">Blue</button>
-              <button onClick={() => setColor([0, 0, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">Black</button>
-              <button onClick={() => setColor([1, 1, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-white text-gray-800">White</button>
-            </div>
-          </div>
-        </div>
-
-        {/* Threshold */}
-        <div className="space-y-1">
-          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Threshold: {threshold.toFixed(2)}</label>
+          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Opacity: {Math.round(opacity * 100)}%</label>
           <input type="range" min={0} max={100} step={1}
-            value={Math.round(threshold * 100)}
-            onChange={(e) => setThreshold(parseInt(e.target.value, 10) / 100)}
+            value={Math.round(opacity * 100)}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10) / 100
+              setOpacity(v)
+              onUpdate({ baseOpacity: v })
+            }}
             className="w-full h-1.5 accent-amber-500" />
-          <div className="text-[9px] text-gray-600">How close to the key color a pixel must be to become transparent. Lower = stricter match.</div>
         </div>
 
-        {/* Feather */}
-        <div className="space-y-1">
-          <label className="text-[10px] text-gray-500 uppercase tracking-wider">Feather: {feather.toFixed(2)}</label>
-          <input type="range" min={0} max={50} step={1}
-            value={Math.round(feather * 100)}
-            onChange={(e) => setFeather(parseInt(e.target.value, 10) / 100)}
-            className="w-full h-1.5 accent-amber-500" />
-          <div className="text-[9px] text-gray-600">Edge softness. Higher = smoother transition between keyed and visible pixels.</div>
-        </div>
+        {/* Chroma Key section — only show when blend mode is chroma-key */}
+        {blendMode === 'chroma-key' && (
+          <>
+            <div className="border-t border-gray-800 pt-3">
+              <div className="text-[10px] text-gray-500 mb-2">
+                Remove a specific color from this track's frames. Pixels matching the key color become transparent, revealing the track below.
+              </div>
+            </div>
 
-        <button
-          onClick={() => onUpdate({ color, threshold, feather })}
-          className="w-full text-xs bg-amber-600 hover:bg-amber-500 text-white py-2 rounded transition-colors"
-        >
-          Apply
-        </button>
+            <div className="space-y-1">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wider">Key Color</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={hexColor}
+                  onChange={(e) => {
+                    const hex = e.target.value
+                    const r = parseInt(hex.slice(1, 3), 16) / 255
+                    const g = parseInt(hex.slice(3, 5), 16) / 255
+                    const b = parseInt(hex.slice(5, 7), 16) / 255
+                    setColor([r, g, b])
+                  }}
+                  className="w-10 h-8 rounded border border-gray-700 cursor-pointer"
+                />
+                <span className="text-[10px] text-gray-400 font-mono">{hexColor}</span>
+                <div className="flex gap-1">
+                  <button onClick={() => setColor([0, 1, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-green-800 text-green-300">Green</button>
+                  <button onClick={() => setColor([0, 0, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-blue-800 text-blue-300">Blue</button>
+                  <button onClick={() => setColor([0, 0, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">Black</button>
+                  <button onClick={() => setColor([1, 1, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-white text-gray-800">White</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wider">Threshold: {threshold.toFixed(2)}</label>
+              <input type="range" min={0} max={100} step={1}
+                value={Math.round(threshold * 100)}
+                onChange={(e) => setThreshold(parseInt(e.target.value, 10) / 100)}
+                className="w-full h-1.5 accent-amber-500" />
+              <div className="text-[9px] text-gray-600">How close to the key color a pixel must be to become transparent.</div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wider">Feather: {feather.toFixed(2)}</label>
+              <input type="range" min={0} max={50} step={1}
+                value={Math.round(feather * 100)}
+                onChange={(e) => setFeather(parseInt(e.target.value, 10) / 100)}
+                className="w-full h-1.5 accent-amber-500" />
+              <div className="text-[9px] text-gray-600">Edge softness for keyed pixels.</div>
+            </div>
+
+            <button
+              onClick={() => onUpdate({ chromaKey: { color, threshold, feather } } as never)}
+              className="w-full text-xs bg-amber-600 hover:bg-amber-500 text-white py-2 rounded transition-colors"
+            >
+              Apply Chroma Key
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

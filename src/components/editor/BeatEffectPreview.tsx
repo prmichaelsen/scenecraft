@@ -133,8 +133,10 @@ const COMPOSITE_SHADER = `
 
   void main() {
     vec4 base = texture2D(u_base, v_texCoord);
-    vec4 lA = texture2D(u_layerA, v_texCoord);
-    vec4 lB = texture2D(u_layerB, v_texCoord);
+    // Layer textures are ImageBitmaps (top-down) — flip Y to match FBO (bottom-up) accumulator
+    vec2 layerCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
+    vec4 lA = texture2D(u_layerA, layerCoord);
+    vec4 lB = texture2D(u_layerB, layerCoord);
     vec3 layer = mix(lA.rgb, lB.rgb, u_layerBlend);
 
     vec3 blended;
@@ -317,8 +319,8 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     const texBuf = gl.createBuffer()!
     gl.bindBuffer(gl.ARRAY_BUFFER, texBuf)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-      0, 1, 1, 1, 0, 0,
-      0, 0, 1, 1, 1, 0,
+      0, 0, 1, 0, 0, 1,
+      0, 1, 1, 0, 1, 1,
     ]), gl.STATIC_DRAW)
     gl.enableVertexAttribArray(texLoc)
     gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0)
@@ -453,114 +455,91 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const activeLayers = layers && layers.length > 0 ? layers : null
+    // ── Single render path: always go through FBO compositor ──
+    // Build content layers from tracks, or fall back to legacy single-frame sources
+    const contentLayers: { frameA: TexImageSource; frameB: TexImageSource; blendFactor: number; opacity: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number } }[] = []
 
-    if (activeLayers && activeLayers.length > 1) {
-      // ── Multi-track compositing ──
-      // Pass 1: render bottom layer directly to accumulator FBO
-      const bottom = activeLayers[0]
-      const bottomA = bottom.frameA || imgRef.current
-      if (!bottomA) return
-      const bottomB = bottom.frameB || bottomA
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.compFbo)
-      gl.viewport(0, 0, canvas.width, canvas.height)
-      gl.useProgram(ctx.program)
-      gl.uniform1f(ctx.flipYLoc, 0)
-      gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bottomA)
-      gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bottomB)
-      gl.uniform1f(ctx.blendLoc, bottom.blendFactor)
-      setEffectUniforms(ctx, { zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 })
-      gl.drawArrays(gl.TRIANGLES, 0, 6)
-
-      // Pass 2..N: composite each subsequent layer onto accumulator
-      let readFbo = ctx.compFbo
-      let readTex = ctx.compAccumTex
-      let writeFbo = ctx.compFbo2
-      let writeTex = ctx.compAccumTex2
-
-      for (let i = 1; i < activeLayers.length; i++) {
-        const layer = activeLayers[i]
-        const layerA = layer.frameA
-        if (!layerA) { /* skip empty layers — ping-pong so accumulator stays current */ const tmp = readFbo; readFbo = writeFbo; writeFbo = tmp; const tmpT = readTex; readTex = writeTex; writeTex = tmpT; continue }
-        const layerB = layer.frameB || layerA
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, writeFbo)
-        gl.viewport(0, 0, canvas.width, canvas.height)
-        gl.useProgram(ctx.compProgram)
-
-        // unit 0 = accumulator (base)
-        gl.activeTexture(gl.TEXTURE0)
-        gl.bindTexture(gl.TEXTURE_2D, readTex)
-        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_base'), 0)
-
-        // unit 1 = layer frame A
-        gl.activeTexture(gl.TEXTURE1)
-        gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layerA)
-        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
-
-        // unit 2 = layer frame B
-        gl.activeTexture(gl.TEXTURE2)
-        gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layerB)
-        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
-
-        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_layerBlend'), layer.blendFactor)
-        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_opacity'), layer.opacity)
-        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_blendMode'), BLEND_MODE_MAP[layer.blendMode] ?? 0)
-
-        // Chroma key uniforms
-        const ck = layer.chromaKey
-        gl.uniform3f(gl.getUniformLocation(ctx.compProgram, 'u_keyColor'), ck?.color[0] ?? 0, ck?.color[1] ?? 1, ck?.color[2] ?? 0)
-        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyThreshold'), ck?.threshold ?? 0.3)
-        gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyFeather'), ck?.feather ?? 0.1)
-
-        gl.drawArrays(gl.TRIANGLES, 0, 6)
-
-        // Ping-pong
-        const tmp = readFbo; readFbo = writeFbo; writeFbo = tmp
-        const tmpT = readTex; readTex = writeTex; writeTex = tmpT
+    if (layers && layers.length > 0) {
+      for (const l of layers) {
+        if (l.frameA) contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, blendMode: l.blendMode, chromaKey: l.chromaKey as never })
       }
-
-      // Final pass: draw composited result to screen with beat effects (flip Y for FBO texture)
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-      gl.viewport(0, 0, canvas.width, canvas.height)
-      gl.useProgram(ctx.program)
-      gl.uniform1f(ctx.flipYLoc, 1)
-      gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, readTex)
-      gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, readTex) // same tex for both slots (no crossfade at this stage)
-      gl.uniform1f(ctx.blendLoc, 0)
-      setEffectUniforms(ctx, fx)
-      gl.drawArrays(gl.TRIANGLES, 0, 6)
-    } else {
-      // ── Single-track (original path) ──
-      const singleLayer = activeLayers?.[0]
-      const sourceA = singleLayer?.frameA || transitionFrameA || imgRef.current
-      if (!sourceA) return
-      const sourceB = singleLayer?.frameB || transitionFrameB || sourceA
-      const singleBlend = singleLayer?.blendFactor ?? blend
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-      gl.uniform1f(ctx.flipYLoc, 0)
-      gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceA)
-      gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceB)
-      gl.viewport(0, 0, canvas.width, canvas.height)
-      gl.useProgram(ctx.program)
-      gl.uniform1f(ctx.blendLoc, singleBlend)
-      setEffectUniforms(ctx, fx)
-      gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
+    // Fallback: no track layers have content — use legacy sources
+    if (contentLayers.length === 0) {
+      const fallbackA = transitionFrameA || imgRef.current
+      if (!fallbackA) return
+      contentLayers.push({ frameA: fallbackA, frameB: transitionFrameB || fallbackA, blendFactor: blend, opacity: 1, blendMode: 'normal' })
+    }
+
+    // Pass 1: render first layer (base) into compFbo
+    // ImageBitmaps are top-down, FBOs are bottom-up — flip Y to match
+    const base = contentLayers[0]
+    gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.compFbo)
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.useProgram(ctx.program)
+    gl.uniform1f(ctx.flipYLoc, 1)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, base.frameA)
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, base.frameB)
+    gl.uniform1f(ctx.blendLoc, base.blendFactor)
+    setEffectUniforms(ctx, { zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 })
+    gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+    // Pass 2..N: composite each subsequent layer via ping-pong
+    let readIdx = 0
+    const fbos = [ctx.compFbo, ctx.compFbo2]
+    const texs = [ctx.compAccumTex, ctx.compAccumTex2]
+
+    for (let i = 1; i < contentLayers.length; i++) {
+      const layer = contentLayers[i]
+      const writeIdx = 1 - readIdx
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbos[writeIdx])
+      gl.viewport(0, 0, canvas.width, canvas.height)
+      gl.useProgram(ctx.compProgram)
+
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
+      gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_base'), 0)
+
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameA)
+      gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
+
+      gl.activeTexture(gl.TEXTURE2)
+      gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameB)
+      gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
+
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_layerBlend'), layer.blendFactor)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_opacity'), layer.opacity)
+      gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_blendMode'), BLEND_MODE_MAP[layer.blendMode] ?? 0)
+
+      const ck = layer.chromaKey
+      gl.uniform3f(gl.getUniformLocation(ctx.compProgram, 'u_keyColor'), ck?.color[0] ?? 0, ck?.color[1] ?? 1, ck?.color[2] ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyThreshold'), ck?.threshold ?? 0.3)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyFeather'), ck?.feather ?? 0.1)
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+      readIdx = writeIdx
+    }
+
+    // Final pass: blit FBO result to screen with beat effects
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.useProgram(ctx.program)
+    gl.uniform1f(ctx.flipYLoc, 0)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
+    gl.uniform1f(ctx.blendLoc, 0)
+    setEffectUniforms(ctx, fx)
+    gl.drawArrays(gl.TRIANGLES, 0, 6)
   }, [transitionFrameA, transitionFrameB, layers, setEffectUniforms])
 
   // Render loop when playing
