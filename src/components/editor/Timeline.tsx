@@ -150,7 +150,6 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
               </svg>
               {/* Vertical line from tip */}
               <div className="w-px flex-1 bg-amber-500/40 group-hover:bg-amber-400/60" />
-            </div>
               {/* Hover tooltip */}
               {!isEditing && m.label && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-[10px] text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none max-w-[200px] truncate">
@@ -535,7 +534,7 @@ export function Timeline({ data }: { data: EditorData }) {
       if (Math.abs(kf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
       const key = `kf:${kf.id}`
       setKeyTimestamp(key, kf.timeSeconds)
-      preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`))
+      preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`)
     }
 
     for (const tr of localTransitions) {
@@ -1268,7 +1267,7 @@ export function Timeline({ data }: { data: EditorData }) {
               <BeatEffectPreview
                 ref={previewRef}
                 src={currentKeyframe?.hasSelectedImage
-                  ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`)
+                  ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`) + `?v=${currentKeyframe.selected ?? 0}`
                   : ''}
                 beats={data.beats}
                 audioEvents={filteredAudioEvents}
@@ -1733,16 +1732,14 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Suppression track */}
             <div className="relative h-6 shrink-0 border-t border-gray-800 cursor-crosshair">
-              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
+              <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-20 bg-gray-950/80 pointer-events-none">
                 Mute
               </div>
               <SuppressionTrack
                 suppressions={suppressions}
                 pxPerSec={pxPerSec}
                 onAddSuppression={handleAddSuppression}
-                onDeleteSuppression={handleDeleteSuppression}
                 onResizeSuppression={handleResizeSuppression}
-                onUpdateSuppressionTypes={handleUpdateSuppressionTypes}
                 selectedSuppressionId={selectedSuppressionId}
                 onSuppressionClick={handleSuppressionClick}
                 scrollLeft={scrollLeft}
@@ -1776,6 +1773,7 @@ export function Timeline({ data }: { data: EditorData }) {
               pxPerSec={pxPerSec}
               duration={duration}
               onSeek={(time) => seekFnRef.current?.(time)}
+              audioElRef={audioElRef}
             />
           </div>
         </div>
@@ -1930,6 +1928,7 @@ export function Timeline({ data }: { data: EditorData }) {
           motionPrompt={data.meta.motionPrompt}
           audioDescriptions={aiAudioDescriptions}
           keyframes={keyframes}
+          currentTime={currentTime}
           onClose={() => setSelectedTransition(null)}
           onDelete={() => handleDeleteTransition(selectedTransition.id)}
           onDuplicateToNext={async () => {
@@ -2009,7 +2008,19 @@ export function Timeline({ data }: { data: EditorData }) {
           onDelete={handleEffectDelete}
           onClose={() => { setSelectedEffect(null); setSelectedEffectIds(new Set()) }}
         />
-      ) : null}
+      ) : selectedSuppressionId ? (() => {
+        const sup = suppressions.find((s) => s.id === selectedSuppressionId)
+        if (!sup) return null
+        return (
+          <SuppressionEditorPanel
+            suppression={sup}
+            onUpdate={(effectTypes) => handleUpdateSuppressionTypes(selectedSuppressionId, effectTypes)}
+            onResize={(from, to) => handleResizeSuppression(selectedSuppressionId, from, to)}
+            onDelete={() => { handleDeleteSuppression(selectedSuppressionId); setSelectedSuppressionId(null) }}
+            onClose={() => setSelectedSuppressionId(null)}
+          />
+        )
+      })() : null}
 
       {/* Import dialog */}
       {showImport && (
@@ -2153,6 +2164,101 @@ function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: n
 const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
 const DESC_PANEL_MIN_WIDTH = 240
+
+const ALL_SUPPRESSION_TYPES: import('@/lib/beatlab-client').EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
+const SUPPRESSION_COLORS: Record<string, string> = {
+  pulse: 'bg-yellow-500', zoom: 'bg-blue-500', shake: 'bg-red-500', glow: 'bg-purple-500', flash: 'bg-white', echo: 'bg-teal-500',
+}
+
+function SuppressionEditorPanel({ suppression, onUpdate, onResize, onDelete, onClose }: {
+  suppression: import('@/lib/beatlab-client').BeatSuppression
+  onUpdate: (effectTypes: import('@/lib/beatlab-client').EffectType[] | undefined) => void
+  onResize: (from: number, to: number) => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const STORAGE_KEY = 'beatlab-side-panel-width'
+  const hasTypeFilter = suppression.effectTypes && suppression.effectTypes.length > 0
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
+
+  return (
+    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto" style={{ width: parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10) }}>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+        <span className="text-xs text-red-400 font-medium">Mute Zone — {suppression.id}</span>
+        <div className="flex items-center gap-2">
+          <button onClick={onDelete} className="text-[10px] text-red-500/70 hover:text-red-400">Delete</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
+        </div>
+      </div>
+      <div className="p-3 space-y-4">
+        <div className="text-[10px] text-gray-500">
+          {fmtTime(suppression.from)} — {fmtTime(suppression.to)} ({(suppression.to - suppression.from).toFixed(1)}s)
+        </div>
+
+        {/* Time range */}
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">Start</label>
+            <input type="text" defaultValue={fmtTime(suppression.from)}
+              onBlur={(e) => {
+                const parts = e.target.value.split(':')
+                if (parts.length === 2) onResize(parseInt(parts[0]) * 60 + parseFloat(parts[1]), suppression.to)
+              }}
+              className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700 focus:border-red-500 focus:outline-none font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 uppercase tracking-wider block mb-0.5">End</label>
+            <input type="text" defaultValue={fmtTime(suppression.to)}
+              onBlur={(e) => {
+                const parts = e.target.value.split(':')
+                if (parts.length === 2) onResize(suppression.from, parseInt(parts[0]) * 60 + parseFloat(parts[1]))
+              }}
+              className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700 focus:border-red-500 focus:outline-none font-mono"
+            />
+          </div>
+        </div>
+
+        {/* Effect type toggles */}
+        <div className="space-y-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Suppressed Effects</div>
+          <div className="text-[9px] text-gray-600 mb-2">
+            {hasTypeFilter ? `Suppressing: ${suppression.effectTypes!.join(', ')}` : 'Suppressing ALL effects'}
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {ALL_SUPPRESSION_TYPES.map((t) => {
+              const active = !hasTypeFilter || suppression.effectTypes!.includes(t)
+              return (
+                <button
+                  key={t}
+                  className={`text-[10px] px-2 py-1.5 rounded transition-colors ${active ? `${SUPPRESSION_COLORS[t]} text-black font-bold` : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}
+                  onClick={() => {
+                    if (!hasTypeFilter) {
+                      onUpdate(ALL_SUPPRESSION_TYPES.filter((et) => et !== t))
+                    } else {
+                      const current = suppression.effectTypes!
+                      if (current.includes(t)) {
+                        const next = current.filter((et) => et !== t)
+                        onUpdate(next.length === 0 ? undefined : next)
+                      } else {
+                        const next = [...current, t]
+                        onUpdate(next.length === ALL_SUPPRESSION_TYPES.length ? undefined : next)
+                      }
+                    }
+                  }}
+                >{t}</button>
+              )
+            })}
+          </div>
+          <button
+            onClick={() => onUpdate(undefined)}
+            className="w-full text-[10px] text-red-400 hover:text-red-300 bg-gray-800 py-1 rounded mt-1"
+          >Suppress All</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function ChromaKeyPanel({ track, onClose, onUpdate }: {
   track: Track

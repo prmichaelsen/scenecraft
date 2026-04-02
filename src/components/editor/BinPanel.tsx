@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
 import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
@@ -23,7 +23,46 @@ type BinPanelProps = {
   activeTransitions: ActiveTransition[]
 }
 
+const PANEL_STORAGE_KEY = 'beatlab-side-panel-width'
+const PANEL_DEFAULT = 360
+const PANEL_MIN = 240
+
 export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInsertPoolItem, poolSelection, activeKeyframes, activeTransitions }: BinPanelProps) {
+  const [panelWidth, setPanelWidth] = useState(() => {
+    if (typeof window === 'undefined') return PANEL_DEFAULT
+    const stored = localStorage.getItem(PANEL_STORAGE_KEY)
+    return stored ? Math.max(PANEL_MIN, parseInt(stored, 10)) : PANEL_DEFAULT
+  })
+  const panelDragging = useRef(false)
+  const panelStartX = useRef(0)
+  const panelStartW = useRef(0)
+
+  const handlePanelDragDown = useCallback((e: React.MouseEvent) => {
+    panelDragging.current = true
+    panelStartX.current = e.clientX
+    panelStartW.current = panelWidth
+    e.preventDefault()
+  }, [panelWidth])
+
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      if (!panelDragging.current) return
+      const delta = panelStartX.current - e.clientX
+      setPanelWidth(Math.max(PANEL_MIN, panelStartW.current + delta))
+    }
+    const up = () => {
+      if (panelDragging.current) {
+        panelDragging.current = false
+        localStorage.setItem(PANEL_STORAGE_KEY, String(panelWidth))
+      }
+    }
+    document.addEventListener('mousemove', move)
+    document.addEventListener('mouseup', up)
+    return () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up) }
+  }, [panelWidth])
+
+  useEffect(() => { localStorage.setItem(PANEL_STORAGE_KEY, String(panelWidth)) }, [panelWidth])
+
   const socket = useBeatlabSocket()
   const [keyframeEntries, setKeyframeEntries] = useState<BinEntry[]>([])
   const [transitionEntries, setTransitionEntries] = useState<TransitionBinEntry[]>([])
@@ -86,14 +125,40 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
     onRestore()
   }, [projectName, onRestore])
 
+  const [sortBy, setSortBy] = useState<'timeline' | 'recent' | 'oldest'>('timeline')
+
+  const idNum = (id: string) => parseInt(id.replace(/\D/g, '') || '0', 10)
+  const sortItems = <T extends { id: string }>(items: T[]) => {
+    if (sortBy === 'recent') return [...items].sort((a, b) => idNum(b.id) - idNum(a.id))
+    if (sortBy === 'oldest') return [...items].sort((a, b) => idNum(a.id) - idNum(b.id))
+    return items
+  }
+  const sortByName = <T extends { name: string }>(items: T[]) => {
+    if (sortBy === 'recent') return [...items].sort((a, b) => b.name.localeCompare(a.name))
+    if (sortBy === 'oldest') return [...items].sort((a, b) => a.name.localeCompare(b.name))
+    return items
+  }
   const allKfCount = activeKeyframes.length + keyframeEntries.length
   const allTrCount = activeTransitions.length + transitionEntries.length
   const poolCount = poolKeyframes.length + poolSegments.length
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('beatlab-side-panel-width') || '360', 10) }}>
+    <div className="relative flex shrink-0" style={{ width: panelWidth }}>
+      {/* Drag handle */}
+      <div
+        className="w-1 cursor-col-resize hover:bg-blue-500/50 active:bg-blue-500 transition-colors shrink-0"
+        onMouseDown={handlePanelDragDown}
+      />
+      <div className="flex-1 bg-gray-900 border-l border-gray-800 flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
-        <div className="text-sm font-medium">Bin</div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Bin</span>
+          <button
+            onClick={() => setSortBy((s) => s === 'timeline' ? 'recent' : s === 'recent' ? 'oldest' : 'timeline')}
+            className="text-[9px] text-gray-500 hover:text-gray-300 bg-gray-800 px-1.5 py-0.5 rounded transition-colors"
+            title={`Sort: ${sortBy}`}
+          >{sortBy === 'timeline' ? '⏱ Timeline' : sortBy === 'recent' ? '↓ Newest' : '↑ Oldest'}</button>
+        </div>
         <button
           onClick={onClose}
           className="text-gray-500 hover:text-gray-300 text-lg leading-none"
@@ -145,6 +210,16 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
         })}
       </div>
 
+      {/* Sort toggle */}
+      <div className="flex items-center justify-end px-2 py-1 border-b border-gray-800 shrink-0">
+        <button
+          onClick={() => setSortBy((s) => s === 'timeline' ? 'recent' : s === 'recent' ? 'oldest' : 'timeline')}
+          className="text-[9px] text-gray-500 hover:text-gray-300 transition-colors"
+        >
+          Sort: {sortBy === 'timeline' ? 'Timeline' : 'Recent'}
+        </button>
+      </div>
+
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
@@ -155,7 +230,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-2 space-y-1">
               {/* Active keyframes */}
               <div className="grid grid-cols-3 gap-1">
-                {activeKeyframes.map((kf) => (
+                {sortItems(activeKeyframes).map((kf) => (
                   <div
                     key={kf.id}
                     className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
@@ -188,7 +263,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                 <>
                   <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
                   <div className="grid grid-cols-3 gap-1">
-                    {keyframeEntries.map((entry) => (
+                    {sortItems(keyframeEntries).map((entry) => (
                       <div
                         key={entry.id}
                         className="relative group rounded overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
@@ -228,7 +303,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-2 space-y-1">
               {/* Active transitions as video grid */}
               <div className="grid grid-cols-2 gap-1">
-                {activeTransitions.filter((tr) => tr.hasSelectedVideo).map((tr) => (
+                {sortItems(activeTransitions.filter((tr) => tr.hasSelectedVideo)).map((tr) => (
                   <PoolVideoCard
                     key={tr.id}
                     entry={{ name: `${tr.id} (${tr.from}→${tr.to})`, path: `selected_transitions/${tr.id}_slot_0.mp4`, size: 0 }}
@@ -243,7 +318,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               {activeTransitions.filter((tr) => !tr.hasSelectedVideo).length > 0 && (
                 <div className="text-[10px] text-gray-500 uppercase tracking-wider mt-2">No Video</div>
               )}
-              {activeTransitions.filter((tr) => !tr.hasSelectedVideo).map((tr) => (
+              {sortItems(activeTransitions.filter((tr) => !tr.hasSelectedVideo)).map((tr) => (
                 <div key={tr.id} className="px-2 py-1 bg-gray-800/30 rounded text-[10px] text-gray-500">
                   {tr.id}: {tr.from} → {tr.to} ({tr.durationSeconds.toFixed(1)}s)
                 </div>
@@ -252,7 +327,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               {transitionEntries.length > 0 && (
                 <>
                   <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
-                  {transitionEntries.map((entry) => (
+                  {sortItems(transitionEntries).map((entry) => (
                     <div key={entry.id} className="px-2 py-1 bg-red-900/20 rounded text-[10px] text-gray-400 cursor-pointer hover:bg-red-900/30" onClick={() => handleRestoreTransition(entry.id)}>
                       {entry.id}: {entry.from} → {entry.to} — click to restore
                     </div>
@@ -267,7 +342,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
           ) : (
             <div className="p-2">
               <div className="grid grid-cols-3 gap-1">
-                {unselectedCandidates.map((c) => (
+                {(sortBy === 'recent' ? [...unselectedCandidates].sort((a, b) => idNum(b.keyframeId) - idNum(a.keyframeId)) : unselectedCandidates).map((c) => (
                   <div
                     key={`${c.keyframeId}-v${c.variant}`}
                     className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
@@ -303,7 +378,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     Keyframe Images ({poolKeyframes.length})
                   </div>
                   <div className="grid grid-cols-3 gap-1">
-                    {poolKeyframes.map((entry) => {
+                    {sortByName(poolKeyframes).map((entry) => {
                       const isSelected = poolSelection?.type === 'keyframe' && poolSelection.entry.name === entry.name
                       return (
                         <div
@@ -332,7 +407,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     Video Segments ({poolSegments.length})
                   </div>
                   <div className="grid grid-cols-2 gap-1">
-                    {poolSegments.map((entry) => (
+                    {sortByName(poolSegments).map((entry) => (
                       <PoolVideoCard
                         key={entry.name}
                         entry={entry}
@@ -374,6 +449,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             </div>
           )
         )}
+      </div>
       </div>
     </div>
   )

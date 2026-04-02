@@ -5,6 +5,7 @@ import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTr
 import { beatlabFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdateTransitionRemap, type PoolEntry, type TransitionBinEntry } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
+import { evaluateCurve } from '@/lib/remap-curve'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
 const STORAGE_KEY = 'beatlab-side-panel-width'
@@ -20,6 +21,7 @@ type TransitionPanelProps = {
   motionPrompt: string
   audioDescriptions: AudioDescription[]
   keyframes: KfWithTime[]
+  currentTime: number
   onClose: () => void
   onDelete: () => void
   onDuplicateToNext: () => void
@@ -33,6 +35,7 @@ export function TransitionPanel({
   motionPrompt,
   audioDescriptions,
   keyframes,
+  currentTime,
   onClose,
   onDelete,
   onDuplicateToNext,
@@ -120,13 +123,13 @@ export function TransitionPanel({
             <button
               onClick={onDuplicateToPrev}
               className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
-              title="Copy video to previous transition"
-            >&larr; Dup</button>
+              title="Copy this video to previous transition (overwrites)"
+            >&larr; Copy</button>
             <button
               onClick={onDuplicateToNext}
               className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
-              title="Copy video to next transition"
-            >Dup &rarr;</button>
+              title="Copy this video to next transition (overwrites)"
+            >Copy &rarr;</button>
             <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
@@ -158,7 +161,7 @@ export function TransitionPanel({
 
               {/* Time remap curve editor */}
               <div className="px-3 py-3 border-b border-gray-800">
-                <CurveEditor transition={tr} projectName={projectName} />
+                <CurveEditor transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime} />
               </div>
 
               {/* Action prompt */}
@@ -856,7 +859,7 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
   )
 }
 
-function CurveEditor({ transition, projectName }: { transition: Transition; projectName: string }) {
+function CurveEditor({ transition, projectName, keyframes, currentTime }: { transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [points, setPoints] = useState<[number, number][]>(() =>
     transition.remap.curve_points || [[0, 0], [1, 1]]
@@ -1019,7 +1022,48 @@ function CurveEditor({ transition, projectName }: { transition: Transition; proj
       ctx.lineWidth = 1
       ctx.stroke()
     }
-  }, [points, hoveredIdx, draggingIdx])
+
+    // Playhead indicator — show where the timeline playhead maps on the remap graph
+    const fromKf = keyframes.find((k) => k.id === transition.from)
+    const toKf = keyframes.find((k) => k.id === transition.to)
+    if (fromKf && toKf) {
+      const span = toKf.timeSeconds - fromKf.timeSeconds
+      if (span > 0) {
+        const linearProgress = Math.max(0, Math.min(1, (currentTime - fromKf.timeSeconds) / span))
+        // Evaluate the curve to get the video frame at this timeline position
+        const videoProgress = evaluateCurve(sorted, linearProgress)
+        const [phx, phy] = toCanvas(linearProgress, videoProgress)
+        const [, bottomY] = toCanvas(0, 0)
+        const [, topY] = toCanvas(0, 1)
+
+        // Vertical playhead line (full height, subtle)
+        ctx.strokeStyle = '#ffffff44'
+        ctx.lineWidth = 1
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.moveTo(phx, topY)
+        ctx.lineTo(phx, bottomY)
+        ctx.stroke()
+
+        // Horizontal line from left axis to playhead dot
+        ctx.strokeStyle = '#ffffff33'
+        ctx.lineWidth = 0.5
+        ctx.beginPath()
+        ctx.moveTo(PAD, phy)
+        ctx.lineTo(phx, phy)
+        ctx.stroke()
+
+        // Playhead dot on the curve
+        ctx.beginPath()
+        ctx.arc(phx, phy, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#fff'
+        ctx.fill()
+        ctx.strokeStyle = '#f97316'
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+    }
+  }, [points, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to])
 
   const save = useCallback(async (newPoints: [number, number][]) => {
     setSaving(true)

@@ -4,7 +4,7 @@ import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates, generateKeyframeVariations, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
 import { beatlabFileUrl, fetchDirectoryListing, type FileEntry, type AudioEvent, type AudioDescription } from '@/lib/beatlab-client'
-import { invalidateEntry } from '@/lib/frame-cache'
+import { invalidateEntry, preloadKeyframeImage } from '@/lib/frame-cache'
 import { CandidateModal } from './TransitionPanel'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
@@ -517,8 +517,9 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
       console.log(`[KeyframePanel] selected ${kf.id} v${variantNum} OK`)
       setSelectedIdx(variantNum)
       kf.selected = variantNum
-      // Invalidate frame cache so preview + video track update
+      // Invalidate frame cache and re-preload so preview + video track update
       invalidateEntry(`kf:${kf.id}`)
+      preloadKeyframeImage(`kf:${kf.id}`, beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`) + `?v=${variantNum}`)
       kf.hasSelectedImage = true
       autoSave(projectName, `Selected ${kf.id} candidate v${variantNum}`)
       onDataChange()

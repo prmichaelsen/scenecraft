@@ -10,15 +10,11 @@ const EFFECT_DOT_COLORS: Record<EffectType, string> = {
   echo: 'bg-teal-500',
 }
 
-const ALL_EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
-
 type SuppressionTrackProps = {
   suppressions: BeatSuppression[]
   pxPerSec: number
   onAddSuppression: (from: number, to: number) => void
-  onDeleteSuppression: (id: string) => void
   onResizeSuppression: (id: string, from: number, to: number) => void
-  onUpdateSuppressionTypes: (id: string, effectTypes: EffectType[] | undefined) => void
   selectedSuppressionId: string | null
   onSuppressionClick: (id: string) => void
   scrollLeft: number
@@ -29,9 +25,7 @@ export function SuppressionTrack({
   suppressions,
   pxPerSec,
   onAddSuppression,
-  onDeleteSuppression: _onDeleteSuppression,
   onResizeSuppression,
-  onUpdateSuppressionTypes,
   selectedSuppressionId,
   onSuppressionClick,
   scrollLeft,
@@ -107,41 +101,6 @@ export function SuppressionTrack({
               </div>
             )}
 
-            {/* Type toggle editor (shown when selected) */}
-            {isSelected && (
-              <div
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex gap-0.5 bg-gray-900/90 border border-red-500/50 rounded px-1 py-0.5 z-50 pointer-events-auto"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {ALL_EFFECT_TYPES.map((t) => {
-                  const active = !hasTypeFilter || s.effectTypes!.includes(t)
-                  return (
-                    <button
-                      key={t}
-                      className={`text-[8px] px-1 py-0.5 rounded transition-colors ${active ? `${EFFECT_DOT_COLORS[t]} text-black font-bold` : 'bg-gray-800 text-gray-500'}`}
-                      title={`${active ? 'Unsuppress' : 'Suppress'} ${t}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!hasTypeFilter) {
-                          onUpdateSuppressionTypes(s.id, ALL_EFFECT_TYPES.filter((et) => et !== t))
-                        } else {
-                          const current = s.effectTypes!
-                          if (current.includes(t)) {
-                            const next = current.filter((et) => et !== t)
-                            onUpdateSuppressionTypes(s.id, next.length === 0 ? undefined : next)
-                          } else {
-                            const next = [...current, t]
-                            onUpdateSuppressionTypes(s.id, next.length === ALL_EFFECT_TYPES.length ? undefined : next)
-                          }
-                        }
-                      }}
-                    >
-                      {t[0].toUpperCase()}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
 
             {/* Resize handles */}
             <div

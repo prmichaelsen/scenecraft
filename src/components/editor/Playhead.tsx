@@ -1,22 +1,30 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, type MutableRefObject } from 'react'
 
 type PlayheadProps = {
   currentTime: number
   pxPerSec: number
   onSeek: (time: number) => void
   duration: number
+  audioElRef?: MutableRefObject<HTMLAudioElement | null>
 }
 
-export function Playhead({ currentTime, pxPerSec, onSeek, duration }: PlayheadProps) {
+export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef }: PlayheadProps) {
   const x = currentTime * pxPerSec
   const isDragging = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const scrubTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     isDragging.current = true
     e.preventDefault()
     e.stopPropagation()
-  }, [])
+    // Prepare audio for scrub
+    const audio = audioElRef?.current
+    if (audio) {
+      audio.playbackRate = 0.5
+      audio.volume = 0.6
+    }
+  }, [audioElRef])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -27,10 +35,28 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration }: PlayheadPr
       const clickX = e.clientX - rect.left + scrollParent.scrollLeft
       const time = Math.max(0, Math.min(duration, clickX / pxPerSec))
       onSeek(time)
+
+      // Scrub audio: play a short burst at the seek position
+      const audio = audioElRef?.current
+      if (audio) {
+        audio.currentTime = time
+        audio.play().catch(() => {})
+        if (scrubTimeout.current) clearTimeout(scrubTimeout.current)
+        scrubTimeout.current = setTimeout(() => { audio.pause() }, 80)
+      }
     }
 
     const handleMouseUp = () => {
-      isDragging.current = false
+      if (isDragging.current) {
+        isDragging.current = false
+        const audio = audioElRef?.current
+        if (audio) {
+          audio.pause()
+          audio.playbackRate = 1
+          audio.volume = 1
+          if (scrubTimeout.current) { clearTimeout(scrubTimeout.current); scrubTimeout.current = null }
+        }
+      }
     }
 
     document.addEventListener('mousemove', handleMouseMove)
@@ -39,7 +65,7 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration }: PlayheadPr
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [pxPerSec, duration, onSeek])
+  }, [pxPerSec, duration, onSeek, audioElRef])
 
   return (
     <div
