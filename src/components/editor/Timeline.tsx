@@ -45,7 +45,7 @@ function TrackHeader({ track, isActive, onSelect, onUpdate, onDelete, onOpenSett
 }) {
   return (
     <div
-      className={`flex items-center gap-2 px-2 py-1 border-b border-gray-800 shrink-0 cursor-pointer ${isActive ? 'bg-blue-900/20 border-l-2 border-l-blue-500' : 'bg-gray-950/50'}`}
+      className={`flex items-center gap-2 px-2 py-1 border-b shrink-0 cursor-pointer ${isActive ? 'bg-blue-900/15 border-blue-500/40' : 'bg-gray-950/50 border-gray-800'}`}
       onClick={onSelect}
     >
       {/* Enable/disable */}
@@ -718,8 +718,8 @@ export function Timeline({ data }: { data: EditorData }) {
   // Compute per-track layers for multi-track compositing
   const trackLayers: import('./BeatEffectPreview').TrackLayer[] = (() => {
     if (sortedTracks.length <= 1) return [] // single-track uses legacy path
-    // Compositor renders bottom-to-top (ascending zOrder)
-    return [...sortedTracks].reverse().filter((t) => t.enabled).map((track) => {
+    // Compositor renders bottom-to-top (ascending zOrder), skip empty tracks
+    const layers = [...sortedTracks].reverse().filter((t) => t.enabled).map((track) => {
       const tKfs = trackKeyframes.get(track.id) || []
       const tTrs = trackTransitions.get(track.id) || []
       // Find current keyframe for this track
@@ -1079,6 +1079,7 @@ export function Timeline({ data }: { data: EditorData }) {
           timestamp,
           section: '',
           prompt: '',
+          trackId: selectedTrackId,
         },
       })
       refreshTimeline()
@@ -1437,7 +1438,7 @@ export function Timeline({ data }: { data: EditorData }) {
             onClick={async () => {
               const scope = selectedKeyframeIds.size > 1
                 ? localTransitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
-                : localTransitions
+                : localTransitions.filter((tr) => tr.trackId === selectedTrackId)
               const missing = scope.filter((tr) => tr.hasSelectedVideo && !tr.action)
               const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
               if (missing.length === 0) { alert('All matching transitions already have action prompts.'); return }
@@ -1462,7 +1463,7 @@ export function Timeline({ data }: { data: EditorData }) {
             onClick={async () => {
               const scope = selectedKeyframeIds.size > 1
                 ? localTransitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
-                : localTransitions
+                : localTransitions.filter((tr) => tr.trackId === selectedTrackId)
               const missing = scope.filter((tr) => tr.action && !tr.hasSelectedVideo)
               const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
               if (missing.length === 0) { alert('All matching transitions already have video candidates.'); return }
@@ -1688,7 +1689,7 @@ export function Timeline({ data }: { data: EditorData }) {
               const tTrs = trackTransitions.get(track.id) || []
               const isActive = track.id === selectedTrackId
               return (
-                <div key={track.id}>
+                <div key={track.id} className={isActive ? 'ring-1 ring-blue-500/30 rounded-sm' : ''}>
                   {/* Track header */}
                   <TrackHeader
                     track={track}
@@ -1717,7 +1718,7 @@ export function Timeline({ data }: { data: EditorData }) {
                   />
                   {/* Track content */}
                   <div
-                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'border-l-2 border-l-blue-500' : ''}`}
+                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''}`}
                     style={{ height: videoTrackHeight }}
                     onClick={(e) => { setSelectedTrackId(track.id); handleTrackClick(e) }}
                   >
@@ -1972,11 +1973,11 @@ export function Timeline({ data }: { data: EditorData }) {
           onClose={() => setSelectedKeyframe(null)}
           onDelete={() => handleDeleteKeyframe(selectedKeyframe.id)}
           onMoveLeft={async () => {
-            const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+            const trackKfs = keyframes.filter((kf) => kf.trackId === selectedKeyframe.trackId)
+            const sorted = [...trackKfs].sort((a, b) => a.timeSeconds - b.timeSeconds)
             const idx = sorted.findIndex((kf) => kf.id === selectedKeyframe.id)
             if (idx <= 0) return
             const prev = sorted[idx - 1]
-            // Swap timestamps
             const tmpTs = secondsToTimestamp(prev.timeSeconds)
             const curTs = secondsToTimestamp(selectedKeyframe.timeSeconds)
             try {
@@ -1988,7 +1989,8 @@ export function Timeline({ data }: { data: EditorData }) {
             } catch (e) { console.error('Move left failed:', e) }
           }}
           onMoveRight={async () => {
-            const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+            const trackKfs = keyframes.filter((kf) => kf.trackId === selectedKeyframe.trackId)
+            const sorted = [...trackKfs].sort((a, b) => a.timeSeconds - b.timeSeconds)
             const idx = sorted.findIndex((kf) => kf.id === selectedKeyframe.id)
             if (idx < 0 || idx >= sorted.length - 1) return
             const next = sorted[idx + 1]
@@ -2003,8 +2005,9 @@ export function Timeline({ data }: { data: EditorData }) {
             } catch (e) { console.error('Move right failed:', e) }
           }}
           onDuplicate={async () => {
-            // Find next keyframe by timestamp
-            const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+            // Find next keyframe within same track
+            const trackKfs = keyframes.filter((kf) => kf.trackId === selectedKeyframe.trackId)
+            const sorted = [...trackKfs].sort((a, b) => a.timeSeconds - b.timeSeconds)
             const idx = sorted.findIndex((kf) => kf.id === selectedKeyframe.id)
             const nextKf = idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null
             if (!nextKf) return

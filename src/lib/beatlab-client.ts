@@ -47,12 +47,12 @@ export async function postUpdateTimestamp(project: string, keyframeId: string, n
   return res.json()
 }
 
-export async function postAddKeyframe(project: string, timestamp: string, section: string, prompt: string) {
-  console.log(`[beatlab-client] add-keyframe: ${project} at ${timestamp}`)
+export async function postAddKeyframe(project: string, timestamp: string, section: string, prompt: string, trackId?: string) {
+  console.log(`[beatlab-client] add-keyframe: ${project} at ${timestamp} track=${trackId}`)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/add-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ timestamp, section, prompt, source: 'assets/stills/default.png' }),
+    body: JSON.stringify({ timestamp, section, prompt, source: 'assets/stills/default.png', ...(trackId ? { trackId } : {}) }),
   })
   if (!res.ok) {
     const text = await res.text()

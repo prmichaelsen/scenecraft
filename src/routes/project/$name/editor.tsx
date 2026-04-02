@@ -321,11 +321,11 @@ export const updateKeyframeTimestamp = createServerFn({ method: 'POST' })
   })
 
 export const addKeyframe = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; timestamp: string; section: string; prompt: string }) => input)
+  .inputValidator((input: { projectName: string; timestamp: string; section: string; prompt: string; trackId?: string }) => input)
   .handler(async ({ data }) => {
-    console.log('[serverFn] addKeyframe:', data.projectName, data.timestamp)
+    console.log('[serverFn] addKeyframe:', data.projectName, data.timestamp, data.trackId)
     try {
-      const result = await postAddKeyframe(data.projectName, data.timestamp, data.section, data.prompt)
+      const result = await postAddKeyframe(data.projectName, data.timestamp, data.section, data.prompt, data.trackId)
       console.log('[serverFn] addKeyframe result:', JSON.stringify(result).slice(0, 200))
       return result
     } catch (e) {
