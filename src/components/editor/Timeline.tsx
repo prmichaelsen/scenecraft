@@ -711,7 +711,11 @@ export function Timeline({ data }: { data: EditorData }) {
           const kfKey = `kf:${from.id}`
           frameA = getFrameAtProgress(kfKey, 0)
         }
-        return { frameA, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        const trOpacity = activeTr.opacityCurve
+          ? evaluateCurve(activeTr.opacityCurve, progress)
+          : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
+        const trBlend = (activeTr.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
+        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`
@@ -719,7 +723,9 @@ export function Timeline({ data }: { data: EditorData }) {
         if (!frameA && curKf.hasSelectedImage) {
           console.warn(`[layer] ${track.id} curKf=${curKf.id} hasImage=true but frame=null (not loaded yet?)`)
         }
-        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        const kfOpacity = curKf.opacity != null ? curKf.opacity : track.baseOpacity
+        const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
+        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
@@ -1085,9 +1091,14 @@ export function Timeline({ data }: { data: EditorData }) {
     preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
   }, [data.projectName])
 
-  const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string) => {
-    const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
-    await postAssignPoolVideo(data.projectName, transitionId, poolPath)
+  const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string, sourceTransitionId?: string) => {
+    if (sourceTransitionId && sourceTransitionId !== transitionId) {
+      const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+      await postDuplicateTransitionVideo(data.projectName, sourceTransitionId, transitionId)
+    } else {
+      const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+      await postAssignPoolVideo(data.projectName, transitionId, poolPath)
+    }
     refreshTimeline()
   }, [data.projectName, refreshTimeline])
 

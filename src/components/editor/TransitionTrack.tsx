@@ -13,7 +13,7 @@ type TransitionTrackProps = {
   onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
   onRemapChange: (transitionId: string, targetDuration: number) => void
   onRetryRender?: (tr: Transition) => void
-  onDropVideo?: (transitionId: string, poolPath: string) => void
+  onDropVideo?: (transitionId: string, poolPath: string, sourceTransitionId?: string) => void
   renderProgress?: Record<string, number>
   scrollLeft: number
   viewportWidth: number
@@ -156,8 +156,9 @@ export function TransitionTrack({
                 e.preventDefault()
                 setDropTarget(null)
                 const poolPath = e.dataTransfer.getData('application/x-beatlab-pool-path')
+                const sourceTrId = e.dataTransfer.getData('application/x-beatlab-source-tr')
                 if (poolPath && onDropVideo) {
-                  onDropVideo(tr.id, poolPath)
+                  onDropVideo(tr.id, poolPath, sourceTrId || undefined)
                 }
               }}
             >

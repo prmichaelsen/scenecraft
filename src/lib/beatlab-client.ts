@@ -306,6 +306,22 @@ export async function postUpdateTransitionLabel(project: string, transitionId: s
   })
 }
 
+export async function postUpdateKeyframeStyle(project: string, keyframeId: string, style: { blendMode?: string; opacity?: number | null }) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-style`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, ...style }),
+  })
+}
+
+export async function postUpdateTransitionStyle(project: string, transitionId: string, style: { blendMode?: string; opacity?: number | null; opacityCurve?: [number, number][] | null }) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-style`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, ...style }),
+  })
+}
+
 export async function postDuplicateTransitionVideo(project: string, sourceId: string, targetId: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-transition-video`, {
     method: 'POST',
@@ -432,11 +448,11 @@ export async function postUpdateTransitionRemap(project: string, transitionId: s
   return res.json()
 }
 
-export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean, slotActions?: string[]) {
+export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean, slotActions?: string[], includeSectionDesc?: boolean) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, action, useGlobalPrompt, ...(slotActions && { slotActions }) }),
+    body: JSON.stringify({ transitionId, action, useGlobalPrompt, ...(slotActions && { slotActions }), ...(includeSectionDesc !== undefined && { includeSectionDesc }) }),
   })
   return res.json()
 }

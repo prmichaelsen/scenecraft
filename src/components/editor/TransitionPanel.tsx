@@ -157,11 +157,41 @@ export function TransitionPanel({
                 <Field label="From → To" value={`${tr.from} → ${tr.to}`} />
                 <Field label="Duration" value={`${tr.durationSeconds.toFixed(1)}s`} />
                 <Field label="Remap" value={`${tr.remap.method} (${tr.remap.target_duration.toFixed(1)}s)`} />
+
+                {/* Blend Mode */}
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Blend Mode</div>
+                  <select
+                    value={tr.blendMode || ''}
+                    onChange={async (e) => {
+                      tr.blendMode = e.target.value
+                      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                      postUpdateTransitionStyle(projectName, tr.id, { blendMode: e.target.value }).catch(() => {})
+                      onDataChange()
+                    }}
+                    className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700"
+                  >
+                    <option value="">Track default</option>
+                    <option value="normal">normal</option>
+                    <option value="multiply">multiply</option>
+                    <option value="screen">screen</option>
+                    <option value="overlay">overlay</option>
+                    <option value="difference">difference</option>
+                    <option value="add">add</option>
+                    <option value="soft-light">soft-light</option>
+                    <option value="chroma-key">chroma-key</option>
+                  </select>
+                </div>
               </div>
 
               {/* Time remap curve editor */}
               <div className="px-3 py-3 border-b border-gray-800">
                 <CurveEditor transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime} />
+              </div>
+
+              {/* Opacity curve editor */}
+              <div className="px-3 py-3 border-b border-gray-800">
+                <OpacityCurveEditor transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime} onDataChange={onDataChange} />
               </div>
 
               {/* Action prompt */}
@@ -205,7 +235,7 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
 
   const [action, setAction] = useState(transition.action)
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
-  const [useSectionDesc, setUseSectionDesc] = useState(!!sectionDescription)
+  const [useSectionDesc, setUseSectionDesc] = useState(transition.includeSectionDesc ?? !!sectionDescription)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -234,12 +264,13 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
   const save = useCallback(async () => {
     setSaving(true)
     await updateTransitionAction({
-      data: { projectName, transitionId: transition.id, action, useGlobalPrompt: useGlobal },
+      data: { projectName, transitionId: transition.id, action, useGlobalPrompt: useGlobal, includeSectionDesc: useSectionDesc },
     })
     transition.action = action
     transition.useGlobalPrompt = useGlobal
+    transition.includeSectionDesc = useSectionDesc
     setSaving(false)
-  }, [action, useGlobal, transition, projectName])
+  }, [action, useGlobal, useSectionDesc, transition, projectName])
 
   const handleGenerate = useCallback(async () => {
     setGenerating(true)
@@ -347,7 +378,13 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
           <input
             type="checkbox"
             checked={useSectionDesc}
-            onChange={(e) => setUseSectionDesc(e.target.checked)}
+            onChange={(e) => {
+              setUseSectionDesc(e.target.checked)
+              updateTransitionAction({
+                data: { projectName, transitionId: transition.id, action, useGlobalPrompt: useGlobal, includeSectionDesc: e.target.checked },
+              })
+              transition.includeSectionDesc = e.target.checked
+            }}
             className="rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
           />
           <span className="text-xs text-gray-400">Include section description in generation</span>
@@ -648,6 +685,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
                 isSelected={isSelected}
                 disabled={selecting}
                 onSelect={() => handleSelect(variantNum)}
+                sourceTransitionId={transition.id}
               />
             )
           })}
@@ -776,8 +814,8 @@ function ModalVideoCard({ videoPath, projectName }: { videoPath: string; project
 
 const videoBlobCache = new Map<string, string>() // url -> blob URL
 
-function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect }: {
-  videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
+function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, sourceTransitionId }: {
+  videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void; sourceTransitionId?: string
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [loading, setLoading] = useState(false)
@@ -813,6 +851,7 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-beatlab-pool-path', videoPath)
+        if (sourceTransitionId) e.dataTransfer.setData('application/x-beatlab-source-tr', sourceTransitionId)
         e.dataTransfer.effectAllowed = 'copy'
         const preview = e.currentTarget.cloneNode(true) as HTMLElement
         preview.style.width = '120px'
@@ -1200,6 +1239,347 @@ function CurveEditor({ transition, projectName, keyframes, currentTime }: { tran
       <div className="text-[9px] text-gray-600 space-y-0.5">
         <div><span className="text-gray-500">Click</span> to pin a frame · <span className="text-gray-500">Drag</span> left/right to reposition · <span className="text-gray-500">Double-click</span> to remove</div>
         <div>{pinCount > 0 ? `${pinCount} pin${pinCount > 1 ? 's' : ''} · ` : ''}Pinned frames lock to their timeline position. Playback speed adjusts between pins.</div>
+      </div>
+    </div>
+  )
+}
+
+function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, onDataChange }: {
+  transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number; onDataChange: () => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [points, setPoints] = useState<[number, number][]>(() =>
+    transition.opacityCurve || [[0, 1], [1, 1]]
+  )
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const W = 240
+  const H = 150
+  const PAD = 12
+
+  const toCanvas = (x: number, y: number): [number, number] => [
+    PAD + x * (W - 2 * PAD),
+    H - PAD - y * (H - 2 * PAD),
+  ]
+  const fromCanvas = (cx: number, cy: number): [number, number] => [
+    Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
+    Math.max(0, Math.min(1, (H - PAD - cy) / (H - 2 * PAD))),
+  ]
+
+  const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    return [
+      (e.clientX - rect.left) * (W / rect.width),
+      (e.clientY - rect.top) * (H / rect.height),
+    ]
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = W * dpr
+    canvas.height = H * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, W, H)
+
+    // Background
+    ctx.fillStyle = '#1a1a2e'
+    ctx.fillRect(0, 0, W, H)
+
+    // Grid
+    ctx.strokeStyle = '#333'
+    ctx.lineWidth = 0.5
+    for (let i = 0; i <= 4; i++) {
+      const [x] = toCanvas(i / 4, 0)
+      const [, y] = toCanvas(0, i / 4)
+      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
+    }
+
+    // Axis labels
+    ctx.fillStyle = '#666'
+    ctx.font = '8px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('Progress \u2192', W / 2, H - 1)
+    ctx.save()
+    ctx.translate(8, H / 2)
+    ctx.rotate(-Math.PI / 2)
+    ctx.fillText('Opacity \u2192', 0, 0)
+    ctx.restore()
+    ctx.fillStyle = '#555'
+    ctx.font = '7px monospace'
+    ctx.textAlign = 'left'
+    ctx.fillText('0%', PAD, H - PAD + 9)
+    ctx.textAlign = 'right'
+    ctx.fillText('100%', W - PAD, H - PAD + 9)
+    ctx.textAlign = 'left'
+    ctx.fillText('100%', 1, PAD + 3)
+
+    // 100% reference line (horizontal)
+    ctx.strokeStyle = '#555'
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    const [lx0, ly0] = toCanvas(0, 1)
+    const [lx1] = toCanvas(1, 1)
+    ctx.moveTo(lx0, ly0)
+    ctx.lineTo(lx1, ly0)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+
+    // Curve line
+    ctx.strokeStyle = '#38bdf866'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    for (let i = 0; i < sorted.length; i++) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      if (i === 0) ctx.moveTo(cx, cy)
+      else ctx.lineTo(cx, cy)
+    }
+    ctx.stroke()
+
+    // Fill area under curve
+    ctx.fillStyle = '#38bdf811'
+    ctx.beginPath()
+    const [bx0, by0] = toCanvas(sorted[0][0], 0)
+    ctx.moveTo(bx0, by0)
+    for (let i = 0; i < sorted.length; i++) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      ctx.lineTo(cx, cy)
+    }
+    const [bxN, byN] = toCanvas(sorted[sorted.length - 1][0], 0)
+    ctx.lineTo(bxN, byN)
+    ctx.closePath()
+    ctx.fill()
+
+    // Points
+    for (let i = 0; i < sorted.length; i++) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      const isEndpoint = i === 0 || i === sorted.length - 1
+      const isHovered = hoveredIdx === i
+      const isDragging = draggingIdx === i
+
+      if (!isEndpoint) {
+        // Vertical guide
+        const [, bottomY] = toCanvas(0, 0)
+        ctx.strokeStyle = isDragging ? '#38bdf8' : isHovered ? '#38bdf8aa' : '#38bdf844'
+        ctx.lineWidth = 1
+        ctx.setLineDash([2, 2])
+        ctx.beginPath()
+        ctx.moveTo(cx, bottomY)
+        ctx.lineTo(cx, cy)
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+
+      // Diamond for intermediate, circle for endpoints
+      if (isEndpoint) {
+        ctx.beginPath()
+        ctx.arc(cx, cy, isDragging ? 5 : isHovered ? 4.5 : 4, 0, Math.PI * 2)
+        ctx.fillStyle = isDragging ? '#38bdf8' : isHovered ? '#38bdf8' : '#555'
+        ctx.fill()
+        ctx.strokeStyle = isDragging ? '#fff' : '#888'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      } else {
+        const size = isDragging ? 6 : isHovered ? 5.5 : 5
+        ctx.beginPath()
+        ctx.moveTo(cx, cy - size)
+        ctx.lineTo(cx + size, cy)
+        ctx.lineTo(cx, cy + size)
+        ctx.lineTo(cx - size, cy)
+        ctx.closePath()
+        ctx.fillStyle = isDragging ? '#38bdf8' : '#0ea5e9'
+        ctx.fill()
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+
+      // Label
+      if (isHovered || isDragging) {
+        ctx.fillStyle = '#7dd3fc'
+        ctx.font = '7px monospace'
+        ctx.textAlign = cx > W / 2 ? 'right' : 'left'
+        const labelX = cx > W / 2 ? cx - 8 : cx + 8
+        ctx.fillText(`${Math.round(sorted[i][1] * 100)}%`, labelX, cy + 3)
+      }
+    }
+
+    // Playhead
+    const fromKf = keyframes.find((k) => k.id === transition.from)
+    const toKf = keyframes.find((k) => k.id === transition.to)
+    if (fromKf && toKf) {
+      const span = toKf.timeSeconds - fromKf.timeSeconds
+      if (span > 0) {
+        const linearProgress = Math.max(0, Math.min(1, (currentTime - fromKf.timeSeconds) / span))
+        const opacityVal = evaluateCurve(sorted, linearProgress)
+        const [phx, phy] = toCanvas(linearProgress, opacityVal)
+        const [, bottomY] = toCanvas(0, 0)
+        const [, topY] = toCanvas(0, 1)
+
+        ctx.strokeStyle = '#ffffff44'
+        ctx.lineWidth = 1
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.moveTo(phx, topY)
+        ctx.lineTo(phx, bottomY)
+        ctx.stroke()
+
+        ctx.beginPath()
+        ctx.arc(phx, phy, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#fff'
+        ctx.fill()
+        ctx.strokeStyle = '#0ea5e9'
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+    }
+  }, [points, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to])
+
+  const save = useCallback(async (newPoints: [number, number][]) => {
+    setSaving(true)
+    const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
+    try {
+      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+      const isDefault = sorted.length === 2 && sorted[0][1] === 1 && sorted[1][1] === 1
+      await postUpdateTransitionStyle(projectName, transition.id, { opacityCurve: isDefault ? null : sorted })
+      transition.opacityCurve = isDefault ? null : sorted
+      onDataChange()
+    } catch (e) {
+      console.error('Save opacity curve failed:', e)
+    } finally {
+      setSaving(false)
+    }
+  }, [projectName, transition, onDataChange])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    const [cx, cy] = pos
+
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    for (let i = 0; i < sorted.length; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(cx - px, cy - py) < 10) {
+        setDraggingIdx(i)
+        return
+      }
+    }
+
+    // Add new point
+    const [nx, ny] = fromCanvas(cx, cy)
+    const newPoints: [number, number][] = [...points, [nx, ny]]
+    newPoints.sort((a, b) => a[0] - b[0])
+    setPoints(newPoints)
+    save(newPoints)
+  }, [points, save])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+
+    if (draggingIdx !== null) {
+      const [nx, ny] = fromCanvas(pos[0], pos[1])
+      setPoints((prev) => {
+        const sorted = [...prev].sort((a, b) => a[0] - b[0])
+        const isEndpoint = draggingIdx === 0 || draggingIdx === sorted.length - 1
+        if (isEndpoint) {
+          // Endpoints: only move Y (opacity), keep X locked
+          sorted[draggingIdx] = [sorted[draggingIdx][0], ny]
+        } else {
+          // Intermediate: free drag both axes
+          const minX = sorted[draggingIdx - 1]?.[0] ?? 0
+          const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
+          sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), ny]
+        }
+        return sorted
+      })
+      return
+    }
+
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    let found: number | null = null
+    for (let i = 0; i < sorted.length; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
+        found = i
+        break
+      }
+    }
+    setHoveredIdx(found)
+  }, [draggingIdx, points])
+
+  const handleMouseUp = useCallback(() => {
+    if (draggingIdx !== null) {
+      setDraggingIdx(null)
+      save(points)
+    }
+  }, [draggingIdx, points, save])
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    for (let i = 1; i < sorted.length - 1; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
+        const newPoints = sorted.filter((_, j) => j !== i)
+        setPoints(newPoints)
+        save(newPoints)
+        setHoveredIdx(null)
+        return
+      }
+    }
+  }, [points, save])
+
+  const handleReset = useCallback(() => {
+    const defaultPoints: [number, number][] = [[0, 1], [1, 1]]
+    setPoints(defaultPoints)
+    save(defaultPoints)
+    setHoveredIdx(null)
+  }, [save])
+
+  const pinCount = points.length - 2
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Opacity Curve</div>
+        <button
+          onClick={handleReset}
+          disabled={saving || pinCount <= 0}
+          className="text-[10px] text-gray-500 hover:text-gray-300 disabled:text-gray-700 transition-colors"
+        >
+          Reset
+        </button>
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={W}
+        height={H}
+        className="w-full rounded border border-gray-700 cursor-crosshair"
+        style={{ width: '100%', height: 'auto', aspectRatio: `${W} / ${H}` }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
+        onDoubleClick={handleDoubleClick}
+      />
+      <div className="text-[9px] text-gray-600 space-y-0.5">
+        <div><span className="text-gray-500">Click</span> to add point · <span className="text-gray-500">Drag</span> to move · <span className="text-gray-500">Double-click</span> to remove</div>
+        <div>{pinCount > 0 ? `${pinCount} point${pinCount > 1 ? 's' : ''} · ` : ''}Endpoints control start/end opacity. Default is 100% throughout.</div>
       </div>
     </div>
   )

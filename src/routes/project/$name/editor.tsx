@@ -66,6 +66,8 @@ export type Keyframe = {
   trackId: string
   label: string
   labelColor: string
+  blendMode: string
+  opacity: number | null
 }
 
 export type Beat = {
@@ -87,6 +89,7 @@ export type Transition = {
   durationSeconds: number
   action: string
   useGlobalPrompt: boolean
+  includeSectionDesc: boolean
   candidates: string[]  // ["path/v1.mp4", "path/v2.mp4", ...]
   hasSelectedVideo: boolean
   selected: number | string | null  // variant number (1-based), imported path, or null
@@ -95,6 +98,9 @@ export type Transition = {
   label: string
   labelColor: string
   tags: string[]
+  blendMode: string
+  opacity: number | null
+  opacityCurve: [number, number][] | null
 }
 
 export type EditorData = {
@@ -163,6 +169,8 @@ const getEditorData = createServerFn({ method: 'GET' })
         trackId: (kf.trackId as string) || 'track_1',
         label: (kf.label as string) || '',
         labelColor: (kf.labelColor as string) || '',
+        blendMode: (kf.blendMode as string) || '',
+        opacity: kf.opacity != null ? kf.opacity as number : null,
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         // Flatten slot-based candidates to a simple list
@@ -198,6 +206,7 @@ const getEditorData = createServerFn({ method: 'GET' })
           durationSeconds: tr.durationSeconds as number,
           action: (tr.action as string) || '',
           useGlobalPrompt: tr.useGlobalPrompt !== false,
+          includeSectionDesc: tr.includeSectionDesc !== false,
           candidates,
           hasSelectedVideo,
           selected,
@@ -206,6 +215,9 @@ const getEditorData = createServerFn({ method: 'GET' })
           label: (tr.label as string) || '',
           labelColor: (tr.labelColor as string) || '',
           tags: Array.isArray(tr.tags) ? tr.tags as string[] : [],
+          blendMode: (tr.blendMode as string) || '',
+          opacity: tr.opacity != null ? tr.opacity as number : null,
+          opacityCurve: Array.isArray(tr.opacityCurve) ? tr.opacityCurve as [number, number][] : null,
         }
       }),
       audioFile: kfData.audioFile || null,
@@ -257,6 +269,8 @@ export const getTimelineData = createServerFn({ method: 'GET' })
         trackId: (kf.trackId as string) || 'track_1',
         label: (kf.label as string) || '',
         labelColor: (kf.labelColor as string) || '',
+        blendMode: (kf.blendMode as string) || '',
+        opacity: kf.opacity != null ? kf.opacity as number : null,
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         const candidates = Array.isArray(tr.candidates) ? tr.candidates as string[]
@@ -279,6 +293,7 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           durationSeconds: tr.durationSeconds as number,
           action: (tr.action as string) || '',
           useGlobalPrompt: tr.useGlobalPrompt !== false,
+          includeSectionDesc: tr.includeSectionDesc !== false,
           candidates,
           hasSelectedVideo,
           selected,
@@ -287,6 +302,9 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           label: (tr.label as string) || '',
           labelColor: (tr.labelColor as string) || '',
           tags: Array.isArray(tr.tags) ? tr.tags as string[] : [],
+          blendMode: (tr.blendMode as string) || '',
+          opacity: tr.opacity != null ? tr.opacity as number : null,
+          opacityCurve: Array.isArray(tr.opacityCurve) ? tr.opacityCurve as [number, number][] : null,
         }
       }),
     }
@@ -461,9 +479,9 @@ export const enhanceTransitionAction = createServerFn({ method: 'POST' })
   })
 
 export const updateTransitionAction = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean; slotActions?: string[] }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean; includeSectionDesc?: boolean; slotActions?: string[] }) => input)
   .handler(async ({ data }) => {
-    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt, data.slotActions)
+    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt, data.slotActions, data.includeSectionDesc)
   })
 
 export const updateMeta = createServerFn({ method: 'POST' })

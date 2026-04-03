@@ -314,6 +314,50 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
           </div>
         </div>
 
+        {/* Blend Mode + Opacity */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Blend Mode</div>
+            <select
+              value={kf.blendMode || ''}
+              onChange={async (e) => {
+                kf.blendMode = e.target.value
+                const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+                postUpdateKeyframeStyle(projectName, kf.id, { blendMode: e.target.value }).catch(() => {})
+                onDataChange()
+              }}
+              className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700"
+            >
+              <option value="">Track default</option>
+              <option value="normal">normal</option>
+              <option value="multiply">multiply</option>
+              <option value="screen">screen</option>
+              <option value="overlay">overlay</option>
+              <option value="difference">difference</option>
+              <option value="add">add</option>
+              <option value="soft-light">soft-light</option>
+              <option value="chroma-key">chroma-key</option>
+            </select>
+          </div>
+          <div className="w-20">
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Opacity</div>
+            <input
+              type="number"
+              min={0} max={1} step={0.05}
+              value={kf.opacity != null ? kf.opacity : ''}
+              placeholder="—"
+              onChange={async (e) => {
+                const v = e.target.value === '' ? null : parseFloat(e.target.value)
+                kf.opacity = v
+                const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+                postUpdateKeyframeStyle(projectName, kf.id, { opacity: v }).catch(() => {})
+                onDataChange()
+              }}
+              className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700"
+            />
+          </div>
+        </div>
+
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt</div>
@@ -663,7 +707,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
             return (
               <div
                 key={candidatePath}
-                className={`relative rounded overflow-hidden border-2 transition-colors ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
+                className={`relative rounded overflow-hidden border-2 transition-colors group ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
                 draggable
                 onDragStart={(e) => {
                   e.dataTransfer.setData('application/x-beatlab-pool-path', relativePath)
@@ -690,11 +734,32 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
                     <span className="text-[10px] text-gray-300 font-mono">
                       {variantLabel(candidatePath)}
                     </span>
-                    {selected && (
-                      <span className="text-[9px] bg-blue-500 text-white px-1 rounded">
-                        selected
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/save-as-still`
+                          const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ sourcePath: relativePath }),
+                          })
+                          if (res.ok) {
+                            const data = await res.json()
+                            alert(`Saved as still: ${data.name}`)
+                          }
+                        }}
+                        className="text-[8px] text-green-400/60 hover:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Save as reusable still for future generations"
+                      >
+                        still
+                      </button>
+                      {selected && (
+                        <span className="text-[9px] bg-blue-500 text-white px-1 rounded">
+                          selected
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
