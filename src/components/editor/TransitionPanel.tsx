@@ -390,6 +390,92 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
           <span className="text-xs text-gray-400">Include section description in generation</span>
         </label>
       )}
+
+      {/* Per-transition effects */}
+      <TransitionEffectsEditor transition={transition} projectName={projectName} />
+    </div>
+  )
+}
+
+function TransitionEffectsEditor({ transition, projectName }: { transition: Transition; projectName: string }) {
+  const [effects, setEffects] = useState(transition.effects || [])
+
+  useEffect(() => { setEffects(transition.effects || []) }, [transition.id, transition.effects])
+
+  const handleAdd = useCallback(async (type: string) => {
+    const { postAddTransitionEffect } = await import('@/lib/beatlab-client')
+    const defaults: Record<string, Record<string, number>> = {
+      strobe: { frequency: 8, duty: 0.5 },
+    }
+    const result = await postAddTransitionEffect(projectName, transition.id, type, defaults[type] || {})
+    setEffects((prev) => [...prev, { id: result.id, type, params: defaults[type] || {}, enabled: true }])
+  }, [projectName, transition.id])
+
+  const handleUpdate = useCallback(async (id: string, updates: { params?: Record<string, number>; enabled?: boolean }) => {
+    const { postUpdateTransitionEffect } = await import('@/lib/beatlab-client')
+    await postUpdateTransitionEffect(projectName, id, updates)
+    setEffects((prev) => prev.map((e) => e.id === id ? { ...e, ...updates } : e))
+  }, [projectName])
+
+  const handleDelete = useCallback(async (id: string) => {
+    const { postDeleteTransitionEffect } = await import('@/lib/beatlab-client')
+    await postDeleteTransitionEffect(projectName, id)
+    setEffects((prev) => prev.filter((e) => e.id !== id))
+  }, [projectName])
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Effects</div>
+        <select
+          onChange={(e) => { if (e.target.value) { handleAdd(e.target.value); e.target.value = '' } }}
+          className="text-[10px] bg-gray-800 text-gray-400 rounded px-1 py-0.5 border-none focus:outline-none cursor-pointer"
+          defaultValue=""
+        >
+          <option value="" disabled>+ Add</option>
+          <option value="strobe">Strobe</option>
+        </select>
+      </div>
+      {effects.map((fx) => (
+        <div key={fx.id} className="bg-gray-800/50 rounded p-2 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={fx.enabled}
+                onChange={(e) => handleUpdate(fx.id, { enabled: e.target.checked })}
+                className="rounded border-gray-600 bg-gray-800 text-teal-500 w-3 h-3"
+              />
+              <span className="text-[10px] text-gray-300 uppercase">{fx.type}</span>
+            </div>
+            <button onClick={() => handleDelete(fx.id)} className="text-[9px] text-red-400/60 hover:text-red-400">&times;</button>
+          </div>
+          {fx.type === 'strobe' && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-gray-500 w-12">Freq</span>
+                <input
+                  type="range" min={1} max={30} step={0.5}
+                  value={fx.params.frequency || 8}
+                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, frequency: parseFloat(e.target.value) } })}
+                  className="flex-1 h-1.5 accent-teal-500"
+                />
+                <span className="text-[9px] text-gray-400 w-8 text-right">{fx.params.frequency || 8}Hz</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-gray-500 w-12">Duty</span>
+                <input
+                  type="range" min={0.1} max={0.9} step={0.05}
+                  value={fx.params.duty || 0.5}
+                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, duty: parseFloat(e.target.value) } })}
+                  className="flex-1 h-1.5 accent-teal-500"
+                />
+                <span className="text-[9px] text-gray-400 w-8 text-right">{Math.round((fx.params.duty || 0.5) * 100)}%</span>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

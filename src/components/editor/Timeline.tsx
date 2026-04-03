@@ -715,9 +715,18 @@ export function Timeline({ data }: { data: EditorData }) {
           const kfKey = `kf:${from.id}`
           frameA = getFrameAtProgress(kfKey, 0)
         }
-        const trOpacity = activeTr.opacityCurve
+        let trOpacity = activeTr.opacityCurve
           ? evaluateCurve(activeTr.opacityCurve, progress)
           : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
+        // Apply per-transition effects (e.g. strobe)
+        for (const fx of activeTr.effects || []) {
+          if (!fx.enabled) continue
+          if (fx.type === 'strobe') {
+            const freq = fx.params.frequency || 8
+            const duty = fx.params.duty || 0.5
+            if ((progress * freq) % 1 > duty) trOpacity = 0
+          }
+        }
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
         return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }

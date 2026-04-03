@@ -101,6 +101,14 @@ export type Transition = {
   blendMode: string
   opacity: number | null
   opacityCurve: [number, number][] | null
+  effects: TransitionEffect[]
+}
+
+export type TransitionEffect = {
+  id: string
+  type: string
+  params: Record<string, number>
+  enabled: boolean
 }
 
 export type EditorData = {
@@ -218,6 +226,7 @@ const getEditorData = createServerFn({ method: 'GET' })
           blendMode: (tr.blendMode as string) || '',
           opacity: tr.opacity != null ? tr.opacity as number : null,
           opacityCurve: Array.isArray(tr.opacityCurve) ? tr.opacityCurve as [number, number][] : null,
+          effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),
       audioFile: kfData.audioFile || null,
@@ -305,6 +314,7 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           blendMode: (tr.blendMode as string) || '',
           opacity: tr.opacity != null ? tr.opacity as number : null,
           opacityCurve: Array.isArray(tr.opacityCurve) ? tr.opacityCurve as [number, number][] : null,
+          effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),
     }

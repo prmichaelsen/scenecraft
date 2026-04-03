@@ -654,6 +654,35 @@ export async function postRemoveFromBench(project: string, benchId: string) {
   return res.json()
 }
 
+// ── Transition effects ──
+
+export async function postAddTransitionEffect(project: string, transitionId: string, type: string, params: Record<string, number> = {}) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/add`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, type, params }),
+  })
+  if (!res.ok) throw new Error(`Failed to add effect: ${res.status}`)
+  return res.json() as Promise<{ success: boolean; id: string }>
+}
+
+export async function postUpdateTransitionEffect(project: string, id: string, updates: { params?: Record<string, number>; enabled?: boolean }) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/update`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...updates }),
+  })
+  if (!res.ok) throw new Error(`Failed to update effect: ${res.status}`)
+  return res.json()
+}
+
+export async function postDeleteTransitionEffect(project: string, id: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+  if (!res.ok) throw new Error(`Failed to delete effect: ${res.status}`)
+  return res.json()
+}
+
 export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
   console.log(`[beatlab-client] inserting pool item: ${type} ${poolPath} at ${atTime}s`)
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
