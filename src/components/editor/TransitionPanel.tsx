@@ -1255,9 +1255,23 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
-  const W = 240
-  const H = 150
-  const PAD = 12
+  const PAD = 10
+  const ASPECT = 3 // width:height ratio
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 240, h: 80 })
+  const W = canvasSize.w
+  const H = canvasSize.h
+
+  // Measure actual rendered size
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ro = new ResizeObserver((entries) => {
+      const { width } = entries[0].contentRect
+      if (width > 0) setCanvasSize({ w: width, h: Math.round(width / ASPECT) })
+    })
+    ro.observe(canvas)
+    return () => ro.disconnect()
+  }, [])
 
   const toCanvas = (x: number, y: number): [number, number] => [
     PAD + x * (W - 2 * PAD),
@@ -1273,8 +1287,8 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     return [
-      (e.clientX - rect.left) * (W / rect.width),
-      (e.clientY - rect.top) * (H / rect.height),
+      e.clientX - rect.left,
+      e.clientY - rect.top,
     ]
   }
 
@@ -1382,27 +1396,27 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
         ctx.setLineDash([])
       }
 
-      // Diamond for intermediate, circle for endpoints
+      // Diamond for intermediate, circle for endpoints — fixed size regardless of canvas stretch
+      const r = isDragging ? 3.5 : isHovered ? 3 : 2.5
       if (isEndpoint) {
         ctx.beginPath()
-        ctx.arc(cx, cy, isDragging ? 5 : isHovered ? 4.5 : 4, 0, Math.PI * 2)
+        ctx.arc(cx, cy, r, 0, Math.PI * 2)
         ctx.fillStyle = isDragging ? '#38bdf8' : isHovered ? '#38bdf8' : '#555'
         ctx.fill()
         ctx.strokeStyle = isDragging ? '#fff' : '#888'
-        ctx.lineWidth = 1
+        ctx.lineWidth = 0.5
         ctx.stroke()
       } else {
-        const size = isDragging ? 6 : isHovered ? 5.5 : 5
         ctx.beginPath()
-        ctx.moveTo(cx, cy - size)
-        ctx.lineTo(cx + size, cy)
-        ctx.lineTo(cx, cy + size)
-        ctx.lineTo(cx - size, cy)
+        ctx.moveTo(cx, cy - r)
+        ctx.lineTo(cx + r, cy)
+        ctx.lineTo(cx, cy + r)
+        ctx.lineTo(cx - r, cy)
         ctx.closePath()
         ctx.fillStyle = isDragging ? '#38bdf8' : '#0ea5e9'
         ctx.fill()
         ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 1
+        ctx.lineWidth = 0.5
         ctx.stroke()
       }
 
@@ -1471,7 +1485,7 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
     const sorted = [...points].sort((a, b) => a[0] - b[0])
     for (let i = 0; i < sorted.length; i++) {
       const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(cx - px, cy - py) < 10) {
+      if (Math.hypot(cx - px, cy - py) < 6) {
         setDraggingIdx(i)
         return
       }
@@ -1501,7 +1515,7 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
           // Intermediate: free drag both axes
           const minX = sorted[draggingIdx - 1]?.[0] ?? 0
           const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
-          sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), ny]
+          sorted[draggingIdx] = [Math.max(minX, Math.min(maxX, nx)), ny]
         }
         return sorted
       })
@@ -1512,7 +1526,7 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
     let found: number | null = null
     for (let i = 0; i < sorted.length; i++) {
       const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 8) {
         found = i
         break
       }
@@ -1534,7 +1548,7 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
     const sorted = [...points].sort((a, b) => a[0] - b[0])
     for (let i = 1; i < sorted.length - 1; i++) {
       const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
         const newPoints = sorted.filter((_, j) => j !== i)
         setPoints(newPoints)
         save(newPoints)
@@ -1567,10 +1581,8 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
       </div>
       <canvas
         ref={canvasRef}
-        width={W}
-        height={H}
         className="w-full rounded border border-gray-700 cursor-crosshair"
-        style={{ width: '100%', height: 'auto', aspectRatio: `${W} / ${H}` }}
+        style={{ width: '100%', height: `${H}px` }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -1578,8 +1590,7 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
         onDoubleClick={handleDoubleClick}
       />
       <div className="text-[9px] text-gray-600 space-y-0.5">
-        <div><span className="text-gray-500">Click</span> to add point · <span className="text-gray-500">Drag</span> to move · <span className="text-gray-500">Double-click</span> to remove</div>
-        <div>{pinCount > 0 ? `${pinCount} point${pinCount > 1 ? 's' : ''} · ` : ''}Endpoints control start/end opacity. Default is 100% throughout.</div>
+        <div><span className="text-gray-500">Click</span> to add · <span className="text-gray-500">Drag</span> to move · <span className="text-gray-500">Dbl-click</span> to remove</div>
       </div>
     </div>
   )

@@ -471,29 +471,18 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       contentLayers.push({ frameA: fallbackA, frameB: transitionFrameB || fallbackA, blendFactor: blend, opacity: 1, blendMode: 'normal' })
     }
 
-    // Pass 1: render first layer (base) into compFbo
-    // ImageBitmaps are top-down, FBOs are bottom-up — flip Y to match
-    const base = contentLayers[0]
+    // Clear FBO to black, then composite ALL layers (including base) via ping-pong
+    // This ensures base layer opacity/blend is applied correctly
     gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.compFbo)
     gl.viewport(0, 0, canvas.width, canvas.height)
-    gl.useProgram(ctx.program)
-    gl.uniform1f(ctx.flipYLoc, 1)
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, base.frameA)
-    gl.activeTexture(gl.TEXTURE1)
-    gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, base.frameB)
-    gl.uniform1f(ctx.blendLoc, base.blendFactor)
-    setEffectUniforms(ctx, { zoom: 0, shakeX: 0, shakeY: 0, contrastPop: 0, glowSwell: 0, flash: 0, echo: 0 })
-    gl.drawArrays(gl.TRIANGLES, 0, 6)
+    gl.clearColor(0, 0, 0, 1)
+    gl.clear(gl.COLOR_BUFFER_BIT)
 
-    // Pass 2..N: composite each subsequent layer via ping-pong
     let readIdx = 0
     const fbos = [ctx.compFbo, ctx.compFbo2]
     const texs = [ctx.compAccumTex, ctx.compAccumTex2]
 
-    for (let i = 1; i < contentLayers.length; i++) {
+    for (let i = 0; i < contentLayers.length; i++) {
       const layer = contentLayers[i]
       const writeIdx = 1 - readIdx
 
@@ -501,15 +490,18 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.viewport(0, 0, canvas.width, canvas.height)
       gl.useProgram(ctx.compProgram)
 
+      // unit 0 = accumulator (previous result)
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
       gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_base'), 0)
 
+      // unit 1 = layer frame A
       gl.activeTexture(gl.TEXTURE1)
       gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameA)
       gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
 
+      // unit 2 = layer frame B
       gl.activeTexture(gl.TEXTURE2)
       gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameB)
