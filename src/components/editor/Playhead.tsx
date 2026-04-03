@@ -52,7 +52,6 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef }
         const audio = audioElRef?.current
         if (audio) {
           audio.pause()
-          audio.playbackRate = 1
           audio.volume = 1
           if (scrubTimeout.current) { clearTimeout(scrubTimeout.current); scrubTimeout.current = null }
         }

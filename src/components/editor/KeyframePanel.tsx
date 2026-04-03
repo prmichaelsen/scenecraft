@@ -133,6 +133,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
             <button
               onClick={onClose}
               className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+              title="Close panel"
             >
               &times;
             </button>
@@ -144,18 +145,21 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
           <button
             onClick={() => setTab('details')}
             className={`flex-1 text-xs py-2 transition-colors ${tab === 'details' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
+            title="Keyframe metadata and prompt"
           >
             Details
           </button>
           <button
             onClick={() => setTab('candidates')}
             className={`flex-1 text-xs py-2 transition-colors ${tab === 'candidates' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
+            title="Generated image candidates"
           >
             Candidates{kf.candidates.length > 0 ? ` (${kf.candidates.length})` : ''}
           </button>
           <button
             onClick={() => setTab('bench')}
             className={`flex-1 text-xs py-2 transition-colors ${tab === 'bench' ? 'text-gray-200 border-b-2 border-green-500' : 'text-gray-500 hover:text-gray-400'}`}
+            title="Saved keyframe images for reuse"
           >
             Bench
           </button>
@@ -385,6 +389,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                   onClick={handleGeneratePrompt}
                   disabled={generating || enhancing}
                   className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+                  title="Auto-generate a prompt from context"
                 >
                   {generating ? 'Generating...' : 'Generate'}
                 </button>
@@ -392,12 +397,14 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                   onClick={handleEnhancePrompt}
                   disabled={enhancing || generating || !promptText}
                   className="text-[10px] text-purple-400 hover:text-purple-300 disabled:text-gray-600 transition-colors"
+                  title="Enhance the current prompt with AI"
                 >
                   {enhancing ? 'Enhancing...' : 'Enhance'}
                 </button>
                 <button
                   onClick={() => setEditingPrompt(true)}
                   className="text-[10px] text-gray-500 hover:text-gray-400"
+                  title="Edit prompt manually"
                 >
                   Edit
                 </button>
@@ -636,6 +643,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
         onClick={handleGenerate}
         disabled={generating}
         className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        title="Generate image candidates from the selected keyframe image"
       >
         {generating ? 'Generating with Imagen...' : refinementPrompt ? 'Refine Selected Image' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
       </button>
@@ -652,6 +660,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
         }}
         disabled={generating || !kf.prompt}
         className="w-full text-xs bg-green-700 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        title="Generate from prompt only, without using a base image"
       >
         {generating ? 'Generating...' : 'Freeform Generate (no base image)'}
       </button>
@@ -665,6 +674,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
         }}
         disabled={generating}
         className="w-full text-xs bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        title="Generate variations with AI-generated prompts"
       >
         {generating ? 'Generating...' : 'Generate Variations (AI prompts)'}
       </button>
@@ -680,6 +690,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
           <button
             onClick={() => setShowModal(true)}
             className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+            title="View candidates in expanded grid"
           >
             Expand
           </button>
@@ -836,6 +847,7 @@ function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pro
         onClick={handleBenchCurrent}
         disabled={!kf.hasSelectedImage}
         className="w-full text-xs bg-green-700 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        title="Save the current keyframe image to the bench for reuse"
       >
         Bench Current Keyframe
       </button>
@@ -864,6 +876,7 @@ function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pro
               <button
                 onClick={(e) => { e.stopPropagation(); handleRemove(item.id) }}
                 className="absolute top-1 right-1 text-red-400/60 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded px-1"
+                title="Remove from bench"
               >
                 &times;
               </button>

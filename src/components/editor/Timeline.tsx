@@ -334,6 +334,7 @@ export function Timeline({ data }: { data: EditorData }) {
     return stored ? parseFloat(stored) : 20
   })
   const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackRate, setPlaybackRate] = useState(1)
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
   const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<Set<string>>(new Set())
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
@@ -703,7 +704,10 @@ export function Timeline({ data }: { data: EditorData }) {
       if (activeTr) {
         const from = tKfMap.get(activeTr.from)!
         const to = tKfMap.get(activeTr.to)!
-        const progress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
+        const linearProgress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
+        const progress = activeTr.remap?.method === 'curve'
+          ? evaluateCurve(activeTr.remap.curve_points, linearProgress)
+          : linearProgress
         let frameA: ImageBitmap | null = null
         if (activeTr.hasSelectedVideo) {
           const variant = activeTr.selected ?? 'none'
@@ -716,7 +720,7 @@ export function Timeline({ data }: { data: EditorData }) {
           frameA = getFrameAtProgress(kfKey, 0)
         }
         let trOpacity = activeTr.opacityCurve
-          ? evaluateCurve(activeTr.opacityCurve, progress)
+          ? evaluateCurve(activeTr.opacityCurve, linearProgress)
           : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
         // Apply per-transition effects (e.g. strobe)
         for (const fx of activeTr.effects || []) {
@@ -809,6 +813,8 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [isPlaying])
 
   const handlePlayPause = useCallback(() => {
+    // Ensure playback rate is applied before starting
+    if (audioElRef.current) audioElRef.current.playbackRate = playbackRate
     if (playPauseFnRef.current) {
       // Cancel any running fallback timer since audio is in control
       if (usingFallbackTimer.current) {
@@ -1368,6 +1374,21 @@ export function Timeline({ data }: { data: EditorData }) {
 
           <div className="text-sm font-mono text-gray-400">
             {formatTime(currentTime)} / {formatTime(effectiveDuration)}
+          </div>
+
+          {/* Playback speed */}
+          <div className="flex items-center gap-1">
+            <input
+              type="range" min={0.25} max={2} step={0.25}
+              value={playbackRate}
+              onChange={(e) => {
+                const rate = parseFloat(e.target.value)
+                setPlaybackRate(rate)
+                if (audioElRef.current) audioElRef.current.playbackRate = rate
+              }}
+              className="w-14 h-1.5 accent-gray-500"
+            />
+            <span className="text-[10px] text-gray-500 w-7">{playbackRate}x</span>
           </div>
 
           {/* Jump to playhead */}
