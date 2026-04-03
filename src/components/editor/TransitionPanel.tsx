@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import type { Transition } from '@/routes/project/$name/editor'
 import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
@@ -1244,7 +1244,7 @@ function CurveEditor({ transition, projectName, keyframes, currentTime }: { tran
         const minX = sorted[draggingIdx - 1]?.[0] ?? 0
         const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
         const lockedY = sorted[draggingIdx][1]
-        sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), lockedY]
+        sorted[draggingIdx] = [Math.max(minX, Math.min(maxX, nx)), lockedY]
         return sorted
       })
       return
@@ -1778,6 +1778,7 @@ function BrowseTab({ transition, projectName, onAssigned }: { transition: Transi
   const [binTransitions, setBinTransitions] = useState<TransitionBinEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [assigning, setAssigning] = useState(false)
+  const [tagFilter, setTagFilter] = useState('')
 
   useEffect(() => {
     Promise.all([
@@ -1788,6 +1789,16 @@ function BrowseTab({ transition, projectName, onAssigned }: { transition: Transi
       setBinTransitions(binData.transitionBin || [])
     }).finally(() => setLoading(false))
   }, [projectName])
+
+  const allTags = useMemo(() => {
+    const tags = new Set<string>()
+    for (const e of poolSegments) for (const t of e.tags || []) tags.add(t)
+    return [...tags].sort()
+  }, [poolSegments])
+
+  const filteredSegments = tagFilter
+    ? poolSegments.filter((e) => e.tags?.includes(tagFilter))
+    : poolSegments
 
   const handleAssign = useCallback(async (poolPath: string) => {
     setAssigning(true)
@@ -1815,18 +1826,39 @@ function BrowseTab({ transition, projectName, onAssigned }: { transition: Transi
 
   return (
     <div className="p-2 space-y-3">
+      {/* Tag filter */}
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          <button
+            onClick={() => setTagFilter('')}
+            className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${!tagFilter ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+          >
+            All
+          </button>
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => setTagFilter(tagFilter === tag ? '' : tag)}
+              className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${tagFilter === tag ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
       {/* Pool videos */}
-      {poolSegments.length > 0 && (
+      {filteredSegments.length > 0 && (
         <div>
           <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-            Pool ({poolSegments.length})
+            Pool ({filteredSegments.length})
           </div>
           <div className="grid grid-cols-2 gap-1">
-            {poolSegments.map((entry) => (
+            {filteredSegments.map((entry) => (
               <BrowseVideoCard
                 key={entry.name}
                 path={entry.path}
                 label={entry.name}
+                tags={entry.tags}
                 projectName={projectName}
                 disabled={assigning}
                 onAssign={() => handleAssign(entry.path)}
@@ -1864,8 +1896,8 @@ function BrowseTab({ transition, projectName, onAssigned }: { transition: Transi
   )
 }
 
-function BrowseVideoCard({ path, label, projectName, disabled, onAssign }: {
-  path: string; label: string; projectName: string; disabled: boolean; onAssign: () => void
+function BrowseVideoCard({ path, label, tags, projectName, disabled, onAssign }: {
+  path: string; label: string; tags?: string[]; projectName: string; disabled: boolean; onAssign: () => void
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => browseBlobCache.get(path) ?? null)
   const [loading, setLoading] = useState(false)
@@ -1915,6 +1947,13 @@ function BrowseVideoCard({ path, label, projectName, disabled, onAssign }: {
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5">
         <div className="text-[7px] text-gray-300 truncate">{label}</div>
+        {tags && tags.length > 0 && (
+          <div className="flex flex-wrap gap-0.5 mt-0.5">
+            {tags.map((tag) => (
+              <span key={tag} className="text-[7px] bg-blue-900/60 text-blue-300 px-1 rounded">{tag}</span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
         <span className="text-xs bg-green-600/90 text-white px-2 py-1 rounded">Assign</span>

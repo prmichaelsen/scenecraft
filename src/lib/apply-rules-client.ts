@@ -68,6 +68,7 @@ export function applyRulesClient(onsets: OnsetData, rules: AudioRule[]): AudioEv
             sustain: 0,
             stem_source: `${stem}/${band}`,
             rationale: '',
+            isLayered: true,
           })
         }
       }

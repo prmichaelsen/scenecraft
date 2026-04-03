@@ -173,13 +173,22 @@ const EFFECT_TO_CATEGORY: Record<string, EffectType> = {
   pulse: 'pulse',
 }
 
-function isTimeSuppressed(time: number, suppressions: BeatSuppression[], effectType?: string): boolean {
+function isTimeSuppressed(time: number, suppressions: BeatSuppression[], effectType?: string, isLayered?: boolean): boolean {
   return suppressions.some((s) => {
     if (time < s.from || time > s.to) return false
+    const category = effectType ? (EFFECT_TO_CATEGORY[effectType] || effectType) as EffectType : undefined
+
+    if (isLayered) {
+      // Layered: only suppressed if layerEffectTypes is set and includes this type
+      if (!s.layerEffectTypes || s.layerEffectTypes.length === 0) return false
+      if (!category) return false
+      return s.layerEffectTypes.includes(category) || s.layerEffectTypes.includes(effectType as EffectType)
+    }
+
+    // Primary: check effectTypes (undefined = suppress all primary)
     if (!s.effectTypes || s.effectTypes.length === 0) return true
-    if (!effectType) return true
-    const category = EFFECT_TO_CATEGORY[effectType] || effectType
-    return s.effectTypes.includes(category as EffectType) || s.effectTypes.includes(effectType as EffectType)
+    if (!category) return true
+    return s.effectTypes.includes(category) || s.effectTypes.includes(effectType as EffectType)
   })
 }
 
@@ -214,7 +223,7 @@ function findEffectIntensity(
       const dist = time - ev.time
       if (dist < 0) continue
       if (dist > ev.duration + 0.1) break
-      if (isTimeSuppressed(time, suppressions, ev.effect)) continue
+      if (isTimeSuppressed(time, suppressions, ev.effect, ev.isLayered)) continue
       if (dist <= ev.duration) {
         const decay = Math.max(0, 1 - dist / ev.duration)
         addEffect(ev.effect, ev.intensity * decay * decay)

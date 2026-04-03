@@ -1079,7 +1079,7 @@ export function Timeline({ data }: { data: EditorData }) {
     } catch (e) {
       console.error('Failed to add keyframe:', e)
     }
-  }, [currentTime, data.projectName, refreshTimeline])
+  }, [currentTime, data.projectName, selectedTrackId, refreshTimeline])
 
   const handleDeleteKeyframe = useCallback(async (id: string) => {
     try {
@@ -2162,6 +2162,11 @@ export function Timeline({ data }: { data: EditorData }) {
           <SuppressionEditorPanel
             suppression={sup}
             onUpdate={(effectTypes) => handleUpdateSuppressionTypes(selectedSuppressionId, effectTypes)}
+            onUpdateSuppression={(updates) => {
+              const updated = suppressions.map((s) => s.id === selectedSuppressionId ? { ...s, ...updates } : s)
+              setSuppressions(updated)
+              persistEffects(userEffects, updated)
+            }}
             onResize={(from, to) => handleResizeSuppression(selectedSuppressionId, from, to)}
             onDelete={() => { handleDeleteSuppression(selectedSuppressionId); setSelectedSuppressionId(null) }}
             onClose={() => setSelectedSuppressionId(null)}
@@ -2317,19 +2322,42 @@ const SUPPRESSION_COLORS: Record<string, string> = {
   pulse: 'bg-yellow-500', zoom: 'bg-blue-500', shake: 'bg-red-500', glow: 'bg-purple-500', flash: 'bg-white', echo: 'bg-teal-500',
 }
 
-function SuppressionEditorPanel({ suppression, onUpdate, onResize, onDelete, onClose }: {
+function SuppressionEditorPanel({ suppression, onUpdate, onUpdateSuppression, onResize, onDelete, onClose }: {
   suppression: import('@/lib/beatlab-client').BeatSuppression
   onUpdate: (effectTypes: import('@/lib/beatlab-client').EffectType[] | undefined) => void
+  onUpdateSuppression: (updates: Partial<import('@/lib/beatlab-client').BeatSuppression>) => void
   onResize: (from: number, to: number) => void
   onDelete: () => void
   onClose: () => void
 }) {
   const STORAGE_KEY = 'beatlab-side-panel-width'
+  const MIN_WIDTH = 240
+  const [width, setWidth] = useState(() => {
+    if (typeof window === 'undefined') return 360
+    return Math.max(MIN_WIDTH, parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10))
+  })
+  const panelDrag = useRef(false)
+  const panelStartX = useRef(0)
+  const panelStartW = useRef(0)
+  useEffect(() => {
+    const move = (e: MouseEvent) => { if (!panelDrag.current) return; setWidth(Math.max(MIN_WIDTH, panelStartW.current + (panelStartX.current - e.clientX))) }
+    const up = () => { if (panelDrag.current) { panelDrag.current = false; localStorage.setItem(STORAGE_KEY, String(width)) } }
+    document.addEventListener('mousemove', move)
+    document.addEventListener('mouseup', up)
+    return () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up) }
+  }, [width])
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, String(width)) }, [width])
+
   const hasTypeFilter = suppression.effectTypes && suppression.effectTypes.length > 0
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto" style={{ width: parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10) }}>
+    <div className="relative flex shrink-0" style={{ width }}>
+      <div
+        className="w-1 cursor-col-resize hover:bg-blue-500/50 active:bg-blue-500 transition-colors shrink-0"
+        onMouseDown={(e) => { panelDrag.current = true; panelStartX.current = e.clientX; panelStartW.current = width; e.preventDefault() }}
+      />
+      <div className="flex-1 bg-gray-900 border-l border-gray-800 flex flex-col overflow-y-auto">
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
         <span className="text-xs text-red-400 font-medium">Mute Zone — {suppression.id}</span>
         <div className="flex items-center gap-2">
@@ -2366,11 +2394,11 @@ function SuppressionEditorPanel({ suppression, onUpdate, onResize, onDelete, onC
           </div>
         </div>
 
-        {/* Effect type toggles */}
+        {/* Primary effect type toggles */}
         <div className="space-y-1">
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Suppressed Effects</div>
-          <div className="text-[9px] text-gray-600 mb-2">
-            {hasTypeFilter ? `Suppressing: ${suppression.effectTypes!.join(', ')}` : 'Suppressing ALL effects'}
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Primary Effects</div>
+          <div className="text-[9px] text-gray-600 mb-1">
+            {hasTypeFilter ? `Muting: ${suppression.effectTypes!.join(', ')}` : 'Muting ALL primary'}
           </div>
           <div className="grid grid-cols-3 gap-1">
             {ALL_SUPPRESSION_TYPES.map((t) => {
@@ -2400,8 +2428,46 @@ function SuppressionEditorPanel({ suppression, onUpdate, onResize, onDelete, onC
           <button
             onClick={() => onUpdate(undefined)}
             className="w-full text-[10px] text-red-400 hover:text-red-300 bg-gray-800 py-1 rounded mt-1"
-          >Suppress All</button>
+          >Mute All Primary</button>
         </div>
+
+        {/* Layered effect type toggles */}
+        <div className="space-y-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Layered Effects</div>
+          {(() => {
+            const hasLayerFilter = suppression.layerEffectTypes && suppression.layerEffectTypes.length > 0
+            return (
+              <>
+                <div className="text-[9px] text-gray-600 mb-1">
+                  {hasLayerFilter ? `Muting layers: ${suppression.layerEffectTypes!.join(', ')}` : 'Layers pass through'}
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {ALL_SUPPRESSION_TYPES.map((t) => {
+                    const active = hasLayerFilter && suppression.layerEffectTypes!.includes(t)
+                    return (
+                      <button
+                        key={t}
+                        className={`text-[10px] px-2 py-1.5 rounded transition-colors ${active ? `${SUPPRESSION_COLORS[t]} text-black font-bold` : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}
+                        onClick={() => {
+                          const current = suppression.layerEffectTypes || []
+                          const next = current.includes(t)
+                            ? current.filter((et) => et !== t)
+                            : [...current, t]
+                          onUpdateSuppression({ layerEffectTypes: next.length > 0 ? next : undefined })
+                        }}
+                      >{t}</button>
+                    )
+                  })}
+                </div>
+                <button
+                  onClick={() => onUpdateSuppression({ layerEffectTypes: [...ALL_SUPPRESSION_TYPES] })}
+                  className="w-full text-[10px] text-red-400 hover:text-red-300 bg-gray-800 py-1 rounded mt-1"
+                >Mute All Layers</button>
+              </>
+            )
+          })()}
+        </div>
+      </div>
       </div>
     </div>
   )

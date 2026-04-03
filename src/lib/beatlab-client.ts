@@ -142,6 +142,7 @@ export type AudioEvent = {
   sustain: number
   stem_source: string
   rationale?: string
+  isLayered?: boolean
 }
 
 export type AudioSection = {
@@ -217,6 +218,7 @@ export type PoolEntry = {
   name: string
   path: string
   size: number
+  tags?: string[]
 }
 
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'difference' | 'add' | 'soft-light' | 'chroma-key'
@@ -426,6 +428,16 @@ export async function fetchPool(project: string) {
   return res.json() as Promise<{ keyframes: PoolEntry[]; segments: PoolEntry[] }>
 }
 
+export async function postUpdatePoolTags(project: string, poolPath: string, tags: string[]) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-pool-tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ poolPath, tags }),
+  })
+  if (!res.ok) throw new Error(`Failed to update pool tags: ${res.status}`)
+  return res.json()
+}
+
 export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number, refinementPrompt?: string, freeform?: boolean) {
   console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count, refinementPrompt ? `refine: ${refinementPrompt.slice(0, 50)}` : '', freeform ? 'freeform' : '')
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
@@ -527,7 +539,8 @@ export type BeatSuppression = {
   id: string
   from: number  // start time in seconds
   to: number    // end time in seconds
-  effectTypes?: EffectType[]  // undefined = suppress all, set = suppress only those types
+  effectTypes?: EffectType[]       // primary effects to suppress (undefined = all)
+  layerEffectTypes?: EffectType[]  // layered effects to suppress (undefined/empty = none)
 }
 
 export async function fetchEffects(project: string) {

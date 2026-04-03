@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
+import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -94,16 +94,23 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       setUnselectedCandidates(candData)
     } finally {
       setLoading(false)
-      // Restore scroll position after content renders
+    }
+  }, [projectName])
+
+  useEffect(() => { loadBin() }, [loadBin])
+
+  // Restore scroll position after loading completes and content renders
+  useEffect(() => {
+    if (loading) return
+    // Double rAF: first fires after React commits, second after browser paints
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (scrollContainerRef.current) {
           scrollContainerRef.current.scrollTop = scrollPositions.current[tab] || 0
         }
       })
-    }
-  }, [projectName, tab])
-
-  useEffect(() => { loadBin() }, [loadBin])
+    })
+  }, [loading, tab])
 
   const handleUnwatch = useCallback(async (folderPath: string) => {
     await postUnwatchFolder(projectName, folderPath)
@@ -144,6 +151,33 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
     if (sortBy === 'oldest') return [...items].sort((a, b) => a.name.localeCompare(b.name))
     return items
   }
+  const [poolTagFilter, setPoolTagFilter] = useState('')
+
+  const handleUpdatePoolTags = useCallback(async (entry: PoolEntry, newTags: string[]) => {
+    entry.tags = newTags
+    // Update in both lists
+    setPoolKeyframes((prev) => prev.map((e) => e.path === entry.path ? { ...e, tags: newTags } : e))
+    setPoolSegments((prev) => prev.map((e) => e.path === entry.path ? { ...e, tags: newTags } : e))
+    try {
+      await postUpdatePoolTags(projectName, entry.path, newTags)
+    } catch (e) {
+      console.error('Failed to update pool tags:', e)
+    }
+  }, [projectName])
+
+  const allPoolTags = useMemo(() => {
+    const tags = new Set<string>()
+    for (const e of [...poolKeyframes, ...poolSegments]) {
+      for (const t of e.tags || []) tags.add(t)
+    }
+    return [...tags].sort()
+  }, [poolKeyframes, poolSegments])
+
+  const filterByTag = useCallback(<T extends PoolEntry>(items: T[]) => {
+    if (!poolTagFilter) return items
+    return items.filter((e) => e.tags?.includes(poolTagFilter))
+  }, [poolTagFilter])
+
   const allKfCount = activeKeyframes.length + keyframeEntries.length
   const allTrCount = activeTransitions.length + transitionEntries.length
   const poolCount = poolKeyframes.length + poolSegments.length
@@ -378,19 +412,41 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-4 text-center text-sm text-gray-600">Pool is empty</div>
           ) : (
             <div className="space-y-3 p-2">
+              {/* Tag filter */}
+              {allPoolTags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    onClick={() => setPoolTagFilter('')}
+                    className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${!poolTagFilter ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+                  >
+                    All
+                  </button>
+                  {allPoolTags.map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => setPoolTagFilter(poolTagFilter === tag ? '' : tag)}
+                      className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${poolTagFilter === tag ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
               {poolKeyframes.length > 0 && (
                 <div>
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-                    Keyframe Images ({poolKeyframes.length})
+                    Keyframe Images ({filterByTag(poolKeyframes).length})
                   </div>
                   <div className="grid grid-cols-3 gap-1">
-                    {sortByName(poolKeyframes).map((entry) => {
+                    {sortByName(filterByTag(poolKeyframes)).map((entry) => {
                       const isSelected = poolSelection?.type === 'keyframe' && poolSelection.entry.name === entry.name
                       return (
-                        <div
+                        <PoolItemWithTags
                           key={entry.name}
-                          className={`relative group cursor-pointer rounded overflow-hidden border-2 transition-colors ${isSelected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
-                          onClick={() => onPoolSelect(isSelected ? null : { type: 'keyframe', entry })}
+                          entry={entry}
+                          isSelected={isSelected}
+                          onSelect={() => onPoolSelect(isSelected ? null : { type: 'keyframe', entry })}
+                          onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
                         >
                           <img
                             src={beatlabFileUrl(projectName, entry.path)}
@@ -398,10 +454,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                             className="w-full aspect-video object-cover"
                             loading="lazy"
                           />
-                          <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div className="text-[7px] text-gray-300 truncate">{entry.name}</div>
-                          </div>
-                        </div>
+                        </PoolItemWithTags>
                       )
                     })}
                   </div>
@@ -410,10 +463,10 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               {poolSegments.length > 0 && (
                 <div>
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-                    Video Segments ({poolSegments.length})
+                    Video Segments ({filterByTag(poolSegments).length})
                   </div>
                   <div className="grid grid-cols-2 gap-1">
-                    {sortByName(poolSegments).map((entry) => (
+                    {sortByName(filterByTag(poolSegments)).map((entry) => (
                       <PoolVideoCard
                         key={entry.name}
                         entry={entry}
@@ -423,6 +476,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           poolSelection?.type === 'segment' && poolSelection.entry.name === entry.name
                             ? null : { type: 'segment', entry }
                         )}
+                        onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
                         draggable
                       />
                     ))}
@@ -519,7 +573,77 @@ async function loadPoolBlobUrl(path: string, fetchUrl: string): Promise<string> 
   return bu
 }
 
-function PoolVideoCard({ entry, projectName, isSelected, onSelect, draggable }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void; draggable?: boolean }) {
+function PoolTagEditor({ tags, onUpdateTags }: { tags: string[]; onUpdateTags: (tags: string[]) => void }) {
+  const [adding, setAdding] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (adding) inputRef.current?.focus()
+  }, [adding])
+
+  const handleAdd = () => {
+    const tag = inputValue.trim().toLowerCase()
+    if (tag && !tags.includes(tag)) {
+      onUpdateTags([...tags, tag])
+    }
+    setInputValue('')
+    setAdding(false)
+  }
+
+  return (
+    <div className="flex flex-wrap gap-0.5 mt-0.5" onClick={(e) => e.stopPropagation()}>
+      {tags.map((tag) => (
+        <span key={tag} className="inline-flex items-center gap-0.5 text-[7px] bg-blue-900/60 text-blue-300 px-1 py-0 rounded">
+          {tag}
+          <button
+            onClick={() => onUpdateTags(tags.filter((t) => t !== tag))}
+            className="text-blue-400/60 hover:text-blue-300 leading-none"
+          >&times;</button>
+        </span>
+      ))}
+      {adding ? (
+        <input
+          ref={inputRef}
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleAdd()
+            if (e.key === 'Escape') { setAdding(false); setInputValue('') }
+          }}
+          onBlur={handleAdd}
+          className="text-[7px] bg-gray-800 text-gray-300 px-1 py-0 rounded border border-gray-600 outline-none w-12"
+          placeholder="tag"
+        />
+      ) : (
+        <button
+          onClick={() => setAdding(true)}
+          className="text-[7px] text-gray-600 hover:text-gray-400 px-0.5"
+          title="Add tag"
+        >+</button>
+      )}
+    </div>
+  )
+}
+
+function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children }: {
+  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; children: ReactNode
+}) {
+  return (
+    <div
+      className={`relative group cursor-pointer rounded overflow-hidden border-2 transition-colors ${isSelected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
+      onClick={onSelect}
+    >
+      {children}
+      <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">
+        <div className="text-[7px] text-gray-300 truncate">{entry.name}</div>
+        <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />
+      </div>
+    </div>
+  )
+}
+
+function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags, draggable }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void; onUpdateTags?: (tags: string[]) => void; draggable?: boolean }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => poolBlobCache.get(entry.path) ?? null)
   const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
@@ -585,6 +709,7 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect, draggable }: 
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5">
         <div className="text-[7px] text-gray-300 truncate">{entry.name}</div>
+        {onUpdateTags && <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />}
       </div>
     </div>
   )
