@@ -693,20 +693,24 @@ export function Timeline({ data }: { data: EditorData }) {
       const curKf = [...tKfs].reverse().find((kf) => kf.timeSeconds <= currentTime)
       // Find active transition for this track
       const tKfMap = new Map(tKfs.map((kf) => [kf.id, kf]))
+      // Find transition spanning current time (with or without video)
       const activeTr = tTrs.find((tr) => {
         const from = tKfMap.get(tr.from)
         const to = tKfMap.get(tr.to)
-        if (!from || !to || !tr.hasSelectedVideo) return false
+        if (!from || !to) return false
         return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
       })
       if (activeTr) {
         const from = tKfMap.get(activeTr.from)!
         const to = tKfMap.get(activeTr.to)!
         const progress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
-        const variant = activeTr.selected ?? 'none'
-        const key = `tr:${activeTr.id}:v${variant}`
-        let frameA = getFrameAtProgress(key, progress)
-        // Fallback: if transition has no video, show the from-keyframe image instead
+        let frameA: ImageBitmap | null = null
+        if (activeTr.hasSelectedVideo) {
+          const variant = activeTr.selected ?? 'none'
+          const key = `tr:${activeTr.id}:v${variant}`
+          frameA = getFrameAtProgress(key, progress)
+        }
+        // Fallback: show the from-keyframe image
         if (!frameA) {
           const kfKey = `kf:${from.id}`
           frameA = getFrameAtProgress(kfKey, 0)
@@ -714,7 +718,7 @@ export function Timeline({ data }: { data: EditorData }) {
         const trOpacity = activeTr.opacityCurve
           ? evaluateCurve(activeTr.opacityCurve, progress)
           : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
-        const trBlend = (activeTr.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
+        const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
         return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
@@ -1985,6 +1989,11 @@ export function Timeline({ data }: { data: EditorData }) {
               ])
               refreshTimeline()
             } catch (e) { console.error('Move right failed:', e) }
+          }}
+          onUnlink={async (side) => {
+            const { postUnlinkKeyframe } = await import('@/lib/beatlab-client')
+            await postUnlinkKeyframe(data.projectName, selectedKeyframe.id, side)
+            refreshTimeline()
           }}
           onDuplicate={async () => {
             // Find next keyframe within same track

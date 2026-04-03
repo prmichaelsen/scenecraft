@@ -332,6 +332,16 @@ export async function postDuplicateTransitionVideo(project: string, sourceId: st
   return res.json()
 }
 
+export async function postUnlinkKeyframe(project: string, keyframeId: string, side: 'both' | 'left' | 'right' = 'both') {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unlink-keyframe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, side }),
+  })
+  if (!res.ok) throw new Error(`Failed: ${res.status}`)
+  return res.json()
+}
+
 export async function postAssignKeyframeImage(project: string, keyframeId: string, sourcePath: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-keyframe-image`, {
     method: 'POST',

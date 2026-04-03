@@ -20,12 +20,13 @@ type KeyframePanelProps = {
   onDuplicate: () => void
   onMoveLeft: () => void
   onMoveRight: () => void
+  onUnlink: (side: 'both' | 'left' | 'right') => void
   onDataChange: () => void
   audioDescriptions?: AudioDescription[]
   audioEvents?: AudioEvent[]
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onDataChange, audioDescriptions, audioEvents }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onUnlink, onDataChange, audioDescriptions, audioEvents }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -98,19 +99,36 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
             >&rarr;</button>
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-0.5 border border-gray-700 rounded overflow-hidden">
+              <button
+                onClick={() => onUnlink('left')}
+                className="text-[10px] text-yellow-600 hover:text-yellow-400 hover:bg-gray-800 px-1.5 py-0.5 transition-colors"
+                title="Unlink left (remove incoming transition)"
+              >&#x2939;</button>
+              <button
+                onClick={() => onUnlink('both')}
+                className="text-[10px] text-yellow-600 hover:text-yellow-400 hover:bg-gray-800 px-1.5 py-0.5 border-x border-gray-700 transition-colors"
+                title="Unlink both sides"
+              >&#x2194;</button>
+              <button
+                onClick={() => onUnlink('right')}
+                className="text-[10px] text-yellow-600 hover:text-yellow-400 hover:bg-gray-800 px-1.5 py-0.5 transition-colors"
+                title="Unlink right (remove outgoing transition)"
+              >&#x293A;</button>
+            </div>
             <button
               onClick={onDuplicate}
               className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
               title="Duplicate keyframe halfway to next"
             >
-              Duplicate
+              Dup
             </button>
             <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
               title="Delete keyframe (move to bin)"
             >
-              Delete
+              Del
             </button>
             <button
               onClick={onClose}
