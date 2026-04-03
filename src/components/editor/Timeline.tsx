@@ -1142,6 +1142,9 @@ export function Timeline({ data }: { data: EditorData }) {
     }
   }, [localTransitions, data.projectName, refreshTimeline])
 
+  // Keyframe group clipboard for copy/paste
+  const kfClipboard = useRef<string[]>([])
+
   // Effect clipboard for copy/paste (supports multiple)
   const effectClipboard = useRef<UserEffect[]>([])
 
@@ -1173,31 +1176,47 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+C: copy selected effects
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedEffectIds.size > 0) {
-        e.preventDefault()
-        const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
-        if (selected.length > 0) {
-          // Store with times relative to the earliest selected effect
-          const minTime = Math.min(...selected.map((fx) => fx.time))
-          effectClipboard.current = selected.map((fx) => ({ ...fx, time: fx.time - minTime }))
+      // Ctrl+C: copy selected keyframes (priority) or effects
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        if (selectedKeyframeIds.size > 0) {
+          e.preventDefault()
+          kfClipboard.current = [...selectedKeyframeIds]
+        } else if (selectedKeyframe) {
+          e.preventDefault()
+          kfClipboard.current = [selectedKeyframe.id]
+        } else if (selectedEffectIds.size > 0) {
+          e.preventDefault()
+          const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
+          if (selected.length > 0) {
+            const minTime = Math.min(...selected.map((fx) => fx.time))
+            effectClipboard.current = selected.map((fx) => ({ ...fx, time: fx.time - minTime }))
+          }
         }
       }
 
-      // Ctrl+V: paste effects at playhead
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && effectClipboard.current.length > 0) {
-        e.preventDefault()
-        const newIds = new Set<string>()
-        const pasted = effectClipboard.current.map((src) => {
-          const id = `fx_${String(nextFxId.current++).padStart(3, '0')}`
-          newIds.add(id)
-          return { ...src, id, time: currentTime + src.time }
-        })
-        const updated = [...userEffects, ...pasted].sort((a, b) => a.time - b.time)
-        setUserEffects(updated)
-        setSelectedEffectIds(newIds)
-        setSelectedEffect(pasted[0])
-        persistEffects(updated, suppressions)
+      // Ctrl+V: paste keyframes (priority) or effects at playhead
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        if (kfClipboard.current.length > 0) {
+          e.preventDefault()
+          import('@/lib/beatlab-client').then(({ postPasteGroup }) => {
+            postPasteGroup(data.projectName, kfClipboard.current, secondsToTimestamp(currentTime), selectedTrackId)
+              .then(() => refreshTimeline())
+              .catch((err: Error) => { console.error('Paste group failed:', err); alert(`Paste failed: ${err.message}`) })
+          })
+        } else if (effectClipboard.current.length > 0) {
+          e.preventDefault()
+          const newIds = new Set<string>()
+          const pasted = effectClipboard.current.map((src) => {
+            const id = `fx_${String(nextFxId.current++).padStart(3, '0')}`
+            newIds.add(id)
+            return { ...src, id, time: currentTime + src.time }
+          })
+          const updated = [...userEffects, ...pasted].sort((a, b) => a.time - b.time)
+          setUserEffects(updated)
+          setSelectedEffectIds(newIds)
+          setSelectedEffect(pasted[0])
+          persistEffects(updated, suppressions)
+        }
       }
 
       // Ctrl+A: select all effects
@@ -1208,7 +1227,7 @@ export function Timeline({ data }: { data: EditorData }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedKeyframe, selectedEffect, selectedEffectIds, selectedSuppressionId, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, currentTime, userEffects, suppressions, persistEffects])
+  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedEffect, selectedEffectIds, selectedSuppressionId, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, currentTime, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
 
   // Preview divider drag
   const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
@@ -1792,7 +1811,7 @@ export function Timeline({ data }: { data: EditorData }) {
 
             {/* Audio track */}
             <div
-              className={`relative cursor-pointer ${audioTrackHeight ? '' : 'flex-1'}`}
+              className={`relative cursor-pointer overflow-hidden ${audioTrackHeight ? '' : 'flex-1'}`}
               style={audioTrackHeight ? { height: audioTrackHeight } : { minHeight: 80 }}
               onClick={handleTrackClick}
             >

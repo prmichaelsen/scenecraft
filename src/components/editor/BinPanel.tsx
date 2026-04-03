@@ -94,8 +94,14 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       setUnselectedCandidates(candData)
     } finally {
       setLoading(false)
+      // Restore scroll position after content renders
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollPositions.current[tab] || 0
+        }
+      })
     }
-  }, [projectName])
+  }, [projectName, tab])
 
   useEffect(() => { loadBin() }, [loadBin])
 
@@ -220,7 +226,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
         </button>
       </div>
 
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto" onScroll={(e) => { scrollPositions.current[tab] = e.currentTarget.scrollTop }}>
         {loading ? (
           <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
         ) : tab === 'keyframes' ? (
