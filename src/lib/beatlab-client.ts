@@ -334,6 +334,16 @@ export async function postUpdateTransitionStyle(project: string, transitionId: s
   })
 }
 
+export async function postCopyTransitionStyle(project: string, sourceId: string, targetId: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/copy-transition-style`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceId, targetId }),
+  })
+  if (!res.ok) throw new Error(`Failed: ${res.status}`)
+  return res.json()
+}
+
 export async function postDuplicateTransitionVideo(project: string, sourceId: string, targetId: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-transition-video`, {
     method: 'POST',

@@ -12,6 +12,9 @@ const STORAGE_KEY = 'beatlab-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
+// Module-level style clipboard — persists across panel opens
+let _styleClipboardTrId: string | null = null
+
 type AudioDescription = { sectionIndex: number; label: string; startTime: number; endTime: number; content: string }
 type KfWithTime = { id: string; timestamp: string; timeSeconds: number }
 
@@ -157,6 +160,24 @@ export function TransitionPanel({
                 <Field label="From → To" value={`${tr.from} → ${tr.to}`} />
                 <Field label="Duration" value={`${tr.durationSeconds.toFixed(1)}s`} />
                 <Field label="Remap" value={`${tr.remap.method} (${tr.remap.target_duration.toFixed(1)}s)`} />
+
+                {/* Copy / Paste Style */}
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => { _styleClipboardTrId = tr.id }}
+                    className="flex-1 text-[10px] py-1.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+                  >Copy Style</button>
+                  <button
+                    onClick={async () => {
+                      if (!_styleClipboardTrId || _styleClipboardTrId === tr.id) return
+                      const { postCopyTransitionStyle } = await import('@/lib/beatlab-client')
+                      await postCopyTransitionStyle(projectName, _styleClipboardTrId, tr.id)
+                      onDataChange()
+                    }}
+                    disabled={!_styleClipboardTrId || _styleClipboardTrId === tr.id}
+                    className="flex-1 text-[10px] py-1.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 disabled:text-gray-600 disabled:hover:text-gray-600 transition-colors"
+                  >Paste Style</button>
+                </div>
 
                 {/* Adjustment layer toggle */}
                 <button

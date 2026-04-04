@@ -1281,7 +1281,7 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+C: copy selected keyframes (priority) or effects
+      // Ctrl+C: copy selected keyframes or effects
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         if (selectedKeyframeIds.size > 0) {
           e.preventDefault()
@@ -1302,7 +1302,7 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+V: paste keyframes (priority) or effects at playhead
+      // Ctrl+V: paste keyframes or effects at playhead
       if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
         if (kfClipboard.current.length > 0) {
           e.preventDefault()
@@ -1704,7 +1704,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 const res = await fetch(url, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ time: currentTime }),
+                  body: JSON.stringify({ time: currentTime, trackId: selectedTrackId }),
                 })
                 if (!res.ok) {
                   const text = await res.text()
