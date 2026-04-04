@@ -316,7 +316,7 @@ export async function postUpdateKeyframeStyle(project: string, keyframeId: strin
   })
 }
 
-export async function postUpdateTransitionStyle(project: string, transitionId: string, style: { blendMode?: string; opacity?: number | null; opacityCurve?: [number, number][] | null; redCurve?: [number, number][] | null; greenCurve?: [number, number][] | null; blueCurve?: [number, number][] | null; blackCurve?: [number, number][] | null; hueShiftCurve?: [number, number][] | null }) {
+export async function postUpdateTransitionStyle(project: string, transitionId: string, style: { blendMode?: string; opacity?: number | null; opacityCurve?: [number, number][] | null; redCurve?: [number, number][] | null; greenCurve?: [number, number][] | null; blueCurve?: [number, number][] | null; blackCurve?: [number, number][] | null; hueShiftCurve?: [number, number][] | null; saturationCurve?: [number, number][] | null; isAdjustment?: boolean }) {
   await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-style`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

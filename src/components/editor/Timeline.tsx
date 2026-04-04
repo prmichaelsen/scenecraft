@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData, restoreKeyframe } from '@/routes/project/$name/editor'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/beatlab-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
@@ -710,24 +710,11 @@ export function Timeline({ data }: { data: EditorData }) {
         const from = tKfMap.get(activeTr.from)!
         const to = tKfMap.get(activeTr.to)!
         const linearProgress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
-        const progress = activeTr.remap?.method === 'curve'
-          ? evaluateCurve(activeTr.remap.curve_points, linearProgress)
-          : linearProgress
-        let frameA: ImageBitmap | null = null
-        if (activeTr.hasSelectedVideo) {
-          const variant = activeTr.selected ?? 'none'
-          const key = `tr:${activeTr.id}:v${variant}`
-          frameA = getFrameAtProgress(key, progress)
-        }
-        // Fallback: show the from-keyframe image
-        if (!frameA) {
-          const kfKey = `kf:${from.id}`
-          frameA = getFrameAtProgress(kfKey, 0)
-        }
+
+        // Evaluate curves shared by both normal and adjustment transitions
         let trOpacity = activeTr.opacityCurve
           ? evaluateCurve(activeTr.opacityCurve, linearProgress)
           : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
-        // Apply per-transition effects (e.g. strobe)
         const trElapsed = currentTime - from.timeSeconds
         for (const fx of activeTr.effects || []) {
           if (!fx.enabled) continue
@@ -742,6 +729,26 @@ export function Timeline({ data }: { data: EditorData }) {
         const trBlue = activeTr.blueCurve ? evaluateCurve(activeTr.blueCurve, linearProgress) : 1
         const trBlack = activeTr.blackCurve ? evaluateCurve(activeTr.blackCurve, linearProgress) : 0
         const trHueShift = activeTr.hueShiftCurve ? evaluateCurve(activeTr.hueShiftCurve, linearProgress) : 0
+
+        if (activeTr.isAdjustment) {
+          // Adjustment transition: no video content, just curves applied to composite below
+          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true } as import('./BeatEffectPreview').TrackLayer
+        }
+
+        const progress = activeTr.remap?.method === 'curve'
+          ? evaluateCurve(activeTr.remap.curve_points, linearProgress)
+          : linearProgress
+        let frameA: ImageBitmap | null = null
+        if (activeTr.hasSelectedVideo) {
+          const variant = activeTr.selected ?? 'none'
+          const key = `tr:${activeTr.id}:v${variant}`
+          frameA = getFrameAtProgress(key, progress)
+        }
+        // Fallback: show the from-keyframe image
+        if (!frameA) {
+          const kfKey = `kf:${from.id}`
+          frameA = getFrameAtProgress(kfKey, 0)
+        }
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
         return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
@@ -1199,15 +1206,25 @@ export function Timeline({ data }: { data: EditorData }) {
   }, [data.projectName])
 
   const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string, sourceTransitionId?: string) => {
-    if (sourceTransitionId && sourceTransitionId !== transitionId) {
-      const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
-      await postDuplicateTransitionVideo(data.projectName, sourceTransitionId, transitionId)
-    } else {
-      const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
-      await postAssignPoolVideo(data.projectName, transitionId, poolPath)
+    try {
+      if (sourceTransitionId && sourceTransitionId !== transitionId) {
+        const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+        await postDuplicateTransitionVideo(data.projectName, sourceTransitionId, transitionId)
+      } else {
+        const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+        await postAssignPoolVideo(data.projectName, transitionId, poolPath)
+      }
+      // Invalidate old cached frames so new video is decoded
+      const tr = localTransitions.find((t) => t.id === transitionId)
+      if (tr) {
+        const oldVariant = tr.selected ?? 'none'
+        invalidateEntry(`tr:${transitionId}:v${oldVariant}`)
+      }
+      refreshTimeline()
+    } catch (e) {
+      console.error('[drop] assign video to transition failed:', e)
     }
-    refreshTimeline()
-  }, [data.projectName, refreshTimeline])
+  }, [data.projectName, localTransitions, refreshTimeline])
 
   const handleDropImageOnKeyframe = useCallback(async (keyframeId: string, imagePath: string) => {
     const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
@@ -1855,6 +1872,26 @@ export function Timeline({ data }: { data: EditorData }) {
                     style={{ height: videoTrackHeight }}
                     onMouseDown={(e) => handleDragSelectDown(e)}
                     onClick={(e) => { if (dragSelectRef.current?.active || dragSelectRect) return; setSelectedTrackId(track.id); handleTrackClick(e) }}
+                    onDragOver={(e) => {
+                      if (e.dataTransfer.types.includes('application/x-beatlab-bin-kf')) {
+                        e.preventDefault()
+                        e.dataTransfer.dropEffect = 'copy'
+                      }
+                    }}
+                    onDrop={async (e) => {
+                      const binKfId = e.dataTransfer.getData('application/x-beatlab-bin-kf')
+                      if (!binKfId) return
+                      e.preventDefault()
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
+                      const dropTime = x / pxPerSec
+                      const ts = secondsToTimestamp(dropTime)
+                      try {
+                        await restoreKeyframe({ data: { projectName: data.projectName, keyframeId: binKfId } })
+                        await updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: binKfId, newTimestamp: ts } })
+                        refreshTimeline()
+                      } catch (err) { console.error('Drop from bin failed:', err) }
+                    }}
                   >
                     {isActive && <SectionBands sections={data.sections} pxPerSec={pxPerSec} />}
                     <VideoTrack

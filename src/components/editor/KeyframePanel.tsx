@@ -187,13 +187,15 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
   const [hasImage, setHasImage] = useState(kf.hasSelectedImage)
   const [generating, setGenerating] = useState(false)
   const [enhancing, setEnhancing] = useState(false)
+  const [labelText, setLabelText] = useState(kf.label || '')
 
   // Sync when keyframe changes
   useEffect(() => {
     setPromptText(kf.prompt)
     setEditingPrompt(false)
     setHasImage(kf.hasSelectedImage)
-  }, [kf.id, kf.prompt, kf.hasSelectedImage])
+    setLabelText(kf.label || '')
+  }, [kf.id, kf.prompt, kf.hasSelectedImage, kf.label])
 
   const savePrompt = useCallback(async () => {
     if (promptText === kf.prompt) {
@@ -309,13 +311,17 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
             <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Label</div>
             <input
               type="text"
-              value={kf.label || ''}
-              onChange={async (e) => {
-                kf.label = e.target.value
-                const { postUpdateKeyframeLabel } = await import('@/lib/beatlab-client')
-                postUpdateKeyframeLabel(projectName, kf.id, e.target.value, kf.labelColor || '').catch(() => {})
+              value={labelText}
+              onChange={(e) => setLabelText(e.target.value)}
+              onBlur={async () => {
+                if (labelText !== (kf.label || '')) {
+                  kf.label = labelText
+                  const { postUpdateKeyframeLabel } = await import('@/lib/beatlab-client')
+                  await postUpdateKeyframeLabel(projectName, kf.id, labelText, kf.labelColor || '')
+                  onDataChange()
+                }
               }}
-              onBlur={() => onDataChange()}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
               placeholder="Name this keyframe..."
               className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700 focus:border-blue-500 focus:outline-none"
             />

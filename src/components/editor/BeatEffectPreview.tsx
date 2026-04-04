@@ -16,6 +16,7 @@ export type TrackLayer = {
   hueShift: number
   blendMode: BlendMode
   chromaKey?: { color: [number, number, number]; threshold: number; feather: number }
+  isAdjustment?: boolean
 }
 
 type BeatEffectPreviewProps = {
@@ -504,11 +505,16 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
 
     // ── Single render path: always go through FBO compositor ──
     // Build content layers from tracks, or fall back to legacy single-frame sources
-    const contentLayers: { frameA: TexImageSource; frameB: TexImageSource; blendFactor: number; opacity: number; red: number; green: number; blue: number; black: number; hueShift: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number } }[] = []
+    const contentLayers: { frameA: TexImageSource | null; frameB: TexImageSource | null; blendFactor: number; opacity: number; red: number; green: number; blue: number; black: number; hueShift: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number }; isAdjustment?: boolean }[] = []
 
     if (layers && layers.length > 0) {
       for (const l of layers) {
-        if (l.frameA) contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, hueShift: l.hueShift ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never })
+        if (l.isAdjustment) {
+          // Adjustment layers have no content — they modify the composite below
+          contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, hueShift: l.hueShift ?? 0, blendMode: 'normal', isAdjustment: true })
+        } else if (l.frameA) {
+          contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, hueShift: l.hueShift ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never })
+        }
       }
     }
     // Fallback: no track layers have content — use legacy sources
@@ -542,17 +548,28 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
       gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_base'), 0)
 
-      // unit 1 = layer frame A
-      gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameA)
-      gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
+      if (layer.isAdjustment) {
+        // Adjustment layer: feed the accumulator as both base and layer
+        // The shader applies RGB/black/hueShift to the existing composite
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
+        gl.activeTexture(gl.TEXTURE2)
+        gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
+      } else {
+        // unit 1 = layer frame A
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameA!)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
 
-      // unit 2 = layer frame B
-      gl.activeTexture(gl.TEXTURE2)
-      gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameB)
-      gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
+        // unit 2 = layer frame B
+        gl.activeTexture(gl.TEXTURE2)
+        gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameB!)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
+      }
 
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_layerBlend'), layer.blendFactor)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_opacity'), layer.opacity)

@@ -307,9 +307,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       <div
                         key={entry.id}
                         className="relative group rounded overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
-                        draggable={entry.hasSelectedImage}
+                        draggable
                         onDragStart={(e) => {
-                          e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
+                          e.dataTransfer.setData('application/x-beatlab-bin-kf', entry.id)
+                          if (entry.hasSelectedImage) {
+                            e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
+                          }
                           e.dataTransfer.effectAllowed = 'copy'
                         }}
                         onClick={() => handleRestoreKeyframe(entry.id)}

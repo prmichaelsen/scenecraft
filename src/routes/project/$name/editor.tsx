@@ -106,6 +106,8 @@ export type Transition = {
   blueCurve: [number, number][] | null
   blackCurve: [number, number][] | null
   hueShiftCurve: [number, number][] | null
+  saturationCurve: [number, number][] | null
+  isAdjustment: boolean
   effects: TransitionEffect[]
 }
 
@@ -236,6 +238,8 @@ const getEditorData = createServerFn({ method: 'GET' })
           blueCurve: Array.isArray(tr.blueCurve) ? tr.blueCurve as [number, number][] : null,
           blackCurve: Array.isArray(tr.blackCurve) ? tr.blackCurve as [number, number][] : null,
           hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
+          saturationCurve: Array.isArray(tr.saturationCurve) ? tr.saturationCurve as [number, number][] : null,
+          isAdjustment: !!tr.isAdjustment,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),
@@ -329,6 +333,8 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           blueCurve: Array.isArray(tr.blueCurve) ? tr.blueCurve as [number, number][] : null,
           blackCurve: Array.isArray(tr.blackCurve) ? tr.blackCurve as [number, number][] : null,
           hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
+          saturationCurve: Array.isArray(tr.saturationCurve) ? tr.saturationCurve as [number, number][] : null,
+          isAdjustment: !!tr.isAdjustment,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),
@@ -556,6 +562,16 @@ export const restoreTransition = createServerFn({ method: 'POST' })
 export const saveEffects = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; effects: UserEffect[]; suppressions: BeatSuppression[] }) => input)
   .handler(async ({ data }) => {
+    // Guard: fetch current suppressions from DB before overwriting.
+    // If the caller sends 0 suppressions but the DB has some, the caller's state
+    // was likely stale (e.g. failed initial fetch). Preserve the DB suppressions.
+    if (data.suppressions.length === 0) {
+      const current = await fetchEffects(data.projectName).catch(() => ({ effects: [], suppressions: [] }))
+      if (current.suppressions && current.suppressions.length > 0) {
+        console.warn(`[saveEffects] caller sent 0 suppressions but DB has ${current.suppressions.length} — preserving DB suppressions`)
+        return postUpdateEffects(data.projectName, data.effects, current.suppressions)
+      }
+    }
     return postUpdateEffects(data.projectName, data.effects, data.suppressions)
   })
 
