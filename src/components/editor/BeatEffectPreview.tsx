@@ -137,7 +137,7 @@ const COMPOSITE_SHADER = `
   uniform float u_blue;        // blue channel multiplier
   uniform float u_black;       // fade to black (0=full color, 1=black)
   uniform float u_hueShift;    // 0=no shift, 1=full 360° rotation
-  uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add,6=chroma-key
+  uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add,6=chroma-key,7=soft-light
   uniform vec3 u_keyColor;     // chroma key target color
   uniform float u_keyThreshold;// how close to key color = transparent (0-1)
   uniform float u_keyFeather;  // edge softness (0-0.5)
@@ -191,6 +191,21 @@ const COMPOSITE_SHADER = `
       gl_FragColor = vec4(blended, 1.0);
       return;
     }
+    else if (u_blendMode == 7) {                                                                // soft-light (W3C spec)
+      // D(Cb): if Cb <= 0.25 then ((16*Cb-12)*Cb+4)*Cb else sqrt(Cb)
+      vec3 D = mix(
+        ((16.0 * base.rgb - 12.0) * base.rgb + 4.0) * base.rgb,
+        sqrt(base.rgb),
+        step(0.25, base.rgb)
+      );
+      // if Cs <= 0.5: Cb - (1-2*Cs)*Cb*(1-Cb)
+      // else:         Cb + (2*Cs-1)*(D-Cb)
+      blended = mix(
+        base.rgb - (1.0 - 2.0 * layer) * base.rgb * (1.0 - base.rgb),
+        base.rgb + (2.0 * layer - 1.0) * (D - base.rgb),
+        step(0.5, layer)
+      );
+    }
     else { blended = layer; }                                                                   // normal
 
     gl_FragColor = vec4(mix(base.rgb, blended, u_opacity), 1.0);
@@ -198,7 +213,7 @@ const COMPOSITE_SHADER = `
 `
 
 const BLEND_MODE_MAP: Record<string, number> = {
-  normal: 0, multiply: 1, screen: 2, overlay: 3, difference: 4, add: 5, 'soft-light': 3, 'chroma-key': 6,
+  normal: 0, multiply: 1, screen: 2, overlay: 3, difference: 4, add: 5, 'chroma-key': 6, 'soft-light': 7,
 }
 
 // Map detailed AI effect names to suppression categories

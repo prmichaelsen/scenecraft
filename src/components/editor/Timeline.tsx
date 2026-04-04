@@ -750,7 +750,7 @@ export function Timeline({ data }: { data: EditorData }) {
           frameA = getFrameAtProgress(kfKey, 0)
         }
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`
@@ -2696,6 +2696,25 @@ function TrackSettingsPanel({ track, onClose, onUpdate }: {
                   className="w-10 h-8 rounded border border-gray-700 cursor-pointer"
                 />
                 <span className="text-[10px] text-gray-400 font-mono">{hexColor}</span>
+                <button
+                  onClick={async () => {
+                    try {
+                      const dropper = new ((window as Record<string, unknown>).EyeDropper as new () => { open: () => Promise<{ sRGBHex: string }> })()
+                      const result = await dropper.open()
+                      const hex = result.sRGBHex
+                      const r = parseInt(hex.slice(1, 3), 16) / 255
+                      const g = parseInt(hex.slice(3, 5), 16) / 255
+                      const b = parseInt(hex.slice(5, 7), 16) / 255
+                      setColor([r, g, b])
+                    } catch {
+                      // User cancelled or API not available
+                    }
+                  }}
+                  className="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-amber-400 hover:text-amber-300 border border-gray-700"
+                  title="Pick color from screen"
+                >
+                  Eyedropper
+                </button>
                 <div className="flex gap-1">
                   <button onClick={() => setColor([0, 1, 0])} className="text-[9px] px-1.5 py-0.5 rounded bg-green-800 text-green-300">Green</button>
                   <button onClick={() => setColor([0, 0, 1])} className="text-[9px] px-1.5 py-0.5 rounded bg-blue-800 text-blue-300">Blue</button>

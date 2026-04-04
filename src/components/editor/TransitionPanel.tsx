@@ -5,7 +5,7 @@ import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTr
 import { beatlabFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdateTransitionRemap, type PoolEntry, type TransitionBinEntry } from '@/lib/beatlab-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
-import { evaluateCurve } from '@/lib/remap-curve'
+import { evaluateCurve, getEasing, EASING_LABELS, EASING_COUNT, type CurvePoint } from '@/lib/remap-curve'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
 const STORAGE_KEY = 'beatlab-side-panel-width'
@@ -197,6 +197,11 @@ export function TransitionPanel({
                     <option value="chroma-key">chroma-key</option>
                   </select>
                 </div>
+
+                {/* Chroma Key settings — visible when blend mode is chroma-key */}
+                {tr.blendMode === 'chroma-key' && (
+                  <ChromaKeyEditor transition={tr} projectName={projectName} onDataChange={onDataChange} />
+                )}
               </div>
 
               {/* Time remap curve editor */}
@@ -204,7 +209,7 @@ export function TransitionPanel({
                 <AnimCurveEditor
                   label="Keyframe Pins" defaultY={0} color="#f97316" yLabel="Video Frame →"
                   transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
-                  initialPoints={tr.remap.curve_points || [[0, 0], [1, 1]]}
+                  initialPoints={(tr.remap.curve_points as CurvePoint[] | undefined) || [[0, 0], [1, 1]]}
                   lockY diagonalRef aspect={1.6}
                   onSave={async (sorted) => {
                     const method = sorted.length > 2 ? 'curve' : 'linear'
@@ -1062,15 +1067,82 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
   )
 }
 
+function ChromaKeyEditor({ transition, projectName, onDataChange }: { transition: Transition; projectName: string; onDataChange: () => void }) {
+  const ck = transition.chromaKey || { color: [0, 1, 0] as [number, number, number], threshold: 0.3, feather: 0.1 }
+  const [color, setColor] = useState<[number, number, number]>(ck.color)
+  const [threshold, setThreshold] = useState(ck.threshold)
+  const [feather, setFeather] = useState(ck.feather)
+
+  const hexColor = `#${color.map((c) => Math.round(c * 255).toString(16).padStart(2, '0')).join('')}`
+
+  const save = useCallback(async (c: [number, number, number], t: number, f: number) => {
+    const val = { color: c, threshold: t, feather: f }
+    transition.chromaKey = val
+    const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+    await postUpdateTransitionStyle(projectName, transition.id, { chromaKey: val })
+    onDataChange()
+  }, [projectName, transition, onDataChange])
+
+  return (
+    <div className="space-y-2 pt-1">
+      <div className="text-[9px] text-gray-600">Remove a specific color from this transition's frames.</div>
+      <div className="space-y-1">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Key Color</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input type="color" value={hexColor}
+            onChange={(e) => {
+              const hex = e.target.value
+              const nc: [number, number, number] = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255]
+              setColor(nc); save(nc, threshold, feather)
+            }}
+            className="w-8 h-7 rounded border border-gray-700 cursor-pointer"
+          />
+          <span className="text-[9px] text-gray-400 font-mono">{hexColor}</span>
+          <button
+            onClick={async () => {
+              try {
+                const dropper = new ((window as Record<string, unknown>).EyeDropper as new () => { open: () => Promise<{ sRGBHex: string }> })()
+                const result = await dropper.open()
+                const hex = result.sRGBHex
+                const nc: [number, number, number] = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255]
+                setColor(nc); save(nc, threshold, feather)
+              } catch { /* cancelled or unsupported */ }
+            }}
+            className="text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-amber-400 hover:text-amber-300 border border-gray-700"
+            title="Pick color from screen"
+          >Eyedropper</button>
+        </div>
+        <div className="flex gap-1">
+          {([['Green', [0, 1, 0], 'bg-green-800 text-green-300'], ['Blue', [0, 0, 1], 'bg-blue-800 text-blue-300'], ['Black', [0, 0, 0], 'bg-gray-800 text-gray-300'], ['White', [1, 1, 1], 'bg-white text-gray-800']] as const).map(([lbl, cv, cls]) => (
+            <button key={lbl} onClick={() => { const nc = cv as unknown as [number, number, number]; setColor(nc); save(nc, threshold, feather) }} className={`text-[9px] px-1.5 py-0.5 rounded ${cls}`}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-0.5">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Threshold: {threshold.toFixed(2)}</div>
+        <input type="range" min={0} max={100} step={1} value={Math.round(threshold * 100)}
+          onChange={(e) => { const t = parseInt(e.target.value, 10) / 100; setThreshold(t); save(color, t, feather) }}
+          className="w-full h-1.5 accent-amber-500" />
+      </div>
+      <div className="space-y-0.5">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Feather: {feather.toFixed(2)}</div>
+        <input type="range" min={0} max={50} step={1} value={Math.round(feather * 100)}
+          onChange={(e) => { const f = parseInt(e.target.value, 10) / 100; setFeather(f); save(color, threshold, f) }}
+          className="w-full h-1.5 accent-amber-500" />
+      </div>
+    </div>
+  )
+}
+
 function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectName, keyframes, currentTime, curveKey, styleKey, onDataChange, lockY, diagonalRef, aspect: aspectProp, onSave: customSave, initialPoints: initialPointsProp }: {
   label: string; defaultY: number; color: string; yLabel: string
   transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number
   curveKey?: string; styleKey?: string; onDataChange?: () => void
-  lockY?: boolean; diagonalRef?: boolean; aspect?: number; onSave?: (points: [number, number][]) => Promise<void>; initialPoints?: [number, number][]
+  lockY?: boolean; diagonalRef?: boolean; aspect?: number; onSave?: (points: CurvePoint[]) => Promise<void>; initialPoints?: CurvePoint[]
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [points, setPoints] = useState<[number, number][]>(() =>
-    initialPointsProp || (curveKey ? (transition as Record<string, unknown>)[curveKey] as [number, number][] : null) || [[0, defaultY], [1, defaultY]]
+  const [points, setPoints] = useState<CurvePoint[]>(() =>
+    initialPointsProp || (curveKey ? (transition as Record<string, unknown>)[curveKey] as CurvePoint[] : null) || [[0, defaultY], [1, defaultY]]
   )
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -1163,16 +1235,39 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     ctx.stroke()
     ctx.setLineDash([])
 
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    const sorted = [...points].sort((a, b) => a[0] - b[0]) as CurvePoint[]
+
+    // Draw eased curve segments with sub-sampling
+    const STEPS_PER_SEGMENT = 24
+    const curvePath: [number, number][] = []
+    for (let i = 0; i < sorted.length; i++) {
+      if (i === 0) {
+        curvePath.push(toCanvas(sorted[0][0], sorted[0][1]))
+      } else {
+        const [x0] = sorted[i - 1]
+        const [x1, y1] = sorted[i]
+        const easing = getEasing(sorted[i])
+        if (easing === 0) {
+          // Linear — single line segment
+          curvePath.push(toCanvas(x1, y1))
+        } else {
+          // Eased — sub-sample the segment
+          for (let s = 1; s <= STEPS_PER_SEGMENT; s++) {
+            const t = s / STEPS_PER_SEGMENT
+            const val = evaluateCurve(sorted, x0 + t * (x1 - x0))
+            curvePath.push(toCanvas(x0 + t * (x1 - x0), val))
+          }
+        }
+      }
+    }
 
     // Curve line
     ctx.strokeStyle = color + '66'
     ctx.lineWidth = 1.5
     ctx.beginPath()
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
-      if (i === 0) ctx.moveTo(cx, cy)
-      else ctx.lineTo(cx, cy)
+    for (let i = 0; i < curvePath.length; i++) {
+      if (i === 0) ctx.moveTo(curvePath[i][0], curvePath[i][1])
+      else ctx.lineTo(curvePath[i][0], curvePath[i][1])
     }
     ctx.stroke()
 
@@ -1181,10 +1276,7 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     ctx.beginPath()
     const [bx0, by0] = toCanvas(sorted[0][0], 0)
     ctx.moveTo(bx0, by0)
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
-      ctx.lineTo(cx, cy)
-    }
+    for (const [cx, cy] of curvePath) ctx.lineTo(cx, cy)
     const [bxN, byN] = toCanvas(sorted[sorted.length - 1][0], 0)
     ctx.lineTo(bxN, byN)
     ctx.closePath()
@@ -1239,6 +1331,14 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
         const labelX = cx > W / 2 ? cx - 8 : cx + 8
         ctx.fillText(`${Math.round(sorted[i][1] * 100)}%`, labelX, cy + 3)
       }
+      // Easing type indicator for non-first points with non-linear easing
+      const ptEasing = getEasing(sorted[i])
+      if (i > 0 && ptEasing > 0) {
+        ctx.fillStyle = color + 'cc'
+        ctx.font = 'bold 8px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText(EASING_LABELS[ptEasing], cx, cy - r - 3)
+      }
     }
 
     // Playhead
@@ -1271,17 +1371,19 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     }
   }, [points, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to, color, yLabel, diagonalRef, W, H])
 
-  const save = useCallback(async (newPoints: [number, number][]) => {
+  const save = useCallback(async (newPoints: CurvePoint[]) => {
     setSaving(true)
     const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
+    // Strip easing=0 (linear) from points to keep data compact for backward compat
+    const cleaned: CurvePoint[] = sorted.map((p) => p[2] ? [p[0], p[1], p[2]] : [p[0], p[1]])
     try {
       if (customSave) {
-        await customSave(sorted)
+        await customSave(cleaned)
       } else {
         const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
-        const isDefault = sorted.length === 2 && sorted[0][1] === defaultY && sorted[1][1] === defaultY
-        await postUpdateTransitionStyle(projectName, transition.id, { [styleKey!]: isDefault ? null : sorted } as Record<string, unknown> as never)
-        ;(transition as Record<string, unknown>)[curveKey!] = isDefault ? null : sorted
+        const isDefault = cleaned.length === 2 && cleaned[0][1] === defaultY && cleaned[1][1] === defaultY && !cleaned[0][2] && !cleaned[1][2]
+        await postUpdateTransitionStyle(projectName, transition.id, { [styleKey!]: isDefault ? null : cleaned } as Record<string, unknown> as never)
+        ;(transition as Record<string, unknown>)[curveKey!] = isDefault ? null : cleaned
         onDataChange?.()
       }
     } catch (e) {
@@ -1291,7 +1393,26 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     }
   }, [projectName, transition, onDataChange, curveKey, styleKey, defaultY, label])
 
+  const handleCycleEasing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    const sorted = [...points].sort((a, b) => a[0] - b[0]) as CurvePoint[]
+    for (let i = 1; i < sorted.length; i++) { // skip first point (no incoming segment)
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
+        const cur = getEasing(sorted[i])
+        const next = (cur + 1) % EASING_COUNT
+        sorted[i] = [sorted[i][0], sorted[i][1], next]
+        setPoints(sorted)
+        save(sorted)
+        return
+      }
+    }
+  }, [points, save])
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button === 2) return // right-click handled by context menu
     const pos = mouseToCanvas(e)
     if (!pos) return
     const sorted = [...points].sort((a, b) => a[0] - b[0])
@@ -1303,7 +1424,7 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
       }
     }
     const [nx, ny] = fromCanvas(pos[0], pos[1])
-    const newPoints: [number, number][] = [...points, [nx, ny]]
+    const newPoints: CurvePoint[] = [...points, [nx, ny]]
     newPoints.sort((a, b) => a[0] - b[0])
     setPoints(newPoints)
     save(newPoints)
@@ -1319,7 +1440,10 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
         const minX = sorted[draggingIdx - 1]?.[0] ?? 0
         const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
         const newY = lockY ? sorted[draggingIdx][1] : ny
-        sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), newY]
+        const existingEasing = sorted[draggingIdx][2]
+        sorted[draggingIdx] = existingEasing != null
+          ? [Math.max(minX, Math.min(maxX, nx)), newY, existingEasing]
+          : [Math.max(minX, Math.min(maxX, nx)), newY]
         return sorted
       })
       return
@@ -1354,13 +1478,13 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
   }, [points, save])
 
   const handleReset = useCallback(() => {
-    const defaultPoints: [number, number][] = [[0, defaultY], [1, defaultY]]
+    const defaultPoints: CurvePoint[] = [[0, defaultY], [1, defaultY]]
     setPoints(defaultPoints)
     save(defaultPoints)
     setHoveredIdx(null)
   }, [save, defaultY])
 
-  const hasChanges = points.length > 2 || points.some((p) => p[1] !== defaultY)
+  const hasChanges = points.length > 2 || points.some((p) => p[1] !== defaultY || (p[2] && p[2] > 0))
 
   return (
     <div className="space-y-1">
@@ -1383,7 +1507,11 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
         onMouseUp={handleMouseUp}
         onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
         onDoubleClick={handleDoubleClick}
+        onContextMenu={handleCycleEasing}
       />
+      <div className="text-[8px] text-gray-600">
+        <span className="text-gray-500">Click</span> add · <span className="text-gray-500">Drag</span> move · <span className="text-gray-500">Dbl-click</span> remove · <span className="text-gray-500">Right-click</span> cycle easing
+      </div>
     </div>
   )
 }

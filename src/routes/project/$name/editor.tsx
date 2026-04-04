@@ -93,7 +93,7 @@ export type Transition = {
   candidates: string[]  // ["path/v1.mp4", "path/v2.mp4", ...]
   hasSelectedVideo: boolean
   selected: number | string | null  // variant number (1-based), imported path, or null
-  remap: { method: string; target_duration: number; curve_points?: [number, number][] }
+  remap: { method: string; target_duration: number; curve_points?: [number, number, number?][] }
   trackId: string
   label: string
   labelColor: string
@@ -107,6 +107,7 @@ export type Transition = {
   blackCurve: [number, number][] | null
   hueShiftCurve: [number, number][] | null
   saturationCurve: [number, number][] | null
+  chromaKey: { color: [number, number, number]; threshold: number; feather: number } | null
   isAdjustment: boolean
   effects: TransitionEffect[]
 }
@@ -239,6 +240,7 @@ const getEditorData = createServerFn({ method: 'GET' })
           blackCurve: Array.isArray(tr.blackCurve) ? tr.blackCurve as [number, number][] : null,
           hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
           saturationCurve: Array.isArray(tr.saturationCurve) ? tr.saturationCurve as [number, number][] : null,
+          chromaKey: tr.chromaKey && typeof tr.chromaKey === 'object' ? tr.chromaKey as { color: [number, number, number]; threshold: number; feather: number } : null,
           isAdjustment: !!tr.isAdjustment,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
@@ -334,6 +336,7 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           blackCurve: Array.isArray(tr.blackCurve) ? tr.blackCurve as [number, number][] : null,
           hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
           saturationCurve: Array.isArray(tr.saturationCurve) ? tr.saturationCurve as [number, number][] : null,
+          chromaKey: tr.chromaKey && typeof tr.chromaKey === 'object' ? tr.chromaKey as { color: [number, number, number]; threshold: number; feather: number } : null,
           isAdjustment: !!tr.isAdjustment,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }

@@ -316,7 +316,7 @@ export async function postUpdateKeyframeStyle(project: string, keyframeId: strin
   })
 }
 
-export async function postUpdateTransitionStyle(project: string, transitionId: string, style: { blendMode?: string; opacity?: number | null; opacityCurve?: [number, number][] | null; redCurve?: [number, number][] | null; greenCurve?: [number, number][] | null; blueCurve?: [number, number][] | null; blackCurve?: [number, number][] | null; hueShiftCurve?: [number, number][] | null; saturationCurve?: [number, number][] | null; isAdjustment?: boolean }) {
+export async function postUpdateTransitionStyle(project: string, transitionId: string, style: { blendMode?: string; opacity?: number | null; opacityCurve?: [number, number][] | null; redCurve?: [number, number][] | null; greenCurve?: [number, number][] | null; blueCurve?: [number, number][] | null; blackCurve?: [number, number][] | null; hueShiftCurve?: [number, number][] | null; saturationCurve?: [number, number][] | null; isAdjustment?: boolean; chromaKey?: { color: [number, number, number]; threshold: number; feather: number } | null }) {
   await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-style`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -471,7 +471,7 @@ export async function postEnhanceTransitionAction(project: string, transitionId:
   return res.json() as Promise<{ success: boolean; action: string }>
 }
 
-export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string, curvePoints?: [number, number][]) {
+export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string, curvePoints?: [number, number, number?][]) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-remap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -584,6 +584,15 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
   const [showModal, setShowModal] = useState(false)
 
   const handleSelect = useCallback(async (variantNum: number) => {
+    // Toggle: clicking the already-selected variant unselects it
+    if (selectedIdx === variantNum) {
+      setSelectedIdx(null)
+      kf.selected = null
+      kf.hasSelectedImage = false
+      invalidateEntry(`kf:${kf.id}`)
+      onDataChange()
+      return
+    }
     console.log(`[KeyframePanel] selecting ${kf.id} variant ${variantNum}`)
     setSelecting(true)
     try {
@@ -604,7 +613,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
     } finally {
       setSelecting(false)
     }
-  }, [projectName, kf])
+  }, [projectName, kf, selectedIdx, onDataChange])
 
   // Extract variant number from path like ".../v1.png" or ".../styled_003.png"
   function variantLabel(path: string): string {
