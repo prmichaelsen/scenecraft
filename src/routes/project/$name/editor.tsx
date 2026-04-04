@@ -101,6 +101,11 @@ export type Transition = {
   blendMode: string
   opacity: number | null
   opacityCurve: [number, number][] | null
+  redCurve: [number, number][] | null
+  greenCurve: [number, number][] | null
+  blueCurve: [number, number][] | null
+  blackCurve: [number, number][] | null
+  hueShiftCurve: [number, number][] | null
   effects: TransitionEffect[]
 }
 
@@ -226,6 +231,11 @@ const getEditorData = createServerFn({ method: 'GET' })
           blendMode: (tr.blendMode as string) || '',
           opacity: tr.opacity != null ? tr.opacity as number : null,
           opacityCurve: Array.isArray(tr.opacityCurve) ? tr.opacityCurve as [number, number][] : null,
+          redCurve: Array.isArray(tr.redCurve) ? tr.redCurve as [number, number][] : null,
+          greenCurve: Array.isArray(tr.greenCurve) ? tr.greenCurve as [number, number][] : null,
+          blueCurve: Array.isArray(tr.blueCurve) ? tr.blueCurve as [number, number][] : null,
+          blackCurve: Array.isArray(tr.blackCurve) ? tr.blackCurve as [number, number][] : null,
+          hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),
@@ -314,6 +324,11 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           blendMode: (tr.blendMode as string) || '',
           opacity: tr.opacity != null ? tr.opacity as number : null,
           opacityCurve: Array.isArray(tr.opacityCurve) ? tr.opacityCurve as [number, number][] : null,
+          redCurve: Array.isArray(tr.redCurve) ? tr.redCurve as [number, number][] : null,
+          greenCurve: Array.isArray(tr.greenCurve) ? tr.greenCurve as [number, number][] : null,
+          blueCurve: Array.isArray(tr.blueCurve) ? tr.blueCurve as [number, number][] : null,
+          blackCurve: Array.isArray(tr.blackCurve) ? tr.blackCurve as [number, number][] : null,
+          hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),

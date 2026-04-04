@@ -213,6 +213,9 @@ export function VideoTrack({
               </div>
             )}
 
+            {/* KF ID */}
+            <div className="absolute top-0.5 right-0.5 text-[7px] text-gray-500/70 font-mono pointer-events-none">{kf.id.replace('kf_', '')}</div>
+
             {/* Label / section */}
             <div className="absolute bottom-0.5 left-3 text-[8px] truncate max-w-[80px]" style={kf.labelColor ? { color: kf.labelColor } : undefined}>
               {kf.label ? (

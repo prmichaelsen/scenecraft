@@ -343,9 +343,10 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
             <select
               value={kf.blendMode || ''}
               onChange={async (e) => {
-                kf.blendMode = e.target.value
+                const val = e.target.value
+                kf.blendMode = val
                 const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
-                postUpdateKeyframeStyle(projectName, kf.id, { blendMode: e.target.value }).catch(() => {})
+                await postUpdateKeyframeStyle(projectName, kf.id, { blendMode: val })
                 onDataChange()
               }}
               className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700"
@@ -372,7 +373,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                 const v = e.target.value === '' ? null : parseFloat(e.target.value)
                 kf.opacity = v
                 const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
-                postUpdateKeyframeStyle(projectName, kf.id, { opacity: v }).catch(() => {})
+                await postUpdateKeyframeStyle(projectName, kf.id, { opacity: v })
                 onDataChange()
               }}
               className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700"

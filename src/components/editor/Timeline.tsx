@@ -365,6 +365,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [audioTrackHeight, setAudioTrackHeight] = useState(DEFAULT_AUDIO_HEIGHT)
   // Viewport state for virtualized rendering
   const [scrollLeft, setScrollLeft] = useState(0)
+  const [scrollTop, setScrollTop] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(2000)
 
   // Restore persisted heights from localStorage after mount (SSR-safe)
@@ -410,6 +411,9 @@ export function Timeline({ data }: { data: EditorData }) {
   // so globals are set before any preload effects read dbKey()
   setPreviewResolution(canvasWidth, canvasHeight)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Drag-select state
+  const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; active: boolean } | null>(null)
+  const [dragSelectRect, setDragSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const seekFnRef = useRef<((time: number) => void) | null>(null)
   const playPauseFnRef = useRef<(() => void) | null>(null)
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
@@ -523,13 +527,14 @@ export function Timeline({ data }: { data: EditorData }) {
 
   // Find active transition at current time (if any with selected video)
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
-  const activeTransition = localTransitions.find((tr) => {
+  const activeTransition = localTransitions.filter((tr) => {
+    if (tr.trackId !== selectedTrackId) return false
     const fromKf = kfMap.get(tr.from)
     const toKf = kfMap.get(tr.to)
     if (!fromKf || !toKf) return false
     if (!tr.hasSelectedVideo) return false
     return currentTime >= fromKf.timeSeconds && currentTime < toKf.timeSeconds
-  })
+  }).at(-1) ?? null
   const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
   const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
 
@@ -694,13 +699,13 @@ export function Timeline({ data }: { data: EditorData }) {
       const curKf = [...tKfs].reverse().find((kf) => kf.timeSeconds <= currentTime)
       // Find active transition for this track
       const tKfMap = new Map(tKfs.map((kf) => [kf.id, kf]))
-      // Find transition spanning current time (with or without video)
-      const activeTr = tTrs.find((tr) => {
+      // Find transition spanning current time — highest z-index (last/highest ID) wins when overlapping
+      const activeTr = tTrs.filter((tr) => {
         const from = tKfMap.get(tr.from)
         const to = tKfMap.get(tr.to)
         if (!from || !to) return false
         return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
-      })
+      }).at(-1) ?? null
       if (activeTr) {
         const from = tKfMap.get(activeTr.from)!
         const to = tKfMap.get(activeTr.to)!
@@ -723,16 +728,22 @@ export function Timeline({ data }: { data: EditorData }) {
           ? evaluateCurve(activeTr.opacityCurve, linearProgress)
           : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
         // Apply per-transition effects (e.g. strobe)
+        const trElapsed = currentTime - from.timeSeconds
         for (const fx of activeTr.effects || []) {
           if (!fx.enabled) continue
           if (fx.type === 'strobe') {
-            const freq = fx.params.frequency || 8
+            const period = fx.params.period || (1 / (fx.params.frequency || 8))
             const duty = fx.params.duty || 0.5
-            if ((progress * freq) % 1 > duty) trOpacity = 0
+            if ((trElapsed / period) % 1 > duty) trOpacity = 0
           }
         }
+        const trRed = activeTr.redCurve ? evaluateCurve(activeTr.redCurve, linearProgress) : 1
+        const trGreen = activeTr.greenCurve ? evaluateCurve(activeTr.greenCurve, linearProgress) : 1
+        const trBlue = activeTr.blueCurve ? evaluateCurve(activeTr.blueCurve, linearProgress) : 1
+        const trBlack = activeTr.blackCurve ? evaluateCurve(activeTr.blackCurve, linearProgress) : 0
+        const trHueShift = activeTr.hueShiftCurve ? evaluateCurve(activeTr.hueShiftCurve, linearProgress) : 0
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: trBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`
@@ -742,9 +753,9 @@ export function Timeline({ data }: { data: EditorData }) {
         }
         const kfOpacity = curKf.opacity != null ? curKf.opacity : track.baseOpacity
         const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, hueShift: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
-      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, hueShift: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
     return layers
   })()
@@ -895,6 +906,83 @@ export function Timeline({ data }: { data: EditorData }) {
   const persistEffects = useCallback((effects: UserEffect[], supps: BeatSuppression[]) => {
     saveEffects({ data: { projectName: data.projectName, effects, suppressions: supps } })
   }, [data.projectName])
+
+  // Drag-select: hold+drag on track area to range-select keyframes
+  // Hold 150ms to enter drag-select mode, then 5px movement activates the rectangle
+  const dragSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleDragSelectDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    const scrollEl = scrollRef.current
+    if (!scrollEl) return
+    const rect = scrollEl.getBoundingClientRect()
+    const startX = e.clientX - rect.left + scrollEl.scrollLeft
+    const startY = e.clientY - rect.top + scrollEl.scrollTop
+    const shiftKey = e.shiftKey
+
+    // Set up pending drag-select — activated after hold timer
+    const pending = { startX, startY, shiftKey, active: false, armed: false }
+    dragSelectRef.current = pending
+
+    // After 150ms hold, arm the drag-select (mouse moves will now activate it)
+    dragSelectTimer.current = setTimeout(() => {
+      if (dragSelectRef.current === pending) {
+        pending.armed = true
+      }
+    }, 150)
+  }, [])
+
+  useEffect(() => {
+    const handleDragSelectMove = (e: MouseEvent) => {
+      const ds = dragSelectRef.current
+      if (!ds || !ds.armed) return
+      const scrollEl = scrollRef.current
+      if (!scrollEl) return
+      const rect = scrollEl.getBoundingClientRect()
+      const curX = e.clientX - rect.left + scrollEl.scrollLeft
+      const curY = e.clientY - rect.top + scrollEl.scrollTop
+      const dx = curX - ds.startX
+      const dy = curY - ds.startY
+      // Only activate rectangle after 5px movement
+      if (!ds.active && Math.abs(dx) < 5 && Math.abs(dy) < 5) return
+      ds.active = true
+
+      const x = Math.min(ds.startX, curX)
+      const y = Math.min(ds.startY, curY)
+      const w = Math.abs(dx)
+      const h = Math.abs(dy)
+      setDragSelectRect({ x, y, w, h })
+
+      // Compute time range
+      const timeFrom = x / pxPerSec
+      const timeTo = (x + w) / pxPerSec
+
+      if (ds.shiftKey) {
+        // Shift+drag: current track only
+        const trackKfs = trackKeyframes.get(selectedTrackId) || []
+        const ids = new Set(trackKfs.filter((kf) => kf.timeSeconds >= timeFrom && kf.timeSeconds <= timeTo).map((kf) => kf.id))
+        setSelectedKeyframeIds(ids)
+      } else {
+        // Regular drag: all tracks
+        const ids = new Set(keyframes.filter((kf) => kf.timeSeconds >= timeFrom && kf.timeSeconds <= timeTo).map((kf) => kf.id))
+        setSelectedKeyframeIds(ids)
+      }
+    }
+
+    const handleDragSelectUp = () => {
+      if (dragSelectTimer.current) { clearTimeout(dragSelectTimer.current); dragSelectTimer.current = null }
+      if (dragSelectRef.current?.active) {
+        setDragSelectRect(null)
+      }
+      dragSelectRef.current = null
+    }
+
+    document.addEventListener('mousemove', handleDragSelectMove)
+    document.addEventListener('mouseup', handleDragSelectUp)
+    return () => {
+      document.removeEventListener('mousemove', handleDragSelectMove)
+      document.removeEventListener('mouseup', handleDragSelectUp)
+    }
+  }, [pxPerSec, keyframes, selectedTrackId, trackKeyframes])
 
   const handleAddEffect = useCallback((time: number) => {
     closeAllPanels()
@@ -1181,11 +1269,14 @@ export function Timeline({ data }: { data: EditorData }) {
         if (selectedKeyframeIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = [...selectedKeyframeIds]
+          effectClipboard.current = []
         } else if (selectedKeyframe) {
           e.preventDefault()
           kfClipboard.current = [selectedKeyframe.id]
+          effectClipboard.current = []
         } else if (selectedEffectIds.size > 0) {
           e.preventDefault()
+          kfClipboard.current = []
           const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
           if (selected.length > 0) {
             const minTime = Math.min(...selected.map((fx) => fx.time))
@@ -1520,10 +1611,17 @@ export function Timeline({ data }: { data: EditorData }) {
 
           <button
             onClick={async () => {
-              const result = await postAddTrack(data.projectName)
-              if (result.id) {
-                setSelectedTrackId(result.id)
-                refreshTimeline()
+              try {
+                console.log('[addTrack] sending request...')
+                const result = await postAddTrack(data.projectName)
+                console.log('[addTrack] result:', result)
+                if (result.id) {
+                  setSelectedTrackId(result.id)
+                  router.invalidate()
+                }
+              } catch (e) {
+                console.error('[addTrack] failed:', e)
+                alert(`Add track failed: ${e}`)
               }
             }}
             className="text-xs bg-gray-800 hover:bg-gray-700 text-teal-400/70 hover:text-teal-300 px-2 py-1 rounded transition-colors"
@@ -1652,7 +1750,7 @@ export function Timeline({ data }: { data: EditorData }) {
           ref={scrollRef}
           className="flex-1 overflow-x-auto overflow-y-auto relative"
           onWheel={handleWheel}
-          onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+          onScroll={(e) => { setScrollLeft(e.currentTarget.scrollLeft); setScrollTop(e.currentTarget.scrollTop) }}
         >
           <div style={{ width: Math.max(totalWidth, 800), minHeight: '100%' }} className="relative flex flex-col">
             {/* Sticky header: time ruler, markers, descriptions */}
@@ -1755,7 +1853,8 @@ export function Timeline({ data }: { data: EditorData }) {
                   <div
                     className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''}`}
                     style={{ height: videoTrackHeight }}
-                    onClick={(e) => { setSelectedTrackId(track.id); handleTrackClick(e) }}
+                    onMouseDown={(e) => handleDragSelectDown(e)}
+                    onClick={(e) => { if (dragSelectRef.current?.active || dragSelectRect) return; setSelectedTrackId(track.id); handleTrackClick(e) }}
                   >
                     {isActive && <SectionBands sections={data.sections} pxPerSec={pxPerSec} />}
                     <VideoTrack
@@ -1904,6 +2003,14 @@ export function Timeline({ data }: { data: EditorData }) {
               </div>
             )}
 
+            {/* Drag-select rectangle */}
+            {dragSelectRect && (
+              <div
+                className="absolute border border-blue-500/50 bg-blue-500/10 pointer-events-none z-40"
+                style={{ left: dragSelectRect.x, top: dragSelectRect.y, width: dragSelectRect.w, height: dragSelectRect.h }}
+              />
+            )}
+
             {/* Playhead overlay */}
             <Playhead
               currentTime={currentTime}
@@ -1911,6 +2018,7 @@ export function Timeline({ data }: { data: EditorData }) {
               duration={duration}
               onSeek={(time) => seekFnRef.current?.(time)}
               audioElRef={audioElRef}
+              scrollTop={scrollTop}
             />
           </div>
         </div>

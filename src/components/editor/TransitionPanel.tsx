@@ -164,9 +164,10 @@ export function TransitionPanel({
                   <select
                     value={tr.blendMode || ''}
                     onChange={async (e) => {
-                      tr.blendMode = e.target.value
+                      const val = e.target.value
+                      tr.blendMode = val
                       const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
-                      postUpdateTransitionStyle(projectName, tr.id, { blendMode: e.target.value }).catch(() => {})
+                      await postUpdateTransitionStyle(projectName, tr.id, { blendMode: val })
                       onDataChange()
                     }}
                     className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1 border border-gray-700"
@@ -192,6 +193,47 @@ export function TransitionPanel({
               {/* Opacity curve editor */}
               <div className="px-3 py-3 border-b border-gray-800">
                 <OpacityCurveEditor transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime} onDataChange={onDataChange} />
+              </div>
+
+              {/* RGBK curve editors */}
+              <div className="px-3 py-3 border-b border-gray-800 space-y-3">
+                <AnimCurveEditor
+                  label="Red" defaultY={1} color="#ef4444" yLabel="Red →"
+                  transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
+                  curveKey="redCurve" styleKey="redCurve" onDataChange={onDataChange}
+                />
+                <AnimCurveEditor
+                  label="Green" defaultY={1} color="#22c55e" yLabel="Green →"
+                  transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
+                  curveKey="greenCurve" styleKey="greenCurve" onDataChange={onDataChange}
+                />
+                <AnimCurveEditor
+                  label="Blue" defaultY={1} color="#3b82f6" yLabel="Blue →"
+                  transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
+                  curveKey="blueCurve" styleKey="blueCurve" onDataChange={onDataChange}
+                />
+                <AnimCurveEditor
+                  label="Black" defaultY={0} color="#9ca3af" yLabel="Black →"
+                  transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
+                  curveKey="blackCurve" styleKey="blackCurve" onDataChange={onDataChange}
+                />
+              </div>
+
+              {/* Hue Shift curve editor */}
+              <div className="px-3 py-3 border-b border-gray-800">
+                <AnimCurveEditor
+                  label="Hue Shift"
+                  defaultY={0}
+                  color="#a855f7"
+                  yLabel="Shift →"
+                  transition={tr}
+                  projectName={projectName}
+                  keyframes={keyframes}
+                  currentTime={currentTime}
+                  curveKey="hueShiftCurve"
+                  styleKey="hueShiftCurve"
+                  onDataChange={onDataChange}
+                />
               </div>
 
               {/* Action prompt */}
@@ -405,7 +447,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
   const handleAdd = useCallback(async (type: string) => {
     const { postAddTransitionEffect } = await import('@/lib/beatlab-client')
     const defaults: Record<string, Record<string, number>> = {
-      strobe: { frequency: 8, duty: 0.5 },
+      strobe: { period: 0.125, duty: 0.5 },
     }
     const result = await postAddTransitionEffect(projectName, transition.id, type, defaults[type] || {})
     setEffects((prev) => [...prev, { id: result.id, type, params: defaults[type] || {}, enabled: true }])
@@ -453,24 +495,24 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
           {fx.type === 'strobe' && (
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="text-[9px] text-gray-500 w-12">Freq</span>
+                <span className="text-[9px] text-gray-500 w-12">Period</span>
                 <input
-                  type="range" min={1} max={30} step={0.5}
-                  value={fx.params.frequency || 8}
-                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, frequency: parseFloat(e.target.value) } })}
+                  type="range" min={0.02} max={1} step={0.01}
+                  value={fx.params.period || (1 / (fx.params.frequency || 8))}
+                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, period: parseFloat(e.target.value) } })}
                   className="flex-1 h-1.5 accent-teal-500"
                 />
-                <span className="text-[9px] text-gray-400 w-8 text-right">{fx.params.frequency || 8}Hz</span>
+                <span className="text-[9px] text-gray-400 w-12 text-right">{((fx.params.period || (1 / (fx.params.frequency || 8))) * 1000).toFixed(0)}ms</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[9px] text-gray-500 w-12">Duty</span>
+                <span className="text-[9px] text-gray-500 w-12">Black</span>
                 <input
-                  type="range" min={0.1} max={0.9} step={0.05}
-                  value={fx.params.duty || 0.5}
-                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, duty: parseFloat(e.target.value) } })}
+                  type="range" min={0.05} max={0.95} step={0.05}
+                  value={1 - (fx.params.duty || 0.5)}
+                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, duty: 1 - parseFloat(e.target.value) } })}
                   className="flex-1 h-1.5 accent-teal-500"
                 />
-                <span className="text-[9px] text-gray-400 w-8 text-right">{Math.round((fx.params.duty || 0.5) * 100)}%</span>
+                <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round((1 - (fx.params.duty || 0.5)) * 100)}%</span>
               </div>
             </div>
           )}
@@ -1326,6 +1368,326 @@ function CurveEditor({ transition, projectName, keyframes, currentTime }: { tran
         <div><span className="text-gray-500">Click</span> to pin a frame · <span className="text-gray-500">Drag</span> left/right to reposition · <span className="text-gray-500">Double-click</span> to remove</div>
         <div>{pinCount > 0 ? `${pinCount} pin${pinCount > 1 ? 's' : ''} · ` : ''}Pinned frames lock to their timeline position. Playback speed adjusts between pins.</div>
       </div>
+    </div>
+  )
+}
+
+function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectName, keyframes, currentTime, curveKey, styleKey, onDataChange }: {
+  label: string; defaultY: number; color: string; yLabel: string
+  transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number
+  curveKey: 'redCurve' | 'greenCurve' | 'blueCurve' | 'blackCurve' | 'hueShiftCurve'; styleKey: string; onDataChange: () => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [points, setPoints] = useState<[number, number][]>(() =>
+    (transition as Record<string, unknown>)[curveKey] as [number, number][] || [[0, defaultY], [1, defaultY]]
+  )
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const PAD = 10
+  const ASPECT = 3
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 240, h: 80 })
+  const W = canvasSize.w
+  const H = canvasSize.h
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ro = new ResizeObserver((entries) => {
+      const { width } = entries[0].contentRect
+      if (width > 0) setCanvasSize({ w: width, h: Math.round(width / ASPECT) })
+    })
+    ro.observe(canvas)
+    return () => ro.disconnect()
+  }, [])
+
+  const toCanvas = (x: number, y: number): [number, number] => [
+    PAD + x * (W - 2 * PAD),
+    H - PAD - y * (H - 2 * PAD),
+  ]
+  const fromCanvas = (cx: number, cy: number): [number, number] => [
+    Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
+    Math.max(0, Math.min(1, (H - PAD - cy) / (H - 2 * PAD))),
+  ]
+  const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    return [e.clientX - rect.left, e.clientY - rect.top]
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = W * dpr
+    canvas.height = H * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, W, H)
+
+    ctx.fillStyle = '#1a1a2e'
+    ctx.fillRect(0, 0, W, H)
+
+    // Grid
+    ctx.strokeStyle = '#333'
+    ctx.lineWidth = 0.5
+    for (let i = 0; i <= 4; i++) {
+      const [x] = toCanvas(i / 4, 0)
+      const [, y] = toCanvas(0, i / 4)
+      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
+    }
+
+    ctx.fillStyle = '#666'
+    ctx.font = '8px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('Progress \u2192', W / 2, H - 1)
+    ctx.save()
+    ctx.translate(8, H / 2)
+    ctx.rotate(-Math.PI / 2)
+    ctx.fillText(yLabel, 0, 0)
+    ctx.restore()
+    ctx.fillStyle = '#555'
+    ctx.font = '7px monospace'
+    ctx.textAlign = 'left'
+    ctx.fillText('0%', PAD, H - PAD + 9)
+    ctx.textAlign = 'right'
+    ctx.fillText('100%', W - PAD, H - PAD + 9)
+    ctx.textAlign = 'left'
+    ctx.fillText('100%', 1, PAD + 3)
+
+    // Zero reference line
+    ctx.strokeStyle = '#555'
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    const [lx0, ly0] = toCanvas(0, 0)
+    const [lx1] = toCanvas(1, 0)
+    ctx.moveTo(lx0, ly0)
+    ctx.lineTo(lx1, ly0)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+
+    // Curve line
+    ctx.strokeStyle = color + '66'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    for (let i = 0; i < sorted.length; i++) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      if (i === 0) ctx.moveTo(cx, cy)
+      else ctx.lineTo(cx, cy)
+    }
+    ctx.stroke()
+
+    // Fill area under curve
+    ctx.fillStyle = color + '11'
+    ctx.beginPath()
+    const [bx0, by0] = toCanvas(sorted[0][0], 0)
+    ctx.moveTo(bx0, by0)
+    for (let i = 0; i < sorted.length; i++) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      ctx.lineTo(cx, cy)
+    }
+    const [bxN, byN] = toCanvas(sorted[sorted.length - 1][0], 0)
+    ctx.lineTo(bxN, byN)
+    ctx.closePath()
+    ctx.fill()
+
+    // Points
+    for (let i = 0; i < sorted.length; i++) {
+      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
+      const isEndpoint = i === 0 || i === sorted.length - 1
+      const isHovered = hoveredIdx === i
+      const isDragging = draggingIdx === i
+
+      if (!isEndpoint) {
+        const [, bottomY] = toCanvas(0, 0)
+        ctx.strokeStyle = isDragging ? color : isHovered ? color + 'aa' : color + '44'
+        ctx.lineWidth = 1
+        ctx.setLineDash([2, 2])
+        ctx.beginPath()
+        ctx.moveTo(cx, bottomY)
+        ctx.lineTo(cx, cy)
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+
+      const r = isDragging ? 3.5 : isHovered ? 3 : 2.5
+      if (isEndpoint) {
+        ctx.beginPath()
+        ctx.arc(cx, cy, r, 0, Math.PI * 2)
+        ctx.fillStyle = isDragging ? color : isHovered ? color : '#555'
+        ctx.fill()
+        ctx.strokeStyle = isDragging ? '#fff' : '#888'
+        ctx.lineWidth = 0.5
+        ctx.stroke()
+      } else {
+        ctx.beginPath()
+        ctx.moveTo(cx, cy - r)
+        ctx.lineTo(cx + r, cy)
+        ctx.lineTo(cx, cy + r)
+        ctx.lineTo(cx - r, cy)
+        ctx.closePath()
+        ctx.fillStyle = isDragging ? color : color
+        ctx.fill()
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 0.5
+        ctx.stroke()
+      }
+
+      if (isHovered || isDragging) {
+        ctx.fillStyle = color
+        ctx.font = '7px monospace'
+        ctx.textAlign = cx > W / 2 ? 'right' : 'left'
+        const labelX = cx > W / 2 ? cx - 8 : cx + 8
+        ctx.fillText(`${Math.round(sorted[i][1] * 100)}%`, labelX, cy + 3)
+      }
+    }
+
+    // Playhead
+    const fromKf = keyframes.find((k) => k.id === transition.from)
+    const toKf = keyframes.find((k) => k.id === transition.to)
+    if (fromKf && toKf) {
+      const span = toKf.timeSeconds - fromKf.timeSeconds
+      if (span > 0) {
+        const linearProgress = Math.max(0, Math.min(1, (currentTime - fromKf.timeSeconds) / span))
+        const val = evaluateCurve(sorted, linearProgress)
+        const [phx, phy] = toCanvas(linearProgress, val)
+        const [, bottomY] = toCanvas(0, 0)
+        const [, topY] = toCanvas(0, 1)
+
+        ctx.strokeStyle = '#ffffff44'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(phx, topY)
+        ctx.lineTo(phx, bottomY)
+        ctx.stroke()
+
+        ctx.beginPath()
+        ctx.arc(phx, phy, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#fff'
+        ctx.fill()
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+    }
+  }, [points, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to, color, yLabel])
+
+  const save = useCallback(async (newPoints: [number, number][]) => {
+    setSaving(true)
+    const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
+    try {
+      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+      const isDefault = sorted.length === 2 && sorted[0][1] === defaultY && sorted[1][1] === defaultY
+      await postUpdateTransitionStyle(projectName, transition.id, { [styleKey]: isDefault ? null : sorted } as Record<string, unknown> as never)
+      ;(transition as Record<string, unknown>)[curveKey] = isDefault ? null : sorted
+      onDataChange()
+    } catch (e) {
+      console.error(`Save ${label} curve failed:`, e)
+    } finally {
+      setSaving(false)
+    }
+  }, [projectName, transition, onDataChange, curveKey, styleKey, defaultY, label])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    for (let i = 0; i < sorted.length; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
+        setDraggingIdx(i)
+        return
+      }
+    }
+    const [nx, ny] = fromCanvas(pos[0], pos[1])
+    const newPoints: [number, number][] = [...points, [nx, ny]]
+    newPoints.sort((a, b) => a[0] - b[0])
+    setPoints(newPoints)
+    save(newPoints)
+  }, [points, save])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    if (draggingIdx !== null) {
+      const [nx, ny] = fromCanvas(pos[0], pos[1])
+      setPoints((prev) => {
+        const sorted = [...prev].sort((a, b) => a[0] - b[0])
+        const minX = sorted[draggingIdx - 1]?.[0] ?? 0
+        const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
+        sorted[draggingIdx] = [Math.max(minX + 0.01, Math.min(maxX - 0.01, nx)), ny]
+        return sorted
+      })
+      return
+    }
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    let found: number | null = null
+    for (let i = 0; i < sorted.length; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) { found = i; break }
+    }
+    setHoveredIdx(found)
+  }, [draggingIdx, points])
+
+  const handleMouseUp = useCallback(() => {
+    if (draggingIdx !== null) { setDraggingIdx(null); save(points) }
+  }, [draggingIdx, points, save])
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    const sorted = [...points].sort((a, b) => a[0] - b[0])
+    for (let i = 1; i < sorted.length - 1; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
+        const newPoints = sorted.filter((_, j) => j !== i)
+        setPoints(newPoints)
+        save(newPoints)
+        setHoveredIdx(null)
+        return
+      }
+    }
+  }, [points, save])
+
+  const handleReset = useCallback(() => {
+    const defaultPoints: [number, number][] = [[0, defaultY], [1, defaultY]]
+    setPoints(defaultPoints)
+    save(defaultPoints)
+    setHoveredIdx(null)
+  }, [save, defaultY])
+
+  const hasChanges = points.length > 2 || points.some((p) => p[1] !== defaultY)
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</div>
+        <button
+          onClick={handleReset}
+          disabled={saving || !hasChanges}
+          className="text-[10px] text-gray-500 hover:text-gray-300 disabled:text-gray-700 transition-colors"
+        >
+          Reset
+        </button>
+      </div>
+      <canvas
+        ref={canvasRef}
+        className="w-full rounded border border-gray-700 cursor-crosshair"
+        style={{ width: '100%', height: 'auto', aspectRatio: `3 / 1` }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
+        onDoubleClick={handleDoubleClick}
+      />
     </div>
   )
 }

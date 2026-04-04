@@ -6,9 +6,10 @@ type PlayheadProps = {
   onSeek: (time: number) => void
   duration: number
   audioElRef?: MutableRefObject<HTMLAudioElement | null>
+  scrollTop?: number
 }
 
-export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef }: PlayheadProps) {
+export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef, scrollTop = 0 }: PlayheadProps) {
   const x = currentTime * pxPerSec
   const isDragging = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -75,9 +76,10 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef }
       {/* Visible line */}
       <div className="absolute top-0 left-0 w-px h-full bg-red-500" />
 
-      {/* Draggable cap — wider hit target, only this captures clicks */}
+      {/* Draggable cap — wider hit target, only this captures clicks, follows vertical scroll */}
       <div
-        className="absolute -top-0 -left-2 w-4 h-4 cursor-grab active:cursor-grabbing z-20 pointer-events-auto"
+        className="absolute -left-2 w-4 h-4 cursor-grab active:cursor-grabbing z-20 pointer-events-auto"
+        style={{ top: scrollTop }}
         onMouseDown={handleMouseDown}
       >
         <div className="absolute left-1.5 top-0.5 w-3 h-3 bg-red-500 rounded-full pointer-events-none" />
