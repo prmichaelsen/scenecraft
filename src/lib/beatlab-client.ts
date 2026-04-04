@@ -292,6 +292,16 @@ export async function postGenerateKeyframeVariations(project: string, keyframeId
   return res.json() as Promise<{ jobId: string; keyframeId: string }>
 }
 
+export async function postEscalateKeyframe(project: string, keyframeId: string, count?: number) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/escalate-keyframe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyframeId, count: count || 2 }),
+  })
+  if (!res.ok) throw new Error(`Failed: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ jobId: string; keyframeId: string }>
+}
+
 export async function postUpdateKeyframeLabel(project: string, keyframeId: string, label: string, labelColor: string) {
   await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-label`, {
     method: 'POST',

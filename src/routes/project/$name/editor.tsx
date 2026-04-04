@@ -493,6 +493,13 @@ export const generateKeyframeVariations = createServerFn({ method: 'POST' })
     return postGenerateKeyframeVariations(data.projectName, data.keyframeId, data.count)
   })
 
+export const escalateKeyframe = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
+  .handler(async ({ data }) => {
+    const { postEscalateKeyframe } = await import('@/lib/beatlab-client')
+    return postEscalateKeyframe(data.projectName, data.keyframeId, data.count)
+  })
+
 export const generateKeyframeCandidates = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; count?: number; refinementPrompt?: string; freeform?: boolean }) => input)
   .handler(async ({ data }) => {

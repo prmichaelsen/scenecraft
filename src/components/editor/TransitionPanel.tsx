@@ -1417,6 +1417,8 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     if (!pos) return
     const sorted = [...points].sort((a, b) => a[0] - b[0])
     for (let i = 0; i < sorted.length; i++) {
+      // Skip endpoints when lockY (time remap) — they're fixed at [0,0] and [1,1]
+      if (lockY && (i === 0 || i === sorted.length - 1)) continue
       const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
       if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
         setDraggingIdx(i)

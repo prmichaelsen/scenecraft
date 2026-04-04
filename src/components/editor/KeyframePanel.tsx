@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
-import { updateKeyframePrompt, generateKeyframeCandidates, generateKeyframeVariations, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
+import { updateKeyframePrompt, generateKeyframeCandidates, generateKeyframeVariations, escalateKeyframe, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
 import { beatlabFileUrl, fetchDirectoryListing, type FileEntry, type AudioEvent, type AudioDescription } from '@/lib/beatlab-client'
 import { invalidateEntry, preloadKeyframeImage } from '@/lib/frame-cache'
@@ -693,6 +693,20 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
         title="Generate variations with AI-generated prompts"
       >
         {generating ? 'Generating...' : 'Generate Variations (AI prompts)'}
+      </button>
+
+      <button
+        onClick={async () => {
+          try {
+            const result = await escalateKeyframe({ data: { projectName, keyframeId: kf.id, count: generationCount } })
+            if (result.jobId) jobCtx.startJob(entityKey, result.jobId)
+          } catch (e) { alert(`Escalate failed: ${e}`) }
+        }}
+        disabled={generating}
+        className="w-full text-xs bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+        title="Intensify the current image — push colors, contrast, drama to the extreme"
+      >
+        {generating ? 'Generating...' : 'Escalate (Intensify)'}
       </button>
 
       {generating && (
