@@ -512,6 +512,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
     const { postAddTransitionEffect } = await import('@/lib/beatlab-client')
     const defaults: Record<string, Record<string, number>> = {
       strobe: { period: 0.125, duty: 0.5 },
+      invert: { amount: 1 },
     }
     const result = await postAddTransitionEffect(projectName, transition.id, type, defaults[type] || {})
     setEffects((prev) => [...prev, { id: result.id, type, params: defaults[type] || {}, enabled: true }])
@@ -540,6 +541,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
         >
           <option value="" disabled>+ Add</option>
           <option value="strobe">Strobe</option>
+          <option value="invert">Invert</option>
         </select>
       </div>
       {effects.map((fx) => (
@@ -578,6 +580,18 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
                 />
                 <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round((1 - (fx.params.duty || 0.5)) * 100)}%</span>
               </div>
+            </div>
+          )}
+          {fx.type === 'invert' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-gray-500 w-12">Amount</span>
+              <input
+                type="range" min={0} max={1} step={0.05}
+                value={fx.params.amount ?? 1}
+                onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, amount: parseFloat(e.target.value) } })}
+                className="flex-1 h-1.5 accent-pink-500"
+              />
+              <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round((fx.params.amount ?? 1) * 100)}%</span>
             </div>
           )}
         </div>

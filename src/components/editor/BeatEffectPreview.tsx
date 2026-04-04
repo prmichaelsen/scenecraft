@@ -13,7 +13,9 @@ export type TrackLayer = {
   green: number
   blue: number
   black: number
+  saturation: number
   hueShift: number
+  invert: number
   blendMode: BlendMode
   chromaKey?: { color: [number, number, number]; threshold: number; feather: number }
   isAdjustment?: boolean
@@ -136,7 +138,9 @@ const COMPOSITE_SHADER = `
   uniform float u_green;       // green channel multiplier
   uniform float u_blue;        // blue channel multiplier
   uniform float u_black;       // fade to black (0=full color, 1=black)
+  uniform float u_saturation;   // 1=normal, 0=grayscale, >1=oversaturated
   uniform float u_hueShift;    // 0=no shift, 1=full 360° rotation
+  uniform float u_invert;      // 0=no invert, 1=full invert
   uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add,6=chroma-key,7=soft-light
   uniform vec3 u_keyColor;     // chroma key target color
   uniform float u_keyThreshold;// how close to key color = transparent (0-1)
@@ -171,12 +175,15 @@ const COMPOSITE_SHADER = `
     layer.b *= u_blue;
     layer *= (1.0 - u_black);
 
-    // Apply hue shift
-    if (u_hueShift > 0.001) {
+    // Apply saturation + hue shift (share HSV conversion when both active)
+    if (abs(u_saturation - 1.0) > 0.001 || u_hueShift > 0.001) {
       vec3 hsv = rgb2hsv(layer);
-      hsv.x = fract(hsv.x + u_hueShift);
+      if (abs(u_saturation - 1.0) > 0.001) hsv.y = clamp(hsv.y * u_saturation, 0.0, 1.0);
+      if (u_hueShift > 0.001) hsv.x = fract(hsv.x + u_hueShift);
       layer = hsv2rgb(hsv);
     }
+
+    if (u_invert > 0.001) { layer = mix(layer, vec3(1.0) - layer, u_invert); }
 
     vec3 blended;
     if (u_blendMode == 1) { blended = base.rgb * layer; }                                      // multiply
@@ -520,15 +527,15 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
 
     // ── Single render path: always go through FBO compositor ──
     // Build content layers from tracks, or fall back to legacy single-frame sources
-    const contentLayers: { frameA: TexImageSource | null; frameB: TexImageSource | null; blendFactor: number; opacity: number; red: number; green: number; blue: number; black: number; hueShift: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number }; isAdjustment?: boolean }[] = []
+    const contentLayers: { frameA: TexImageSource | null; frameB: TexImageSource | null; blendFactor: number; opacity: number; red: number; green: number; blue: number; black: number; saturation: number; hueShift: number; invert: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number }; isAdjustment?: boolean }[] = []
 
     if (layers && layers.length > 0) {
       for (const l of layers) {
         if (l.isAdjustment) {
           // Adjustment layers have no content — they modify the composite below
-          contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, hueShift: l.hueShift ?? 0, blendMode: 'normal', isAdjustment: true })
+          contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: 'normal', isAdjustment: true })
         } else if (l.frameA) {
-          contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, hueShift: l.hueShift ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never })
+          contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never })
         }
       }
     }
@@ -536,7 +543,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     if (contentLayers.length === 0) {
       const fallbackA = transitionFrameA || imgRef.current
       if (!fallbackA) return
-      contentLayers.push({ frameA: fallbackA, frameB: transitionFrameB || fallbackA, blendFactor: blend, opacity: 1, red: 1, green: 1, blue: 1, black: 0, hueShift: 0, blendMode: 'normal' })
+      contentLayers.push({ frameA: fallbackA, frameB: transitionFrameB || fallbackA, blendFactor: blend, opacity: 1, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: 'normal' })
     }
 
     // Clear FBO to black, then composite ALL layers (including base) via ping-pong
@@ -592,7 +599,9 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_green'), layer.green ?? 1)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_blue'), layer.blue ?? 1)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_black'), layer.black ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_saturation'), layer.saturation ?? 1)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_hueShift'), layer.hueShift ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_invert'), layer.invert ?? 0)
       gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_blendMode'), BLEND_MODE_MAP[layer.blendMode] ?? 0)
 
       const ck = layer.chromaKey

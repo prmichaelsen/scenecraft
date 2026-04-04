@@ -716,23 +716,26 @@ export function Timeline({ data }: { data: EditorData }) {
           ? evaluateCurve(activeTr.opacityCurve, linearProgress)
           : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
         const trElapsed = currentTime - from.timeSeconds
+        let trInvert = 0
         for (const fx of activeTr.effects || []) {
           if (!fx.enabled) continue
           if (fx.type === 'strobe') {
             const period = fx.params.period || (1 / (fx.params.frequency || 8))
             const duty = fx.params.duty || 0.5
             if ((trElapsed / period) % 1 > duty) trOpacity = 0
+          } else if (fx.type === 'invert') {
+            trInvert = fx.params.amount ?? 1
           }
         }
         const trRed = activeTr.redCurve ? evaluateCurve(activeTr.redCurve, linearProgress) : 1
         const trGreen = activeTr.greenCurve ? evaluateCurve(activeTr.greenCurve, linearProgress) : 1
         const trBlue = activeTr.blueCurve ? evaluateCurve(activeTr.blueCurve, linearProgress) : 1
         const trBlack = activeTr.blackCurve ? evaluateCurve(activeTr.blackCurve, linearProgress) : 0
+        const trSaturation = activeTr.saturationCurve ? evaluateCurve(activeTr.saturationCurve, linearProgress) : 1
         const trHueShift = activeTr.hueShiftCurve ? evaluateCurve(activeTr.hueShiftCurve, linearProgress) : 0
 
         if (activeTr.isAdjustment) {
-          // Adjustment transition: no video content, just curves applied to composite below
-          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true } as import('./BeatEffectPreview').TrackLayer
+          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true } as import('./BeatEffectPreview').TrackLayer
         }
 
         const progress = activeTr.remap?.method === 'curve'
@@ -750,7 +753,7 @@ export function Timeline({ data }: { data: EditorData }) {
           frameA = getFrameAtProgress(kfKey, 0)
         }
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, hueShift: trHueShift, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`
@@ -760,9 +763,9 @@ export function Timeline({ data }: { data: EditorData }) {
         }
         const kfOpacity = curKf.opacity != null ? curKf.opacity : track.baseOpacity
         const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, hueShift: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
-      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, hueShift: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
     return layers
   })()
