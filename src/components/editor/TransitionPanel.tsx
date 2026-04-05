@@ -1474,6 +1474,8 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
       const [nx, ny] = fromCanvas(pos[0], pos[1])
       setPoints((prev) => {
         const sorted = [...prev].sort((a, b) => a[0] - b[0])
+        // For lockY (time remap): endpoints are fully locked, intermediate points lock Y only
+        if (lockY && (draggingIdx === 0 || draggingIdx === sorted.length - 1)) return sorted
         const minX = sorted[draggingIdx - 1]?.[0] ?? 0
         const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
         const newY = lockY ? sorted[draggingIdx][1] : ny

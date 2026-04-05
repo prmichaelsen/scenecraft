@@ -733,6 +733,8 @@ export function Timeline({ data }: { data: EditorData }) {
         const trBlack = activeTr.blackCurve ? evaluateCurve(activeTr.blackCurve, linearProgress) : 0
         const trSaturation = activeTr.saturationCurve ? evaluateCurve(activeTr.saturationCurve, linearProgress) : 1
         const trHueShift = activeTr.hueShiftCurve ? evaluateCurve(activeTr.hueShiftCurve, linearProgress) : 0
+        const trInvertCurve = activeTr.invertCurve ? evaluateCurve(activeTr.invertCurve, linearProgress) : 0
+        trInvert = Math.min(1, trInvert + trInvertCurve)
 
         if (activeTr.isAdjustment) {
           return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true } as import('./BeatEffectPreview').TrackLayer
@@ -1253,6 +1255,9 @@ export function Timeline({ data }: { data: EditorData }) {
   // Keyframe group clipboard for copy/paste
   const kfClipboard = useRef<string[]>([])
 
+  // Suppression clipboard for copy/paste
+  const supClipboard = useRef<BeatSuppression | null>(null)
+
   // Effect clipboard for copy/paste (supports multiple)
   const effectClipboard = useRef<UserEffect[]>([])
 
@@ -1284,19 +1289,30 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+C: copy selected keyframes or effects
+      // Ctrl+C: copy selected keyframes, suppression, or effects
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         if (selectedKeyframeIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = [...selectedKeyframeIds]
+          supClipboard.current = null
           effectClipboard.current = []
         } else if (selectedKeyframe) {
           e.preventDefault()
           kfClipboard.current = [selectedKeyframe.id]
+          supClipboard.current = null
           effectClipboard.current = []
+        } else if (selectedSuppressionId) {
+          e.preventDefault()
+          const sup = suppressions.find((s) => s.id === selectedSuppressionId)
+          if (sup) {
+            supClipboard.current = sup
+            kfClipboard.current = []
+            effectClipboard.current = []
+          }
         } else if (selectedEffectIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = []
+          supClipboard.current = null
           const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
           if (selected.length > 0) {
             const minTime = Math.min(...selected.map((fx) => fx.time))
@@ -1305,7 +1321,7 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+V: paste keyframes or effects at playhead
+      // Ctrl+V: paste keyframes, suppression, or effects at playhead
       if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
         if (kfClipboard.current.length > 0) {
           e.preventDefault()
@@ -1314,6 +1330,22 @@ export function Timeline({ data }: { data: EditorData }) {
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste group failed:', err); alert(`Paste failed: ${err.message}`) })
           })
+        } else if (supClipboard.current) {
+          e.preventDefault()
+          const src = supClipboard.current
+          const duration = src.to - src.from
+          const id = `sup_${String(nextSupId.current++).padStart(3, '0')}`
+          const newSup: BeatSuppression = {
+            id,
+            from: currentTime,
+            to: currentTime + duration,
+            ...(src.effectTypes ? { effectTypes: [...src.effectTypes] } : {}),
+            ...(src.layerEffectTypes ? { layerEffectTypes: [...src.layerEffectTypes] } : {}),
+          }
+          const updated = [...suppressions, newSup]
+          setSuppressions(updated)
+          setSelectedSuppressionId(id)
+          persistEffects(userEffects, updated)
         } else if (effectClipboard.current.length > 0) {
           e.preventDefault()
           const newIds = new Set<string>()
