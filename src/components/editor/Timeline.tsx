@@ -1534,9 +1534,11 @@ export function Timeline({ data }: { data: EditorData }) {
             {isPlaying ? '⏸' : '▶'}
           </button>
 
-          <div className="text-sm font-mono text-gray-400">
-            {formatTime(currentTime)} / {formatTime(effectiveDuration)}
-          </div>
+          <TimeDisplay
+            currentTime={currentTime}
+            duration={effectiveDuration}
+            onSeek={(time) => { if (seekFnRef.current) seekFnRef.current(time); else setCurrentTime(time) }}
+          />
 
           {/* Playback speed */}
           <div className="flex items-center gap-1">
@@ -3072,4 +3074,54 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${m}:${s.toFixed(1).padStart(4, '0')}`
+}
+
+function TimeDisplay({ currentTime, duration, onSeek }: { currentTime: number; duration: number; onSeek: (time: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+
+  const parseTime = (str: string): number | null => {
+    const trimmed = str.trim()
+    // Support M:SS.f or just seconds
+    const colonMatch = trimmed.match(/^(\d+):(\d+\.?\d*)$/)
+    if (colonMatch) return parseInt(colonMatch[1], 10) * 60 + parseFloat(colonMatch[2])
+    const num = parseFloat(trimmed)
+    return isNaN(num) ? null : num
+  }
+
+  const handleSubmit = () => {
+    const time = parseTime(inputValue)
+    if (time !== null && time >= 0 && time <= duration) {
+      onSeek(time)
+    }
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <input
+        type="text"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSubmit()
+          if (e.key === 'Escape') setEditing(false)
+        }}
+        onBlur={handleSubmit}
+        autoFocus
+        className="text-sm font-mono text-gray-300 bg-gray-800 border border-blue-500 rounded px-1.5 py-0.5 w-24 focus:outline-none"
+        placeholder="M:SS.f"
+      />
+    )
+  }
+
+  return (
+    <div
+      className="text-sm font-mono text-gray-400 cursor-pointer hover:text-gray-200 transition-colors"
+      onDoubleClick={() => { setInputValue(formatTime(currentTime)); setEditing(true) }}
+      title="Double-click to enter a specific time"
+    >
+      {formatTime(currentTime)} / {formatTime(duration)}
+    </div>
+  )
 }
