@@ -1084,8 +1084,20 @@ export function Timeline({ data }: { data: EditorData }) {
     persistEffects(userEffects, updated)
   }, [suppressions, userEffects, persistEffects])
 
-  const handleSuppressionClick = useCallback((id: string) => {
+  const [selectedSuppressionIds, setSelectedSuppressionIds] = useState<Set<string>>(new Set())
+
+  const handleSuppressionClick = useCallback((id: string, shiftKey?: boolean) => {
+    if (shiftKey) {
+      setSelectedSuppressionIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+      return
+    }
     closeAllPanels()
+    setSelectedSuppressionIds(new Set())
     setSelectedSuppressionId((prev) => prev === id ? null : id)
   }, [closeAllPanels])
 
@@ -1255,8 +1267,8 @@ export function Timeline({ data }: { data: EditorData }) {
   // Keyframe group clipboard for copy/paste
   const kfClipboard = useRef<string[]>([])
 
-  // Suppression clipboard for copy/paste
-  const supClipboard = useRef<BeatSuppression | null>(null)
+  // Suppression clipboard for copy/paste (stores with relative times)
+  const supClipboard = useRef<BeatSuppression[]>([])
 
   // Effect clipboard for copy/paste (supports multiple)
   const effectClipboard = useRef<UserEffect[]>([])
@@ -1294,25 +1306,27 @@ export function Timeline({ data }: { data: EditorData }) {
         if (selectedKeyframeIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = [...selectedKeyframeIds]
-          supClipboard.current = null
+          supClipboard.current = []
           effectClipboard.current = []
         } else if (selectedKeyframe) {
           e.preventDefault()
           kfClipboard.current = [selectedKeyframe.id]
-          supClipboard.current = null
+          supClipboard.current = []
           effectClipboard.current = []
-        } else if (selectedSuppressionId) {
+        } else if (selectedSuppressionIds.size > 0 || selectedSuppressionId) {
           e.preventDefault()
-          const sup = suppressions.find((s) => s.id === selectedSuppressionId)
-          if (sup) {
-            supClipboard.current = sup
+          const ids = selectedSuppressionIds.size > 0 ? selectedSuppressionIds : new Set(selectedSuppressionId ? [selectedSuppressionId] : [])
+          const selected = suppressions.filter((s) => ids.has(s.id))
+          if (selected.length > 0) {
+            const minFrom = Math.min(...selected.map((s) => s.from))
+            supClipboard.current = selected.map((s) => ({ ...s, from: s.from - minFrom, to: s.to - minFrom }))
             kfClipboard.current = []
             effectClipboard.current = []
           }
         } else if (selectedEffectIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = []
-          supClipboard.current = null
+          supClipboard.current = []
           const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
           if (selected.length > 0) {
             const minTime = Math.min(...selected.map((fx) => fx.time))
@@ -1330,21 +1344,22 @@ export function Timeline({ data }: { data: EditorData }) {
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste group failed:', err); alert(`Paste failed: ${err.message}`) })
           })
-        } else if (supClipboard.current) {
+        } else if (supClipboard.current.length > 0) {
           e.preventDefault()
-          const src = supClipboard.current
-          const duration = src.to - src.from
-          const id = `sup_${String(nextSupId.current++).padStart(3, '0')}`
-          const newSup: BeatSuppression = {
-            id,
-            from: currentTime,
-            to: currentTime + duration,
-            ...(src.effectTypes ? { effectTypes: [...src.effectTypes] } : {}),
-            ...(src.layerEffectTypes ? { layerEffectTypes: [...src.layerEffectTypes] } : {}),
-          }
-          const updated = [...suppressions, newSup]
+          const newSups: BeatSuppression[] = supClipboard.current.map((src) => {
+            const id = `sup_${String(nextSupId.current++).padStart(3, '0')}`
+            return {
+              id,
+              from: currentTime + src.from,
+              to: currentTime + src.to,
+              ...(src.effectTypes ? { effectTypes: [...src.effectTypes] } : {}),
+              ...(src.layerEffectTypes ? { layerEffectTypes: [...src.layerEffectTypes] } : {}),
+            }
+          })
+          const updated = [...suppressions, ...newSups]
           setSuppressions(updated)
-          setSelectedSuppressionId(id)
+          setSelectedSuppressionIds(new Set(newSups.map((s) => s.id)))
+          setSelectedSuppressionId(newSups[0]?.id ?? null)
           persistEffects(userEffects, updated)
         } else if (effectClipboard.current.length > 0) {
           e.preventDefault()
@@ -1370,7 +1385,7 @@ export function Timeline({ data }: { data: EditorData }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedEffect, selectedEffectIds, selectedSuppressionId, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, currentTime, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
+  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, currentTime, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
 
   // Preview divider drag
   const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
@@ -2051,6 +2066,7 @@ export function Timeline({ data }: { data: EditorData }) {
                 onAddSuppression={handleAddSuppression}
                 onResizeSuppression={handleResizeSuppression}
                 selectedSuppressionId={selectedSuppressionId}
+                selectedSuppressionIds={selectedSuppressionIds}
                 onSuppressionClick={handleSuppressionClick}
                 scrollLeft={scrollLeft}
                 viewportWidth={viewportWidth}

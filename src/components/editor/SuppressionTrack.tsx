@@ -16,7 +16,8 @@ type SuppressionTrackProps = {
   onAddSuppression: (from: number, to: number) => void
   onResizeSuppression: (id: string, from: number, to: number) => void
   selectedSuppressionId: string | null
-  onSuppressionClick: (id: string) => void
+  selectedSuppressionIds: Set<string>
+  onSuppressionClick: (id: string, shiftKey?: boolean) => void
   scrollLeft: number
   viewportWidth: number
 }
@@ -27,6 +28,7 @@ export function SuppressionTrack({
   onAddSuppression,
   onResizeSuppression,
   selectedSuppressionId,
+  selectedSuppressionIds,
   onSuppressionClick,
   scrollLeft,
   viewportWidth,
@@ -74,19 +76,20 @@ export function SuppressionTrack({
         const rightPx = s.to * pxPerSec
         if (rightPx < scrollLeft - BUFFER_PX || leftPx > scrollLeft + viewportWidth + BUFFER_PX) return null
         const isSelected = s.id === selectedSuppressionId
+        const isMultiSelected = selectedSuppressionIds.has(s.id)
         const widthPx = (s.to - s.from) * pxPerSec
         const hasTypeFilter = s.effectTypes && s.effectTypes.length > 0
         return (
           <div
             key={s.id}
             data-suppression
-            className={`absolute top-0 h-full pointer-events-auto cursor-pointer ${isSelected ? 'bg-red-900/30 border-l-2 border-r-2 border-red-500' : 'bg-red-900/15 border-l border-r border-red-800/30 hover:bg-red-900/25'}`}
+            className={`absolute top-0 h-full pointer-events-auto cursor-pointer ${isSelected ? 'bg-red-900/30 border-l-2 border-r-2 border-red-500' : isMultiSelected ? 'bg-red-900/30 border-l-2 border-r-2 border-teal-500' : 'bg-red-900/15 border-l border-r border-red-800/30 hover:bg-red-900/25'}`}
             style={{
               left: leftPx,
               width: widthPx,
             }}
             title={`Suppressed: ${s.from.toFixed(1)}s - ${s.to.toFixed(1)}s${hasTypeFilter ? ` (${s.effectTypes!.join(', ')})` : ' (all)'}`}
-            onClick={(e) => { e.stopPropagation(); onSuppressionClick(s.id) }}
+            onClick={(e) => { e.stopPropagation(); onSuppressionClick(s.id, e.shiftKey) }}
           >
             {/* Type indicator dots */}
             {widthPx > 30 && (
