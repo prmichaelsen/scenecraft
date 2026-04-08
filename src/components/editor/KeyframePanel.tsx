@@ -298,7 +298,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
         </div>
       )}
       {/* Base image picker — always available */}
-      <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true); onDataChange() }} />
+      <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true); invalidateEntry(`kf:${kf.id}`); onDataChange() }} />
 
       {/* Metadata */}
       <div className="px-3 pb-4 space-y-3">
@@ -812,6 +812,21 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
                         title="Save as reusable still for future generations"
                       >
                         still
+                      </button>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/bench/add`
+                          await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ type: 'keyframe', sourcePath: relativePath }),
+                          })
+                        }}
+                        className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Add to bench"
+                      >
+                        bench
                       </button>
                       {selected && (
                         <span className="text-[9px] bg-blue-500 text-white px-1 rounded">

@@ -192,6 +192,21 @@ const COMPOSITE_SHADER = `
 
     if (u_invert > 0.001) { layer = mix(layer, vec3(1.0) - layer, u_invert); }
 
+    // Radial mask — applied to layer before blending so masked areas are transparent
+    float maskAlpha = 1.0;
+    if (u_maskRadius < 0.999) {
+      vec2 d = (v_texCoord - u_maskCenter) * vec2(1.0, 1.0 / u_aspectRatio);
+      float dist = length(d);
+      float inner = u_maskRadius * (1.0 - u_maskFeather);
+      maskAlpha = 1.0 - smoothstep(inner, u_maskRadius, dist);
+    }
+    float effectiveOpacity = u_opacity * maskAlpha;
+
+    // Blend mode identity: what the layer should become when fully masked out
+    // For multiply: identity is white (base * 1 = base)
+    // For all others: mix(base, blended, 0) = base, so identity doesn't matter
+    if (u_blendMode == 1) { layer = mix(vec3(1.0), layer, maskAlpha); }  // multiply: fade to white
+
     vec3 blended;
     if (u_blendMode == 1) { blended = base.rgb * layer; }                                      // multiply
     else if (u_blendMode == 2) { blended = 1.0 - (1.0 - base.rgb) * (1.0 - layer); }          // screen
@@ -199,28 +214,18 @@ const COMPOSITE_SHADER = `
     else if (u_blendMode == 4) { blended = abs(base.rgb - layer); }                            // difference
     else if (u_blendMode == 5) { blended = min(base.rgb + layer, 1.0); }                       // add
     else if (u_blendMode == 6) {                                                                // chroma key
-      float dist = distance(layer, u_keyColor);
-      float alpha = smoothstep(u_keyThreshold, u_keyThreshold + u_keyFeather, dist);
-      blended = mix(base.rgb, layer, alpha);
-      float ckMask = 1.0;
-      if (u_maskRadius < 0.999) {
-        vec2 dck = (v_texCoord - u_maskCenter) * vec2(1.0, 1.0 / u_aspectRatio);
-        float distck = length(dck);
-        float innerck = u_maskRadius * (1.0 - u_maskFeather);
-        ckMask = 1.0 - smoothstep(innerck, u_maskRadius, distck);
-      }
-      gl_FragColor = vec4(mix(base.rgb, blended, ckMask), 1.0);
+      float cdist = distance(layer, u_keyColor);
+      float calpha = smoothstep(u_keyThreshold, u_keyThreshold + u_keyFeather, cdist);
+      blended = mix(base.rgb, layer, calpha);
+      gl_FragColor = vec4(mix(base.rgb, blended, effectiveOpacity), 1.0);
       return;
     }
     else if (u_blendMode == 7) {                                                                // soft-light (W3C spec)
-      // D(Cb): if Cb <= 0.25 then ((16*Cb-12)*Cb+4)*Cb else sqrt(Cb)
       vec3 D = mix(
         ((16.0 * base.rgb - 12.0) * base.rgb + 4.0) * base.rgb,
         sqrt(base.rgb),
         step(0.25, base.rgb)
       );
-      // if Cs <= 0.5: Cb - (1-2*Cs)*Cb*(1-Cb)
-      // else:         Cb + (2*Cs-1)*(D-Cb)
       blended = mix(
         base.rgb - (1.0 - 2.0 * layer) * base.rgb * (1.0 - base.rgb),
         base.rgb + (2.0 * layer - 1.0) * (D - base.rgb),
@@ -229,15 +234,7 @@ const COMPOSITE_SHADER = `
     }
     else { blended = layer; }                                                                   // normal
 
-    // Radial mask
-    float maskAlpha = 1.0;
-    if (u_maskRadius < 0.999) {
-      vec2 d = (v_texCoord - u_maskCenter) * vec2(1.0, 1.0 / u_aspectRatio);
-      float dist = length(d);
-      float inner = u_maskRadius * (1.0 - u_maskFeather);
-      maskAlpha = 1.0 - smoothstep(inner, u_maskRadius, dist);
-    }
-    gl_FragColor = vec4(mix(base.rgb, blended, u_opacity * maskAlpha), 1.0);
+    gl_FragColor = vec4(mix(base.rgb, blended, effectiveOpacity), 1.0);
   }
 `
 

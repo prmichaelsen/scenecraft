@@ -455,10 +455,18 @@ export function Timeline({ data }: { data: EditorData }) {
   // Partial refetch — only keyframes + transitions (fast, ~500KB)
   const refreshTimeline = useCallback(() => {
     getTimelineData({ data: { name: data.projectName } }).then((tl) => {
+      // Invalidate frame cache for keyframes whose selected variant changed
+      const oldKfMap = new Map(localKeyframes.map((kf) => [kf.id, kf.selected]))
+      for (const kf of tl.keyframes) {
+        const oldSel = oldKfMap.get(kf.id)
+        if (oldSel !== kf.selected) {
+          invalidateEntry(`kf:${kf.id}`)
+        }
+      }
       setLocalKeyframes(tl.keyframes)
       setLocalTransitions(tl.transitions)
     }).catch((e) => { console.error('refreshTimeline failed:', e); router.invalidate() })
-  }, [data.projectName, router])
+  }, [data.projectName, router, localKeyframes])
 
   const reloadAudioIntelligence = useCallback(() => {
     getAudioIntelligenceData({ data: { name: data.projectName } }).then((ai) => {
