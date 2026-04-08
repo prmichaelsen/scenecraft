@@ -152,6 +152,7 @@ const COMPOSITE_SHADER = `
   uniform float u_maskFeather;  // radial mask edge softness (0-1)
   uniform float u_aspectRatio;  // canvas width/height
   uniform vec2 u_transform;     // layer position offset (0,0 = no shift)
+  uniform float u_isAdjustment; // 1.0 = adjustment layer (skip Y-flip)
 
   vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
@@ -171,7 +172,10 @@ const COMPOSITE_SHADER = `
   void main() {
     vec4 base = texture2D(u_base, v_texCoord);
     // Layer textures are ImageBitmaps (top-down) — flip Y to match FBO (bottom-up) accumulator
-    vec2 layerCoord = vec2(v_texCoord.x - u_transform.x, 1.0 - v_texCoord.y - u_transform.y);
+    // Adjustment layers read from the accumulator (already FBO space) — no flip needed
+    vec2 layerCoord = u_isAdjustment > 0.5
+      ? vec2(v_texCoord.x - u_transform.x, v_texCoord.y - u_transform.y)
+      : vec2(v_texCoord.x - u_transform.x, 1.0 - v_texCoord.y - u_transform.y);
     vec4 lA = texture2D(u_layerA, layerCoord);
     vec4 lB = texture2D(u_layerB, layerCoord);
     vec3 layer = mix(lA.rgb, lB.rgb, u_layerBlend);
@@ -635,6 +639,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_aspectRatio'), canvas.width / canvas.height)
       const tfm = layer.transform
       gl.uniform2f(gl.getUniformLocation(ctx.compProgram, 'u_transform'), tfm?.x ?? 0, tfm?.y ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_isAdjustment'), layer.isAdjustment ? 1.0 : 0.0)
 
       gl.drawArrays(gl.TRIANGLES, 0, 6)
       readIdx = writeIdx

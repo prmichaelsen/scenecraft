@@ -17,7 +17,7 @@ type BinPanelProps = {
   onClose: () => void
   onRestore: () => void
   onPoolSelect: (selection: PoolSelection | null) => void
-  onInsertPoolItem: (selection: PoolSelection, mode: 'at-playhead' | 'after-current-kf') => void
+  onInsertPoolItem: (selection: PoolSelection, mode: 'at-playhead' | 'after-current-kf' | 'overwrite-current') => void
   poolSelection: PoolSelection | null
   activeKeyframes: ActiveKeyframe[]
   activeTransitions: ActiveTransition[]
@@ -278,13 +278,6 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
                       e.dataTransfer.effectAllowed = 'copy'
-                      const preview = e.currentTarget.cloneNode(true) as HTMLElement
-                      preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
-                      preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
-                      preview.style.position = 'absolute'; preview.style.top = '-9999px'
-                      document.body.appendChild(preview)
-                      e.dataTransfer.setDragImage(preview, -12, -8)
-                      requestAnimationFrame(() => document.body.removeChild(preview))
                     }}
                   >
                     {kf.hasSelectedImage ? (
@@ -292,6 +285,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
                         alt={kf.id}
                         className="w-full aspect-video object-cover pointer-events-none"
+                        draggable={false}
                         loading="lazy"
                       />
                     ) : (
@@ -321,13 +315,6 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                             e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
                           }
                           e.dataTransfer.effectAllowed = 'copy'
-                          const preview = e.currentTarget.cloneNode(true) as HTMLElement
-                          preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
-                          preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
-                          preview.style.position = 'absolute'; preview.style.top = '-9999px'
-                          document.body.appendChild(preview)
-                          e.dataTransfer.setDragImage(preview, -12, -8)
-                          requestAnimationFrame(() => document.body.removeChild(preview))
                         }}
                         onClick={() => handleRestoreKeyframe(entry.id)}
                       >
@@ -336,6 +323,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                             src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
                             alt={entry.id}
                             className="w-full aspect-video object-cover pointer-events-none"
+                        draggable={false}
                             loading="lazy"
                           />
                         ) : (
@@ -407,13 +395,6 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/x-beatlab-pool-path', c.path)
                       e.dataTransfer.effectAllowed = 'copy'
-                      const preview = e.currentTarget.cloneNode(true) as HTMLElement
-                      preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
-                      preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
-                      preview.style.position = 'absolute'; preview.style.top = '-9999px'
-                      document.body.appendChild(preview)
-                      e.dataTransfer.setDragImage(preview, -12, -8)
-                      requestAnimationFrame(() => document.body.removeChild(preview))
                     }}
                   >
                     <img
@@ -421,6 +402,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       alt={`${c.keyframeId} v${c.variant}`}
                       className="w-full aspect-video object-cover pointer-events-none"
                       loading="lazy"
+                      draggable={false}
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="text-[7px] text-gray-300 truncate">{c.keyframeId} v{c.variant}</div>
@@ -471,12 +453,18 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           isSelected={isSelected}
                           onSelect={() => onPoolSelect(isSelected ? null : { type: 'keyframe', entry })}
                           onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('application/x-beatlab-pool-path', entry.path)
+                            e.dataTransfer.effectAllowed = 'copy'
+                          }}
                         >
                           <img
                             src={beatlabFileUrl(projectName, entry.path)}
                             alt={entry.name}
                             className="w-full aspect-video object-cover"
                             loading="lazy"
+                            draggable={false}
                           />
                         </PoolItemWithTags>
                       )
@@ -510,24 +498,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
               {/* Insert buttons — only shown when a pool item is selected */}
               {poolSelection && (
-                <div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-2 space-y-1">
-                  <div className="text-[10px] text-gray-400 truncate mb-1">
-                    Selected: {poolSelection.entry.name}
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => onInsertPoolItem(poolSelection, 'at-playhead')}
-                      className="flex-1 text-xs bg-green-700 hover:bg-green-600 text-white py-1.5 rounded transition-colors"
-                    >
-                      Insert at Playhead
-                    </button>
-                    <button
-                      onClick={() => onInsertPoolItem(poolSelection, 'after-current-kf')}
-                      className="flex-1 text-xs bg-blue-700 hover:bg-blue-600 text-white py-1.5 rounded transition-colors"
-                    >
-                      Insert After KF
-                    </button>
-                  </div>
+                <div className="sticky bottom-0 bg-gray-900 border-t border-gray-800 p-2">
+                  <div className="text-[9px] text-gray-500 text-center">Drag items onto the timeline to assign</div>
                 </div>
               )}
             </div>
@@ -650,13 +622,15 @@ function PoolTagEditor({ tags, onUpdateTags }: { tags: string[]; onUpdateTags: (
   )
 }
 
-function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children }: {
-  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; children: ReactNode
+function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children, draggable: isDraggable, onDragStart }: {
+  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; children: ReactNode; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void
 }) {
   return (
     <div
       className={`relative group cursor-pointer rounded overflow-hidden border-2 transition-colors ${isSelected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'}`}
       onClick={onSelect}
+      draggable={isDraggable}
+      onDragStart={onDragStart}
     >
       {children}
       <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">

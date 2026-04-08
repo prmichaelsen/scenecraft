@@ -1647,58 +1647,6 @@ export function Timeline({ data }: { data: EditorData }) {
 
           <button
             onClick={async () => {
-              const scope = selectedKeyframeIds.size > 1
-                ? localTransitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
-                : localTransitions.filter((tr) => tr.trackId === selectedTrackId)
-              const missing = scope.filter((tr) => tr.hasSelectedVideo && !tr.action)
-              const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
-              if (missing.length === 0) { alert('All matching transitions already have action prompts.'); return }
-              if (!confirm(`Generate action prompts for ${label} transitions? This will call Claude for each.`)) return
-              let done = 0
-              for (const tr of missing) {
-                try {
-                  await generateTransitionAction({ data: { projectName: data.projectName, transitionId: tr.id } })
-                  done++
-                } catch (e) { console.error(`Failed for ${tr.id}:`, e) }
-              }
-              alert(`Generated ${done}/${missing.length} action prompts.`)
-              refreshTimeline()
-            }}
-            className="text-xs bg-gray-800 hover:bg-gray-700 text-purple-400/70 hover:text-purple-300 px-2 py-1 rounded transition-colors"
-            title={selectedKeyframeIds.size > 1 ? 'Generate action prompts for selected keyframes\' transitions' : 'Generate action prompts for all transitions missing one'}
-          >
-            Gen Prompts{selectedKeyframeIds.size > 1 ? ` (${selectedKeyframeIds.size})` : ''}
-          </button>
-
-          <button
-            onClick={async () => {
-              const scope = selectedKeyframeIds.size > 1
-                ? localTransitions.filter((tr) => selectedKeyframeIds.has(tr.from) || selectedKeyframeIds.has(tr.to))
-                : localTransitions.filter((tr) => tr.trackId === selectedTrackId)
-              const missing = scope.filter((tr) => tr.action && !tr.hasSelectedVideo)
-              const label = selectedKeyframeIds.size > 1 ? `${missing.length} selected` : `${missing.length}`
-              if (missing.length === 0) { alert('All matching transitions already have video candidates.'); return }
-              if (!confirm(`Generate video candidates for ${label} transitions? This will call Veo for each.`)) return
-              let done = 0
-              for (const tr of missing) {
-                try {
-                  const fitDuration = [4, 6, 8].reduce((best, opt) => Math.abs(opt - tr.durationSeconds) < Math.abs(best - tr.durationSeconds) ? opt : best, 8)
-                  const result = await generateTransitionCandidates({
-                    data: { projectName: data.projectName, transitionId: tr.id, count: 4, duration: fitDuration },
-                  })
-                  if (result.jobId) done++
-                } catch (e) { console.error(`Failed for ${tr.id}:`, e) }
-              }
-              alert(`Queued ${done}/${missing.length} video generation jobs.`)
-            }}
-            className="text-xs bg-gray-800 hover:bg-gray-700 text-orange-400/70 hover:text-orange-300 px-2 py-1 rounded transition-colors"
-            title={selectedKeyframeIds.size > 1 ? 'Generate videos for selected keyframes\' transitions' : 'Generate video candidates for all transitions with prompts but no videos'}
-          >
-            Gen Videos{selectedKeyframeIds.size > 1 ? ` (${selectedKeyframeIds.size})` : ''}
-          </button>
-
-          <button
-            onClick={async () => {
               try {
                 console.log('[addTrack] sending request...')
                 const result = await postAddTrack(data.projectName)
@@ -1816,6 +1764,23 @@ export function Timeline({ data }: { data: EditorData }) {
             title="Version history — save, restore, branch"
           >
             Versions
+          </button>
+
+          <button
+            onClick={async () => {
+              const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/checkpoint`
+              const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+              if (res.ok) {
+                const d = await res.json()
+                alert(`Checkpoint saved: ${d.filename}`)
+              } else {
+                alert('Checkpoint failed')
+              }
+            }}
+            className="text-xs px-2 py-1 rounded transition-colors bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200"
+            title="Create a backup of the project database"
+          >
+            Checkpoint
           </button>
 
           <TimelineSwitcher projectName={data.projectName} onSwitch={() => router.invalidate()} />
@@ -2188,10 +2153,22 @@ export function Timeline({ data }: { data: EditorData }) {
           onPoolSelect={setPoolSelection}
           onInsertPoolItem={async (selection, mode) => {
             try {
+              if (mode === 'overwrite-current') {
+                // Assign the pool item's image to the current keyframe
+                if (!currentKeyframe) { alert('No keyframe under playhead'); return }
+                const isImage = /\.(png|jpe?g|webp)$/i.test(selection.entry.path)
+                if (isImage) {
+                  const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
+                  await postAssignKeyframeImage(data.projectName, currentKeyframe.id, selection.entry.path)
+                  invalidateEntry(`kf:${currentKeyframe.id}`)
+                }
+                setPoolSelection(null)
+                refreshTimeline()
+                return
+              }
               const { postInsertPoolItem } = await import('@/lib/beatlab-client')
               let insertTime = currentTime
               if (mode === 'after-current-kf' && currentKeyframe) {
-                // Insert right after the current keyframe's timestamp
                 insertTime = currentKeyframe.timeSeconds + 0.01
               }
               await postInsertPoolItem(data.projectName, selection.type, selection.entry.path, insertTime)

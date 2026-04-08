@@ -208,7 +208,7 @@ export function TransitionPanel({
                   }}
                   className={`w-full text-[10px] py-1.5 rounded transition-colors ${tr.isAdjustment ? 'bg-purple-900/50 text-purple-300 ring-1 ring-purple-500/50' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
                 >
-                  {tr.isAdjustment ? 'Adjustment Layer' : 'Normal Transition'}
+                  {tr.isAdjustment ? 'Adjustment Layer ✓' : 'Toggle Adjustment Layer'}
                 </button>
 
                 {/* Transform */}
@@ -220,8 +220,10 @@ export function TransitionPanel({
                       onChange={async (e) => { const v = parseFloat(e.target.value); tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
                       className="flex-1 h-1.5 accent-cyan-500" />
                     <input type="number" min={-50} max={50} step={0.5}
-                      value={Math.round((tr.transformX ?? 0) * 100)}
-                      onChange={async (e) => { const v = parseFloat(e.target.value) / 100; tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
+                      defaultValue={Math.round((tr.transformX ?? 0) * 100)}
+                      key={`tx-${tr.id}-${tr.transformX}`}
+                      onBlur={async (e) => { const raw = parseFloat(e.target.value); if (isNaN(raw)) return; const v = raw / 100; tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                       className="w-12 bg-gray-800 text-[9px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 text-right" />
                   </div>
                   <div className="flex items-center gap-2">
@@ -230,8 +232,10 @@ export function TransitionPanel({
                       onChange={async (e) => { const v = parseFloat(e.target.value); tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
                       className="flex-1 h-1.5 accent-cyan-500" />
                     <input type="number" min={-50} max={50} step={0.5}
-                      value={Math.round((tr.transformY ?? 0) * 100)}
-                      onChange={async (e) => { const v = parseFloat(e.target.value) / 100; tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
+                      defaultValue={Math.round((tr.transformY ?? 0) * 100)}
+                      key={`ty-${tr.id}-${tr.transformY}`}
+                      onBlur={async (e) => { const raw = parseFloat(e.target.value); if (isNaN(raw)) return; const v = raw / 100; tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                       className="w-12 bg-gray-800 text-[9px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 text-right" />
                   </div>
                 </div>

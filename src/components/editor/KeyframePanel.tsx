@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates, generateKeyframeVariations, escalateKeyframe, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
-import { beatlabFileUrl, fetchDirectoryListing, type FileEntry, type AudioEvent, type AudioDescription } from '@/lib/beatlab-client'
+import { beatlabFileUrl, fetchDirectoryListing, fetchPool, fetchBin, type FileEntry, type AudioEvent, type AudioDescription, type PoolEntry, type BinEntry } from '@/lib/beatlab-client'
 import { invalidateEntry, preloadKeyframeImage } from '@/lib/frame-cache'
 import { CandidateModal } from './TransitionPanel'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
@@ -13,7 +13,7 @@ const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
 // Persist tab + scroll across panel switches
-let _lastKfTab: 'details' | 'candidates' | 'bench' = 'details'
+let _lastKfTab: 'details' | 'candidates' | 'bench' | 'browse' = 'details'
 let _lastKfScroll: number = 0
 
 type KeyframePanelProps = {
@@ -36,8 +36,8 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
     const stored = localStorage.getItem(STORAGE_KEY)
     return stored ? Math.max(MIN_WIDTH, parseInt(stored, 10)) : DEFAULT_WIDTH
   })
-  const [tab, setTabRaw] = useState<'details' | 'candidates' | 'bench'>(_lastKfTab)
-  const setTab = useCallback((t: 'details' | 'candidates' | 'bench') => { _lastKfTab = t; setTabRaw(t) }, [])
+  const [tab, setTabRaw] = useState<'details' | 'candidates' | 'bench' | 'browse'>(_lastKfTab)
+  const setTab = useCallback((t: 'details' | 'candidates' | 'bench' | 'browse') => { _lastKfTab = t; setTabRaw(t) }, [])
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // Restore scroll position on mount
@@ -176,6 +176,13 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
             Candidates{kf.candidates.length > 0 ? ` (${kf.candidates.length})` : ''}
           </button>
           <button
+            onClick={() => setTab('browse')}
+            className={`flex-1 text-xs py-2 transition-colors ${tab === 'browse' ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
+            title="Browse pool and bin images to assign"
+          >
+            Browse
+          </button>
+          <button
             onClick={() => setTab('bench')}
             className={`flex-1 text-xs py-2 transition-colors ${tab === 'bench' ? 'text-gray-200 border-b-2 border-green-500' : 'text-gray-500 hover:text-gray-400'}`}
             title="Saved keyframe images for reuse"
@@ -190,6 +197,8 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
             <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} />
           ) : tab === 'candidates' ? (
             <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
+          ) : tab === 'browse' ? (
+            <BrowseTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           ) : (
             <BenchTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           )}
@@ -859,6 +868,108 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
             )
           })}
         </div>
+      )}
+    </div>
+  )
+}
+
+function BrowseTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void }) {
+  const [poolKeyframes, setPoolKeyframes] = useState<PoolEntry[]>([])
+  const [binEntries, setBinEntries] = useState<BinEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [assigning, setAssigning] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      fetchPool(projectName).catch(() => ({ keyframes: [], segments: [] })),
+      fetchBin(projectName).catch(() => ({ bin: [], transitionBin: [] })),
+    ]).then(([poolData, binData]) => {
+      setPoolKeyframes(poolData.keyframes || [])
+      setBinEntries((binData.bin || []).filter((e: BinEntry) => e.hasSelectedImage))
+    }).finally(() => setLoading(false))
+  }, [projectName])
+
+  const handleAssign = useCallback(async (stillName: string) => {
+    setAssigning(true)
+    try {
+      const { postSetBaseImage } = await import('@/lib/beatlab-client')
+      await postSetBaseImage(projectName, kf.id, stillName)
+      kf.hasSelectedImage = true
+      invalidateEntry(`kf:${kf.id}`)
+      onDataChange()
+    } catch (e) {
+      console.error('Assign failed:', e)
+      alert(`Assign failed: ${e}`)
+    } finally {
+      setAssigning(false)
+    }
+  }, [projectName, kf, onDataChange])
+
+  if (loading) return <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
+
+  return (
+    <div className="p-2 space-y-3">
+      {/* Pool keyframes */}
+      {poolKeyframes.length > 0 && (
+        <div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+            Pool ({poolKeyframes.length})
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            {poolKeyframes.map((entry) => (
+              <div
+                key={entry.path}
+                className={`relative rounded overflow-hidden border-2 border-transparent hover:border-blue-500 transition-colors group ${assigning ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
+                onClick={() => handleAssign(entry.name)}
+              >
+                <img
+                  src={beatlabFileUrl(projectName, entry.path)}
+                  alt={entry.name}
+                  className="w-full aspect-video object-cover"
+                  loading="lazy"
+                  draggable={false}
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                  <div className="text-[10px] text-gray-300 truncate">{entry.name}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Binned keyframes with images */}
+      {binEntries.length > 0 && (
+        <div>
+          <div className="text-[10px] text-red-400/60 uppercase tracking-wider mb-1">
+            Deleted Keyframes ({binEntries.length})
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            {binEntries.map((entry) => (
+              <div
+                key={entry.id}
+                className={`relative rounded overflow-hidden border-2 border-transparent hover:border-blue-500 transition-colors group ${assigning ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
+                onClick={() => handleAssign(`${entry.id}.png`)}
+              >
+                <img
+                  src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
+                  alt={entry.id}
+                  className="w-full aspect-video object-cover"
+                  loading="lazy"
+                  draggable={false}
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                  <div className="text-[10px] text-gray-300 truncate">{entry.id} @ {entry.timestamp}</div>
+                  {entry.prompt && <div className="text-[9px] text-gray-500 truncate">{entry.prompt}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {poolKeyframes.length === 0 && binEntries.length === 0 && (
+        <div className="p-4 text-center text-sm text-gray-600">No images available</div>
       )}
     </div>
   )
