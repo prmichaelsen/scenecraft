@@ -15,6 +15,10 @@ const MIN_WIDTH = 240
 // Module-level style clipboard — persists across panel opens
 let _styleClipboardTrId: string | null = null
 
+// Persist tab + scroll across panel switches
+let _lastTrTab: 'details' | 'candidates' | 'browse' | 'bench' = 'details'
+let _lastTrScroll: number = 0
+
 type AudioDescription = { sectionIndex: number; label: string; startTime: number; endTime: number; content: string }
 type KfWithTime = { id: string; timestamp: string; timeSeconds: number }
 
@@ -85,7 +89,21 @@ export function TransitionPanel({
     }
   }, [])
 
-  const [tab, setTab] = useState<'details' | 'candidates' | 'browse' | 'bench'>('details')
+  const [tab, setTabRaw] = useState<'details' | 'candidates' | 'browse' | 'bench'>(_lastTrTab)
+  const setTab = useCallback((t: 'details' | 'candidates' | 'browse' | 'bench') => { _lastTrTab = t; setTabRaw(t) }, [])
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (scrollContainerRef.current && _lastTrScroll > 0) {
+      scrollContainerRef.current.scrollTop = _lastTrScroll
+    }
+  }, [])
+
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    return () => { if (el) _lastTrScroll = el.scrollTop }
+  }, [])
+
   const tr = transition
   const totalCandidates = Object.values(tr.candidates).reduce((sum, arr) => sum + arr.length, 0)
 
@@ -106,7 +124,7 @@ export function TransitionPanel({
         onMouseDown={handleMouseDown}
       />
 
-      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
+      <div ref={scrollContainerRef} className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="text-sm font-medium text-orange-300">{tr.id}</div>

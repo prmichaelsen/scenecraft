@@ -278,6 +278,13 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
                       e.dataTransfer.effectAllowed = 'copy'
+                      const preview = e.currentTarget.cloneNode(true) as HTMLElement
+                      preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
+                      preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
+                      preview.style.position = 'absolute'; preview.style.top = '-9999px'
+                      document.body.appendChild(preview)
+                      e.dataTransfer.setDragImage(preview, -12, -8)
+                      requestAnimationFrame(() => document.body.removeChild(preview))
                     }}
                   >
                     {kf.hasSelectedImage ? (
@@ -314,6 +321,13 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                             e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
                           }
                           e.dataTransfer.effectAllowed = 'copy'
+                          const preview = e.currentTarget.cloneNode(true) as HTMLElement
+                          preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
+                          preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
+                          preview.style.position = 'absolute'; preview.style.top = '-9999px'
+                          document.body.appendChild(preview)
+                          e.dataTransfer.setDragImage(preview, -12, -8)
+                          requestAnimationFrame(() => document.body.removeChild(preview))
                         }}
                         onClick={() => handleRestoreKeyframe(entry.id)}
                       >
@@ -393,6 +407,13 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/x-beatlab-pool-path', c.path)
                       e.dataTransfer.effectAllowed = 'copy'
+                      const preview = e.currentTarget.cloneNode(true) as HTMLElement
+                      preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
+                      preview.style.borderRadius = '4px'; preview.style.overflow = 'hidden'
+                      preview.style.position = 'absolute'; preview.style.top = '-9999px'
+                      document.body.appendChild(preview)
+                      e.dataTransfer.setDragImage(preview, -12, -8)
+                      requestAnimationFrame(() => document.body.removeChild(preview))
                     }}
                   >
                     <img

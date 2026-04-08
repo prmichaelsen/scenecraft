@@ -2219,7 +2219,6 @@ export function Timeline({ data }: { data: EditorData }) {
         />
       ) : selectedKeyframe ? (
         <KeyframePanel
-          key={selectedKeyframe.id}
           keyframe={selectedKeyframe}
           projectName={data.projectName}
           onClose={() => setSelectedKeyframe(null)}
@@ -2286,7 +2285,6 @@ export function Timeline({ data }: { data: EditorData }) {
         />
       ) : selectedTransition ? (
         <TransitionPanel
-          key={selectedTransition.id}
           transition={selectedTransition}
           projectName={data.projectName}
           motionPrompt={data.meta.motionPrompt}

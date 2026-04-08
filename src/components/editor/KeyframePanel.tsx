@@ -12,6 +12,10 @@ const STORAGE_KEY = 'beatlab-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
+// Persist tab + scroll across panel switches
+let _lastKfTab: 'details' | 'candidates' | 'bench' = 'details'
+let _lastKfScroll: number = 0
+
 type KeyframePanelProps = {
   keyframe: KeyframeWithTime
   projectName: string
@@ -32,7 +36,22 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
     const stored = localStorage.getItem(STORAGE_KEY)
     return stored ? Math.max(MIN_WIDTH, parseInt(stored, 10)) : DEFAULT_WIDTH
   })
-  const [tab, setTab] = useState<'details' | 'candidates' | 'bench'>('details')
+  const [tab, setTabRaw] = useState<'details' | 'candidates' | 'bench'>(_lastKfTab)
+  const setTab = useCallback((t: 'details' | 'candidates' | 'bench') => { _lastKfTab = t; setTabRaw(t) }, [])
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Restore scroll position on mount
+  useEffect(() => {
+    if (scrollContainerRef.current && _lastKfScroll > 0) {
+      scrollContainerRef.current.scrollTop = _lastKfScroll
+    }
+  }, [])
+
+  // Save scroll position on unmount
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    return () => { if (el) _lastKfScroll = el.scrollTop }
+  }, [])
   const isDragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -82,7 +101,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
       />
 
       {/* Panel content */}
-      <div className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
+      <div ref={scrollContainerRef} className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
           <div className="flex items-center gap-1.5">
