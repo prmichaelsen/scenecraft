@@ -28,6 +28,7 @@ const PANEL_DEFAULT = 360
 const PANEL_MIN = 240
 
 export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInsertPoolItem, poolSelection, activeKeyframes, activeTransitions }: BinPanelProps) {
+  const [hoverPreview, setHoverPreview] = useState<string | null>(null)
   const [panelWidth, setPanelWidth] = useState(() => {
     if (typeof window === 'undefined') return PANEL_DEFAULT
     const stored = localStorage.getItem(PANEL_STORAGE_KEY)
@@ -268,6 +269,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-4 text-center text-sm text-gray-600">Empty</div>
           ) : (
             <div className="p-2 space-y-1">
+              {/* Hover preview */}
+              {hoverPreview && (
+                <div className="mb-2 rounded overflow-hidden border border-gray-700 pointer-events-none">
+                  <img src={hoverPreview} className="w-full aspect-video object-cover" draggable={false} />
+                </div>
+              )}
               {/* Active keyframes */}
               <div className="grid grid-cols-3 gap-1">
                 {sortItems(activeKeyframes).map((kf) => (
@@ -279,6 +286,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
+                    onMouseEnter={() => kf.hasSelectedImage && setHoverPreview(beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`))}
+                    onMouseLeave={() => setHoverPreview(null)}
                   >
                     {kf.hasSelectedImage ? (
                       <img
@@ -317,6 +326,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           e.dataTransfer.effectAllowed = 'copy'
                         }}
                         onClick={() => handleRestoreKeyframe(entry.id)}
+                        onMouseEnter={() => entry.hasSelectedImage && setHoverPreview(beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`))}
+                        onMouseLeave={() => setHoverPreview(null)}
                       >
                         {entry.hasSelectedImage ? (
                           <img
@@ -386,6 +397,11 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-4 text-center text-sm text-gray-600">No unselected candidates</div>
           ) : (
             <div className="p-2">
+              {hoverPreview && (
+                <div className="mb-2 rounded overflow-hidden border border-gray-700 pointer-events-none">
+                  <img src={hoverPreview} className="w-full aspect-video object-cover" draggable={false} />
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-1">
                 {(sortBy === 'recent' ? [...unselectedCandidates].sort((a, b) => idNum(b.keyframeId) - idNum(a.keyframeId)) : unselectedCandidates).map((c) => (
                   <div
@@ -396,6 +412,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       e.dataTransfer.setData('application/x-beatlab-pool-path', c.path)
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
+                    onMouseEnter={() => setHoverPreview(beatlabFileUrl(projectName, c.path))}
+                    onMouseLeave={() => setHoverPreview(null)}
                   >
                     <img
                       src={beatlabFileUrl(projectName, c.path)}
@@ -418,6 +436,11 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-4 text-center text-sm text-gray-600">Pool is empty</div>
           ) : (
             <div className="space-y-3 p-2">
+              {hoverPreview && (
+                <div className="rounded overflow-hidden border border-gray-700">
+                  <img src={hoverPreview} className="w-full aspect-video object-cover" draggable={false} />
+                </div>
+              )}
               {/* Tag filter */}
               {allPoolTags.length > 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -458,6 +481,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                             e.dataTransfer.setData('application/x-beatlab-pool-path', entry.path)
                             e.dataTransfer.effectAllowed = 'copy'
                           }}
+                          onMouseEnter={() => setHoverPreview(beatlabFileUrl(projectName, entry.path))}
+                          onMouseLeave={() => setHoverPreview(null)}
                         >
                           <img
                             src={beatlabFileUrl(projectName, entry.path)}
@@ -622,8 +647,8 @@ function PoolTagEditor({ tags, onUpdateTags }: { tags: string[]; onUpdateTags: (
   )
 }
 
-function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children, draggable: isDraggable, onDragStart }: {
-  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; children: ReactNode; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void
+function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children, draggable: isDraggable, onDragStart, onMouseEnter, onMouseLeave }: {
+  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; children: ReactNode; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void; onMouseEnter?: () => void; onMouseLeave?: () => void
 }) {
   return (
     <div
@@ -631,6 +656,8 @@ function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children,
       onClick={onSelect}
       draggable={isDraggable}
       onDragStart={onDragStart}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {children}
       <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">
