@@ -1834,7 +1834,7 @@ export function Timeline({ data }: { data: EditorData }) {
         >
           <div style={{ width: Math.max(totalWidth, 800), minHeight: '100%' }} className="relative flex flex-col">
             {/* Sticky header: time ruler, markers, descriptions */}
-            <div className="sticky top-0 z-20 bg-gray-950">
+            <div className="sticky top-0 z-50 bg-gray-950">
               {/* Time ruler */}
               <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
 
