@@ -193,6 +193,110 @@ export function TransitionPanel({
                   {tr.isAdjustment ? 'Adjustment Layer' : 'Normal Transition'}
                 </button>
 
+                {/* Transform */}
+                {(() => {
+                  const hasTransform = tr.transformX != null || tr.transformY != null
+                  return (
+                    <div className="space-y-1">
+                      <button
+                        onClick={async () => {
+                          if (hasTransform) {
+                            tr.transformX = null; tr.transformY = null
+                            const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                            await postUpdateTransitionStyle(projectName, tr.id, { transformX: null, transformY: null } as never)
+                            onDataChange()
+                          } else {
+                            tr.transformX = 0; tr.transformY = 0
+                            onDataChange()
+                          }
+                        }}
+                        className={`w-full text-[10px] py-1 rounded transition-colors ${hasTransform ? 'bg-cyan-900/40 text-cyan-300' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}
+                      >{hasTransform ? 'Transform ✓' : 'Transform'}</button>
+                      {hasTransform && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 w-6">X</span>
+                            <input type="range" min={-0.5} max={0.5} step={0.005} value={tr.transformX ?? 0}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
+                              className="flex-1 h-1.5 accent-cyan-500" />
+                            <input type="number" min={-50} max={50} step={0.5}
+                              value={Math.round((tr.transformX ?? 0) * 100)}
+                              onChange={async (e) => { const v = parseFloat(e.target.value) / 100; tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
+                              className="w-12 bg-gray-800 text-[9px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 text-right" />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 w-6">Y</span>
+                            <input type="range" min={-0.5} max={0.5} step={0.005} value={tr.transformY ?? 0}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
+                              className="flex-1 h-1.5 accent-cyan-500" />
+                            <input type="number" min={-50} max={50} step={0.5}
+                              value={Math.round((tr.transformY ?? 0) * 100)}
+                              onChange={async (e) => { const v = parseFloat(e.target.value) / 100; tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
+                              className="w-12 bg-gray-800 text-[9px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 text-right" />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* Radial Mask */}
+                {(() => {
+                  const hasMask = tr.maskRadius != null && tr.maskRadius < 1
+                  return (
+                    <div className="space-y-1">
+                      <button
+                        onClick={async () => {
+                          if (hasMask) {
+                            tr.maskRadius = null; tr.maskCenterX = null; tr.maskCenterY = null; tr.maskFeather = null
+                            const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                            await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: null, maskCenterX: null, maskCenterY: null, maskFeather: null })
+                            onDataChange()
+                          } else {
+                            tr.maskRadius = 0.5; tr.maskCenterX = 0.5; tr.maskCenterY = 0.5; tr.maskFeather = 0.3
+                            const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                            await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: 0.5, maskCenterX: 0.5, maskCenterY: 0.5, maskFeather: 0.3 })
+                            onDataChange()
+                          }
+                        }}
+                        className={`w-full text-[10px] py-1 rounded transition-colors ${hasMask ? 'bg-cyan-900/40 text-cyan-300' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}
+                      >{hasMask ? 'Radial Mask ✓' : 'Radial Mask'}</button>
+                      {hasMask && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 w-12">Center X</span>
+                            <input type="range" min={0} max={1} step={0.01} value={tr.maskCenterX ?? 0.5}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskCenterX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskCenterX: v }); onDataChange() }}
+                              className="flex-1 h-1.5 accent-cyan-500" />
+                            <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskCenterX ?? 0.5) * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 w-12">Center Y</span>
+                            <input type="range" min={0} max={1} step={0.01} value={tr.maskCenterY ?? 0.5}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskCenterY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskCenterY: v }); onDataChange() }}
+                              className="flex-1 h-1.5 accent-cyan-500" />
+                            <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskCenterY ?? 0.5) * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 w-12">Radius</span>
+                            <input type="range" min={0.01} max={1} step={0.01} value={tr.maskRadius ?? 0.5}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskRadius = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: v }); onDataChange() }}
+                              className="flex-1 h-1.5 accent-cyan-500" />
+                            <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskRadius ?? 0.5) * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-gray-500 w-12">Feather</span>
+                            <input type="range" min={0} max={1} step={0.01} value={tr.maskFeather ?? 0.3}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskFeather = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskFeather: v }); onDataChange() }}
+                              className="flex-1 h-1.5 accent-cyan-500" />
+                            <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskFeather ?? 0.3) * 100).toFixed(0)}%</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
+
                 {/* Blend Mode */}
                 <div>
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Blend Mode</div>

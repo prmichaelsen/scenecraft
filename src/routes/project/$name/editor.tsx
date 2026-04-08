@@ -110,6 +110,12 @@ export type Transition = {
   invertCurve: [number, number][] | null
   chromaKey: { color: [number, number, number]; threshold: number; feather: number } | null
   isAdjustment: boolean
+  maskCenterX: number | null
+  maskCenterY: number | null
+  maskRadius: number | null
+  maskFeather: number | null
+  transformX: number | null
+  transformY: number | null
   effects: TransitionEffect[]
 }
 
@@ -244,6 +250,12 @@ const getEditorData = createServerFn({ method: 'GET' })
           invertCurve: Array.isArray(tr.invertCurve) ? tr.invertCurve as [number, number][] : null,
           chromaKey: tr.chromaKey && typeof tr.chromaKey === 'object' ? tr.chromaKey as { color: [number, number, number]; threshold: number; feather: number } : null,
           isAdjustment: !!tr.isAdjustment,
+          maskCenterX: tr.maskCenterX != null ? tr.maskCenterX as number : null,
+          maskCenterY: tr.maskCenterY != null ? tr.maskCenterY as number : null,
+          maskRadius: tr.maskRadius != null ? tr.maskRadius as number : null,
+          maskFeather: tr.maskFeather != null ? tr.maskFeather as number : null,
+          transformX: tr.transformX != null ? tr.transformX as number : null,
+          transformY: tr.transformY != null ? tr.transformY as number : null,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),
@@ -341,6 +353,12 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           invertCurve: Array.isArray(tr.invertCurve) ? tr.invertCurve as [number, number][] : null,
           chromaKey: tr.chromaKey && typeof tr.chromaKey === 'object' ? tr.chromaKey as { color: [number, number, number]; threshold: number; feather: number } : null,
           isAdjustment: !!tr.isAdjustment,
+          maskCenterX: tr.maskCenterX != null ? tr.maskCenterX as number : null,
+          maskCenterY: tr.maskCenterY != null ? tr.maskCenterY as number : null,
+          maskRadius: tr.maskRadius != null ? tr.maskRadius as number : null,
+          maskFeather: tr.maskFeather != null ? tr.maskFeather as number : null,
+          transformX: tr.transformX != null ? tr.transformX as number : null,
+          transformY: tr.transformY != null ? tr.transformY as number : null,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
       }),

@@ -736,8 +736,19 @@ export function Timeline({ data }: { data: EditorData }) {
         const trInvertCurve = activeTr.invertCurve ? evaluateCurve(activeTr.invertCurve, linearProgress) : 0
         trInvert = Math.min(1, trInvert + trInvertCurve)
 
+        const mask = activeTr.maskRadius != null ? {
+          centerX: activeTr.maskCenterX ?? 0.5,
+          centerY: activeTr.maskCenterY ?? 0.5,
+          radius: activeTr.maskRadius,
+          feather: activeTr.maskFeather ?? 0,
+        } : undefined
+        const transform = (activeTr.transformX != null || activeTr.transformY != null) ? {
+          x: activeTr.transformX ?? 0,
+          y: activeTr.transformY ?? 0,
+        } : undefined
+
         if (activeTr.isAdjustment) {
-          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true } as import('./BeatEffectPreview').TrackLayer
+          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true, mask, transform } as import('./BeatEffectPreview').TrackLayer
         }
 
         const progress = activeTr.remap?.method === 'curve'
@@ -755,7 +766,7 @@ export function Timeline({ data }: { data: EditorData }) {
           frameA = getFrameAtProgress(kfKey, 0)
         }
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey, mask, transform } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`

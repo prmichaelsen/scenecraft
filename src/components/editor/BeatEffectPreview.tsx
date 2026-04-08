@@ -19,6 +19,8 @@ export type TrackLayer = {
   blendMode: BlendMode
   chromaKey?: { color: [number, number, number]; threshold: number; feather: number }
   isAdjustment?: boolean
+  mask?: { centerX: number; centerY: number; radius: number; feather: number }
+  transform?: { x: number; y: number }
 }
 
 type BeatEffectPreviewProps = {
@@ -145,6 +147,11 @@ const COMPOSITE_SHADER = `
   uniform vec3 u_keyColor;     // chroma key target color
   uniform float u_keyThreshold;// how close to key color = transparent (0-1)
   uniform float u_keyFeather;  // edge softness (0-0.5)
+  uniform vec2 u_maskCenter;    // radial mask center (0-1)
+  uniform float u_maskRadius;   // radial mask radius (0-1 of diagonal)
+  uniform float u_maskFeather;  // radial mask edge softness (0-1)
+  uniform float u_aspectRatio;  // canvas width/height
+  uniform vec2 u_transform;     // layer position offset (0,0 = no shift)
 
   vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
@@ -164,7 +171,7 @@ const COMPOSITE_SHADER = `
   void main() {
     vec4 base = texture2D(u_base, v_texCoord);
     // Layer textures are ImageBitmaps (top-down) — flip Y to match FBO (bottom-up) accumulator
-    vec2 layerCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
+    vec2 layerCoord = vec2(v_texCoord.x - u_transform.x, 1.0 - v_texCoord.y - u_transform.y);
     vec4 lA = texture2D(u_layerA, layerCoord);
     vec4 lB = texture2D(u_layerB, layerCoord);
     vec3 layer = mix(lA.rgb, lB.rgb, u_layerBlend);
@@ -195,7 +202,14 @@ const COMPOSITE_SHADER = `
       float dist = distance(layer, u_keyColor);
       float alpha = smoothstep(u_keyThreshold, u_keyThreshold + u_keyFeather, dist);
       blended = mix(base.rgb, layer, alpha);
-      gl_FragColor = vec4(blended, 1.0);
+      float ckMask = 1.0;
+      if (u_maskRadius < 0.999) {
+        vec2 dck = (v_texCoord - u_maskCenter) * vec2(1.0, 1.0 / u_aspectRatio);
+        float distck = length(dck);
+        float innerck = u_maskRadius * (1.0 - u_maskFeather);
+        ckMask = 1.0 - smoothstep(innerck, u_maskRadius, distck);
+      }
+      gl_FragColor = vec4(mix(base.rgb, blended, ckMask), 1.0);
       return;
     }
     else if (u_blendMode == 7) {                                                                // soft-light (W3C spec)
@@ -215,7 +229,15 @@ const COMPOSITE_SHADER = `
     }
     else { blended = layer; }                                                                   // normal
 
-    gl_FragColor = vec4(mix(base.rgb, blended, u_opacity), 1.0);
+    // Radial mask
+    float maskAlpha = 1.0;
+    if (u_maskRadius < 0.999) {
+      vec2 d = (v_texCoord - u_maskCenter) * vec2(1.0, 1.0 / u_aspectRatio);
+      float dist = length(d);
+      float inner = u_maskRadius * (1.0 - u_maskFeather);
+      maskAlpha = 1.0 - smoothstep(inner, u_maskRadius, dist);
+    }
+    gl_FragColor = vec4(mix(base.rgb, blended, u_opacity * maskAlpha), 1.0);
   }
 `
 
@@ -527,15 +549,15 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
 
     // ── Single render path: always go through FBO compositor ──
     // Build content layers from tracks, or fall back to legacy single-frame sources
-    const contentLayers: { frameA: TexImageSource | null; frameB: TexImageSource | null; blendFactor: number; opacity: number; red: number; green: number; blue: number; black: number; saturation: number; hueShift: number; invert: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number }; isAdjustment?: boolean }[] = []
+    const contentLayers: { frameA: TexImageSource | null; frameB: TexImageSource | null; blendFactor: number; opacity: number; red: number; green: number; blue: number; black: number; saturation: number; hueShift: number; invert: number; blendMode: string; chromaKey?: { color: number[]; threshold: number; feather: number }; isAdjustment?: boolean; mask?: { centerX: number; centerY: number; radius: number; feather: number }; transform?: { x: number; y: number } }[] = []
 
     if (layers && layers.length > 0) {
       for (const l of layers) {
         if (l.isAdjustment) {
           // Adjustment layers have no content — they modify the composite below
-          contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: 'normal', isAdjustment: true })
+          contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: 'normal', isAdjustment: true, mask: l.mask, transform: l.transform })
         } else if (l.frameA) {
-          contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never })
+          contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never, mask: l.mask, transform: l.transform })
         }
       }
     }
@@ -608,6 +630,14 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.uniform3f(gl.getUniformLocation(ctx.compProgram, 'u_keyColor'), ck?.color[0] ?? 0, ck?.color[1] ?? 1, ck?.color[2] ?? 0)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyThreshold'), ck?.threshold ?? 0.3)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_keyFeather'), ck?.feather ?? 0.1)
+
+      const mask = layer.mask
+      gl.uniform2f(gl.getUniformLocation(ctx.compProgram, 'u_maskCenter'), mask?.centerX ?? 0.5, mask?.centerY ?? 0.5)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_maskRadius'), mask?.radius ?? 1.0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_maskFeather'), mask?.feather ?? 0.0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_aspectRatio'), canvas.width / canvas.height)
+      const tfm = layer.transform
+      gl.uniform2f(gl.getUniformLocation(ctx.compProgram, 'u_transform'), tfm?.x ?? 0, tfm?.y ?? 0)
 
       gl.drawArrays(gl.TRIANGLES, 0, 6)
       readIdx = writeIdx

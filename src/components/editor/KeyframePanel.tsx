@@ -287,8 +287,8 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
 
   return (
     <>
-      {/* Image or base image picker */}
-      {hasImage ? (
+      {/* Image */}
+      {hasImage && (
         <div className="p-3">
           <img
             src={`${beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
@@ -296,9 +296,9 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
             className="w-full rounded"
           />
         </div>
-      ) : (
-        <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true); onDataChange() }} />
       )}
+      {/* Base image picker — always available */}
+      <BaseImagePicker keyframeId={kf.id} projectName={projectName} onSet={() => { kf.hasSelectedImage = true; setHasImage(true); onDataChange() }} />
 
       {/* Metadata */}
       <div className="px-3 pb-4 space-y-3">
