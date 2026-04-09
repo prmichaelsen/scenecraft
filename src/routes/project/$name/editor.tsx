@@ -68,6 +68,7 @@ export type Keyframe = {
   labelColor: string
   blendMode: string
   opacity: number | null
+  refinementPrompt: string
 }
 
 export type Beat = {
@@ -195,6 +196,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         labelColor: (kf.labelColor as string) || '',
         blendMode: (kf.blendMode as string) || '',
         opacity: kf.opacity != null ? kf.opacity as number : null,
+        refinementPrompt: (kf.refinementPrompt as string) || '',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         // Flatten slot-based candidates to a simple list
@@ -312,6 +314,7 @@ export const getTimelineData = createServerFn({ method: 'GET' })
         labelColor: (kf.labelColor as string) || '',
         blendMode: (kf.blendMode as string) || '',
         opacity: kf.opacity != null ? kf.opacity as number : null,
+        refinementPrompt: (kf.refinementPrompt as string) || '',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
         const candidates = Array.isArray(tr.candidates) ? tr.candidates as string[]

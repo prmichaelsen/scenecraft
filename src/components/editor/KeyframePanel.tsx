@@ -574,7 +574,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
   const jobStatus = job?.detail || ''
   const COUNT_OPTIONS = [1, 2, 3, 4] as const
   const [generationCount, setGenerationCount] = useState<number>(4)
-  const [refinementPrompt, setRefinementPrompt] = useState('')
+  const [refinementPrompt, setRefinementPrompt] = useState(kf.refinementPrompt || '')
 
   const handleGenerate = useCallback(async () => {
     if (!kf.prompt && !refinementPrompt) {
@@ -672,15 +672,38 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
       </div>
 
       {/* Refinement prompt — generates from selected image instead of base still */}
-      <div>
+      <div className="space-y-1">
         <textarea
           ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
           value={refinementPrompt}
           onChange={(e) => { setRefinementPrompt(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
+          onBlur={async () => {
+            const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+            postUpdateKeyframeStyle(projectName, kf.id, { refinementPrompt } as never)
+          }}
           placeholder="Refinement prompt (optional) — generates from selected image..."
           className="w-full bg-gray-800 text-[11px] text-gray-400 rounded p-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none overflow-hidden leading-relaxed"
           rows={1}
         />
+        {refinementPrompt && (
+          <button
+            onClick={async () => {
+              try {
+                setEnhancing(true)
+                const result = await enhanceKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: refinementPrompt, sectionContent: sectionContent || '', nearestEvent: nearestEvent || undefined } })
+                if (result.enhanced) {
+                  setRefinementPrompt(result.enhanced)
+                  const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+                  postUpdateKeyframeStyle(projectName, kf.id, { refinementPrompt: result.enhanced } as never)
+                }
+              } catch (e) { alert(`Enhance failed: ${e}`) } finally { setEnhancing(false) }
+            }}
+            disabled={enhancing}
+            className="text-[10px] text-blue-400/70 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+          >
+            {enhancing ? 'Enhancing...' : 'Enhance refinement prompt'}
+          </button>
+        )}
       </div>
 
       <button
