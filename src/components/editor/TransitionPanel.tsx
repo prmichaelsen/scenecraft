@@ -375,17 +375,17 @@ export function TransitionPanel({
                 <AnimCurveEditor
                   label="Red" defaultY={1} color="#ef4444" yLabel="Red →"
                   transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
-                  curveKey="redCurve" styleKey="redCurve" onDataChange={onDataChange}
+                  curveKey="redCurve" styleKey="redCurve" onDataChange={onDataChange} maxY={2}
                 />
                 <AnimCurveEditor
                   label="Green" defaultY={1} color="#22c55e" yLabel="Green →"
                   transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
-                  curveKey="greenCurve" styleKey="greenCurve" onDataChange={onDataChange}
+                  curveKey="greenCurve" styleKey="greenCurve" onDataChange={onDataChange} maxY={2}
                 />
                 <AnimCurveEditor
                   label="Blue" defaultY={1} color="#3b82f6" yLabel="Blue →"
                   transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime}
-                  curveKey="blueCurve" styleKey="blueCurve" onDataChange={onDataChange}
+                  curveKey="blueCurve" styleKey="blueCurve" onDataChange={onDataChange} maxY={2}
                 />
                 <AnimCurveEditor
                   label="Black" defaultY={0} color="#9ca3af" yLabel="Black →"
@@ -421,6 +421,7 @@ export function TransitionPanel({
                   curveKey="saturationCurve"
                   styleKey="saturationCurve"
                   onDataChange={onDataChange}
+                  maxY={2}
                 />
               </div>
 
@@ -1293,11 +1294,12 @@ function ChromaKeyEditor({ transition, projectName, onDataChange }: { transition
   )
 }
 
-function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectName, keyframes, currentTime, curveKey, styleKey, onDataChange, lockY, diagonalRef, aspect: aspectProp, onSave: customSave, initialPoints: initialPointsProp }: {
+function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectName, keyframes, currentTime, curveKey, styleKey, onDataChange, lockY, diagonalRef, aspect: aspectProp, onSave: customSave, initialPoints: initialPointsProp, maxY: maxYProp }: {
   label: string; defaultY: number; color: string; yLabel: string
   transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number
   curveKey?: string; styleKey?: string; onDataChange?: () => void
   lockY?: boolean; diagonalRef?: boolean; aspect?: number; onSave?: (points: CurvePoint[]) => Promise<void>; initialPoints?: CurvePoint[]
+  maxY?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [points, setPoints] = useState<CurvePoint[]>(() =>
@@ -1309,6 +1311,7 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
 
   const PAD = 10
   const ASPECT = aspectProp ?? 3
+  const maxY = maxYProp ?? 1
   const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 240, h: Math.round(240 / (aspectProp ?? 3)) })
   const W = canvasSize.w
   const H = canvasSize.h
@@ -1326,11 +1329,11 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
 
   const toCanvas = (x: number, y: number): [number, number] => [
     PAD + x * (W - 2 * PAD),
-    H - PAD - y * (H - 2 * PAD),
+    H - PAD - (y / maxY) * (H - 2 * PAD),
   ]
   const fromCanvas = (cx: number, cy: number): [number, number] => [
     Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
-    Math.max(0, Math.min(1, (H - PAD - cy) / (H - 2 * PAD))),
+    Math.max(0, Math.min(maxY, ((H - PAD - cy) / (H - 2 * PAD)) * maxY)),
   ]
   const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
     const canvas = canvasRef.current
@@ -1380,7 +1383,21 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     ctx.textAlign = 'right'
     ctx.fillText('100%', W - PAD, H - PAD + 9)
     ctx.textAlign = 'left'
-    ctx.fillText('100%', 1, PAD + 3)
+    ctx.fillText(`${Math.round(maxY * 100)}%`, 1, PAD + 3)
+    // Draw 100% reference line when maxY > 1
+    if (maxY > 1) {
+      const [, y100] = toCanvas(0, 1)
+      ctx.strokeStyle = '#444'
+      ctx.lineWidth = 0.5
+      ctx.setLineDash([2, 3])
+      ctx.beginPath()
+      ctx.moveTo(PAD, y100)
+      ctx.lineTo(W - PAD, y100)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = '#444'
+      ctx.fillText('100%', 1, y100 + 3)
+    }
 
     // Reference line (diagonal for remap, horizontal at y=0 for others)
     ctx.strokeStyle = '#555'
