@@ -94,7 +94,7 @@ export function TimelineSwitcher({ projectName, onSwitch }: TimelineSwitcherProp
       </button>
 
       {showMenu && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 min-w-[200px]">
+        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-10 min-w-[200px]">
           <div className="py-1">
             {info.timelines.map((name) => (
               <button

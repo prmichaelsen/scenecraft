@@ -1,18 +1,18 @@
-import { useEffect, useRef } from 'react'
+import { useCallback } from 'react'
+import { Virtuoso } from 'react-virtuoso'
 import { useServerLogs } from '@/hooks/useBeatlabSocket'
 
 const STORAGE_KEY = 'beatlab-side-panel-width'
 
 export function LogPanel({ onClose }: { onClose: () => void }) {
   const logs = useServerLogs()
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const autoScroll = useRef(true)
 
-  useEffect(() => {
-    if (autoScroll.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [logs])
+  const itemContent = useCallback((_index: number, log: { message: string; timestamp: string; level: string }) => (
+    <div className={`py-0.5 ${log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-yellow-400' : 'text-gray-500'}`}>
+      <span className="text-gray-700 mr-1">{log.timestamp.split('T').pop()?.split('.')[0] || ''}</span>
+      {log.message}
+    </div>
+  ), [])
 
   return (
     <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10) }}>
@@ -23,23 +23,18 @@ export function LogPanel({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
         </div>
       </div>
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto font-mono text-[10px] leading-relaxed p-2 space-y-0"
-        onScroll={(e) => {
-          const el = e.currentTarget
-          autoScroll.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 20
-        }}
-      >
+      <div className="flex-1 font-mono text-[10px] leading-relaxed">
         {logs.length === 0 ? (
           <div className="text-gray-600 text-center py-4">No logs yet</div>
         ) : (
-          logs.map((log, i) => (
-            <div key={i} className={`py-0.5 ${log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-yellow-400' : 'text-gray-500'}`}>
-              <span className="text-gray-700 mr-1">{log.timestamp.split('T').pop()?.split('.')[0] || ''}</span>
-              {log.message}
-            </div>
-          ))
+          <Virtuoso
+            data={logs}
+            itemContent={itemContent}
+            followOutput="smooth"
+            initialTopMostItemIndex={logs.length - 1}
+            className="h-full px-2"
+            style={{ height: '100%' }}
+          />
         )}
       </div>
     </div>
