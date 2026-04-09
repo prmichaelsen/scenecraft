@@ -1295,6 +1295,9 @@ export function Timeline({ data }: { data: EditorData }) {
   // Keyframe group clipboard for copy/paste
   const kfClipboard = useRef<string[]>([])
 
+  // Transition clipboard for copy/paste (stores source transition ID)
+  const trClipboard = useRef<string | null>(null)
+
   // Suppression clipboard for copy/paste (stores with relative times)
   const supClipboard = useRef<BeatSuppression[]>([])
 
@@ -1329,16 +1332,24 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+C: copy selected keyframes, suppression, or effects
+      // Ctrl+C: copy selected keyframes, transition, suppression, or effects
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         if (selectedKeyframeIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = [...selectedKeyframeIds]
+          trClipboard.current = null
           supClipboard.current = []
           effectClipboard.current = []
         } else if (selectedKeyframe) {
           e.preventDefault()
           kfClipboard.current = [selectedKeyframe.id]
+          trClipboard.current = null
+          supClipboard.current = []
+          effectClipboard.current = []
+        } else if (selectedTransition) {
+          e.preventDefault()
+          trClipboard.current = selectedTransition.id
+          kfClipboard.current = []
           supClipboard.current = []
           effectClipboard.current = []
         } else if (selectedSuppressionIds.size > 0 || selectedSuppressionId) {
@@ -1363,9 +1374,16 @@ export function Timeline({ data }: { data: EditorData }) {
         }
       }
 
-      // Ctrl+V: paste keyframes, suppression, or effects at playhead
+      // Ctrl+V: paste keyframes, transition style, suppression, or effects at playhead
       if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-        if (kfClipboard.current.length > 0) {
+        if (trClipboard.current && selectedTransition && trClipboard.current !== selectedTransition.id) {
+          e.preventDefault()
+          import('@/lib/beatlab-client').then(({ postCopyTransitionStyle }) => {
+            postCopyTransitionStyle(data.projectName, trClipboard.current!, selectedTransition.id)
+              .then(() => refreshTimeline())
+              .catch((err: Error) => { console.error('Paste transition style failed:', err); alert(`Paste style failed: ${err.message}`) })
+          })
+        } else if (kfClipboard.current.length > 0) {
           e.preventDefault()
           import('@/lib/beatlab-client').then(({ postPasteGroup }) => {
             postPasteGroup(data.projectName, kfClipboard.current, secondsToTimestamp(currentTime), selectedTrackId)
@@ -1409,6 +1427,18 @@ export function Timeline({ data }: { data: EditorData }) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectedEffect) {
         e.preventDefault()
         setSelectedEffectIds(new Set(userEffects.map((fx) => fx.id)))
+      }
+
+      // Ctrl+Z: undo
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        import('@/lib/beatlab-client').then(({ postUndo }) => {
+          postUndo(data.projectName).then((result) => {
+            if (result.success) {
+              refreshTimeline()
+            }
+          })
+        })
       }
     }
     document.addEventListener('keydown', handleKeyDown)

@@ -368,6 +368,15 @@ export async function postPasteGroup(project: string, keyframeIds: string[], tar
   return res.json()
 }
 
+export async function postUndo(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/undo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  return res.json() as Promise<{ success: boolean; description?: string; message?: string }>
+}
+
 export async function postUnlinkKeyframe(project: string, keyframeId: string, side: 'both' | 'left' | 'right' = 'both') {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unlink-keyframe`, {
     method: 'POST',
