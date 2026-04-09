@@ -2,6 +2,7 @@ const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhos
 
 export type Checkpoint = {
   filename: string
+  name: string
   created: string
   size_bytes: number
 }
@@ -12,11 +13,11 @@ export async function fetchCheckpoints(project: string) {
   return res.json() as Promise<{ checkpoints: Checkpoint[]; active: string }>
 }
 
-export async function createCheckpoint(project: string) {
+export async function createCheckpoint(project: string, name?: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ name: name || undefined }),
   })
   if (!res.ok) throw new Error(`Failed to create checkpoint: ${res.status}`)
   return res.json() as Promise<{ success: boolean; filename: string }>

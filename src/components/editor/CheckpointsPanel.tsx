@@ -18,6 +18,7 @@ export function CheckpointsPanel({ projectName, onClose, onRestore }: Checkpoint
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [checkpointName, setCheckpointName] = useState('')
   const [restoringFile, setRestoringFile] = useState<string | null>(null)
 
   const loadCheckpoints = useCallback(async () => {
@@ -39,14 +40,15 @@ export function CheckpointsPanel({ projectName, onClose, onRestore }: Checkpoint
     setCreating(true)
     setError(null)
     try {
-      await createCheckpoint(projectName)
+      await createCheckpoint(projectName, checkpointName || undefined)
+      setCheckpointName('')
       loadCheckpoints()
     } catch (e) {
       setError(String(e))
     } finally {
       setCreating(false)
     }
-  }, [projectName, loadCheckpoints])
+  }, [projectName, checkpointName, loadCheckpoints])
 
   const handleRestore = useCallback(async (filename: string) => {
     setRestoringFile(filename)
@@ -83,7 +85,15 @@ export function CheckpointsPanel({ projectName, onClose, onRestore }: Checkpoint
       </div>
 
       {/* Create checkpoint */}
-      <div className="px-3 py-2 border-b border-gray-800 shrink-0">
+      <div className="px-3 py-2 border-b border-gray-800 shrink-0 space-y-1.5">
+        <input
+          type="text"
+          value={checkpointName}
+          onChange={(e) => setCheckpointName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !creating) handleCreate() }}
+          placeholder="Checkpoint name (optional)"
+          className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none"
+        />
         <button
           onClick={handleCreate}
           disabled={creating}
@@ -91,9 +101,6 @@ export function CheckpointsPanel({ projectName, onClose, onRestore }: Checkpoint
         >
           {creating ? 'Creating...' : 'Create Checkpoint'}
         </button>
-        <div className="text-[10px] text-gray-600 mt-1">
-          Snapshots the current database state
-        </div>
       </div>
 
       {/* Error */}
@@ -141,20 +148,16 @@ function CheckpointEntry({ checkpoint, restoring, onRestore, onDelete }: {
   const isToday = new Date().toDateString() === date.toDateString()
   const sizeMb = (checkpoint.size_bytes / (1024 * 1024)).toFixed(1)
 
-  // Extract timestamp from filename for display
-  const tsMatch = checkpoint.filename.match(/checkpoint-(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/)
-  const label = tsMatch
-    ? `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]} ${tsMatch[4]}:${tsMatch[5]}:${tsMatch[6]}`
-    : checkpoint.filename
+  const label = checkpoint.name || `${dateStr} ${timeStr}`
 
   return (
     <div className="px-3 py-2 group">
       <div className="flex items-start gap-2">
         <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 bg-blue-500" />
         <div className="flex-1 min-w-0">
-          <div className="text-xs text-gray-300 leading-snug font-mono">{label}</div>
+          <div className="text-xs text-gray-300 leading-snug">{label}</div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] text-gray-600">{isToday ? timeStr : `${dateStr} ${timeStr}`}</span>
+            {checkpoint.name && <span className="text-[10px] text-gray-600">{isToday ? timeStr : `${dateStr} ${timeStr}`}</span>}
             <span className="text-[10px] text-gray-600">{sizeMb} MB</span>
           </div>
         </div>
