@@ -137,7 +137,9 @@ export function TransitionTrack({
               className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer pointer-events-auto transition-colors border-t ${
                 dropTarget === tr.id
                   ? 'bg-green-500/30 border-green-500/60 ring-1 ring-green-500'
-                  : `bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/30 ${isSelected ? 'ring-1 ring-orange-500' : ''}`
+                  : tr.hidden
+                    ? `bg-yellow-500/10 hover:bg-yellow-500/15 border-yellow-500/20 border-dashed ${isSelected ? 'ring-1 ring-yellow-500' : ''}`
+                    : `bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/30 ${isSelected ? 'ring-1 ring-orange-500' : ''}`
               }`}
               onClick={(e) => {
                 if (didDrag.current) { didDrag.current = false; return }

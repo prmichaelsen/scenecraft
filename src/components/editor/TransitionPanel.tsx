@@ -152,11 +152,24 @@ export function TransitionPanel({
               title="Copy this video to next transition (overwrites)"
             >Copy &rarr;</button>
             <button
+              onClick={async () => {
+                const next = !tr.hidden
+                tr.hidden = next
+                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                await postUpdateTransitionStyle(projectName, tr.id, { hidden: next } as never)
+                onDataChange()
+              }}
+              className={`text-xs transition-colors ${tr.hidden ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-500/70 hover:text-yellow-400'}`}
+              title={tr.hidden ? 'Show transition' : 'Hide transition (mute)'}
+            >
+              {tr.hidden ? 'Show' : 'Hide'}
+            </button>
+            <button
               onClick={onDelete}
               className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
               title="Delete transition (move to bin)"
             >
-              Delete
+              Del
             </button>
             <button
               onClick={onClose}
@@ -173,6 +186,13 @@ export function TransitionPanel({
         <div className="flex-1 overflow-y-auto">
           {tab === 'details' ? (
             <>
+              {/* Hidden toggle */}
+              {tr.hidden && (
+                <div className="px-3 py-2 bg-yellow-900/20 border-b border-yellow-800/30 text-center">
+                  <span className="text-[10px] text-yellow-400">This transition is hidden (muted)</span>
+                </div>
+              )}
+
               {/* Metadata */}
               <div className="px-3 py-3 space-y-3 border-b border-gray-800">
                 <Field label="From → To" value={`${tr.from} → ${tr.to}`} />

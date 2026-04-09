@@ -362,6 +362,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
   const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
+  const [hoverPreviewUrl, setHoverPreviewUrl] = useState<string | null>(null)
   const [audioTrackHeight, setAudioTrackHeight] = useState(DEFAULT_AUDIO_HEIGHT)
   // Viewport state for virtualized rendering
   const [scrollLeft, setScrollLeft] = useState(0)
@@ -709,6 +710,7 @@ export function Timeline({ data }: { data: EditorData }) {
       const tKfMap = new Map(tKfs.map((kf) => [kf.id, kf]))
       // Find transition spanning current time — highest z-index (last/highest ID) wins when overlapping
       const activeTr = tTrs.filter((tr) => {
+        if (tr.hidden) return false
         const from = tKfMap.get(tr.from)
         const to = tKfMap.get(tr.to)
         if (!from || !to) return false
@@ -1520,6 +1522,9 @@ export function Timeline({ data }: { data: EditorData }) {
           style={{ height: previewHeight }}
         >
           <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
+            {hoverPreviewUrl && (
+              <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
+            )}
             {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
               <BeatEffectPreview
                 ref={previewRef}
@@ -2180,6 +2185,7 @@ export function Timeline({ data }: { data: EditorData }) {
           }}
           activeKeyframes={localKeyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
           activeTransitions={localTransitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
+          onHoverPreview={setHoverPreviewUrl}
         />
       ) : showSections ? (
         <NarrativeSectionPanel
