@@ -209,12 +209,21 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             title={`Sort: ${sortBy}`}
           >{sortBy === 'timeline' ? '⏱ Timeline' : sortBy === 'recent' ? '↓ Newest' : '↑ Oldest'}</button>
         </div>
-        <button
-          onClick={onClose}
-          className="text-gray-500 hover:text-gray-300 text-lg leading-none"
-        >
-          &times;
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => loadBin()}
+            className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1"
+            title="Refresh bin"
+          >
+            ↻
+          </button>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+          >
+            &times;
+          </button>
+        </div>
       </div>
 
       {/* Watched folders */}

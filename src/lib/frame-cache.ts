@@ -106,10 +106,13 @@ async function decodeVideoFrames(videoUrl: string, onProgress?: (progress: numbe
         return
       }
 
-      const frameCount = Math.ceil(duration * TARGET_FPS)
-      const frames: ImageBitmap[] = []
+      // For short clips (< 2s), use playback-based capture instead of seeking.
+      // Seeking is disproportionately slow on short clips because each seek
+      // re-decodes from the nearest keyframe.
+      const SHORT_CLIP_THRESHOLD = 2.0
+      const fps = duration < 1.0 ? 12 : TARGET_FPS // lower fps for very short clips
+      const frameCount = Math.max(2, Math.ceil(duration * fps))
 
-      // Use an offscreen canvas to draw and capture frames
       const canvas = new OffscreenCanvas(PREVIEW_WIDTH, PREVIEW_HEIGHT)
       const ctx = canvas.getContext('2d')
       if (!ctx) {
@@ -117,27 +120,76 @@ async function decodeVideoFrames(videoUrl: string, onProgress?: (progress: numbe
         return
       }
 
-      for (let i = 0; i < frameCount; i++) {
-        const time = i / TARGET_FPS
-        video.currentTime = time
+      if (duration <= SHORT_CLIP_THRESHOLD && 'requestVideoFrameCallback' in video) {
+        // Playback-based capture: play the video and grab frames as they render.
+        // Much faster than seeking for short clips.
+        const frames: ImageBitmap[] = []
+        const interval = duration / frameCount
+        let nextCapture = 0
 
-        await new Promise<void>((res) => {
-          video.onseeked = () => res()
+        const captureLoop = () => {
+          if (video.currentTime >= nextCapture && frames.length < frameCount) {
+            ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+            createImageBitmap(canvas).then((bmp) => {
+              frames.push(bmp)
+              onProgress?.(frames.length / frameCount)
+            })
+            nextCapture += interval
+          }
+          if (!video.paused && !video.ended && frames.length < frameCount) {
+            (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => void }).requestVideoFrameCallback(captureLoop)
+          }
+        }
+
+        video.onended = () => {
+          // Capture final frame if needed
+          if (frames.length < frameCount) {
+            ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+            createImageBitmap(canvas).then((bmp) => {
+              frames.push(bmp)
+              onProgress?.(1)
+              video.src = ''
+              resolve(frames)
+            })
+          } else {
+            video.src = ''
+            resolve(frames)
+          }
+        }
+
+        ;(video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => void }).requestVideoFrameCallback(captureLoop)
+        video.play().catch(() => {
+          // Playback failed (e.g. autoplay blocked) — fall back to seek-based
+          decodeViaSeek(video, canvas, ctx, frameCount, fps, onProgress).then((f) => { video.src = ''; resolve(f) })
         })
-
-        ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT)
-        const bitmap = await createImageBitmap(canvas)
-        frames.push(bitmap)
-        onProgress?.((i + 1) / frameCount)
+      } else {
+        // Seek-based capture: works everywhere but slower
+        const frames = await decodeViaSeek(video, canvas, ctx, frameCount, fps, onProgress)
+        video.src = ''
+        resolve(frames)
       }
-
-      video.src = ''
-      resolve(frames)
     }
 
     video.onerror = () => reject(new Error(`Failed to load video: ${videoUrl}`))
     video.src = videoUrl
   })
+}
+
+async function decodeViaSeek(
+  video: HTMLVideoElement, canvas: OffscreenCanvas, ctx: OffscreenCanvasRenderingContext2D,
+  frameCount: number, fps: number, onProgress?: (progress: number) => void
+): Promise<ImageBitmap[]> {
+  const frames: ImageBitmap[] = []
+  for (let i = 0; i < frameCount; i++) {
+    const time = i / fps
+    video.currentTime = time
+    await new Promise<void>((res) => { video.onseeked = () => res() })
+    ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    const bitmap = await createImageBitmap(canvas)
+    frames.push(bitmap)
+    onProgress?.((i + 1) / frameCount)
+  }
+  return frames
 }
 
 async function bitmapsToBlobs(bitmaps: ImageBitmap[]): Promise<Blob[]> {
@@ -242,7 +294,7 @@ export function getMemoryUsage(): { usedBytes: number; limitBytes: number; pct: 
 
 // ── Concurrency-limited preload queue ────────────────────────────
 
-const MAX_CONCURRENT_PRELOADS = 2
+const MAX_CONCURRENT_PRELOADS = 4
 let activePreloads = 0
 const preloadQueue: Array<() => Promise<void>> = []
 const DEFERRED_RETRY_MS = 5000

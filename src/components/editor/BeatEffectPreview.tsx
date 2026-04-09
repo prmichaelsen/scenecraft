@@ -370,6 +370,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     compAccumTex: WebGLTexture
     compFbo2: WebGLFramebuffer
     compAccumTex2: WebGLTexture
+    blackTex: WebGLTexture
   } | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const animRef = useRef<number>(0)
@@ -471,6 +472,13 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
     const accum1 = makeFbo()
     const accum2 = makeFbo()
 
+    // 1x1 black texture for empty layers (kf/tr with no video)
+    const blackTex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, blackTex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]))
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
     return {
       gl,
       program,
@@ -491,6 +499,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       compAccumTex: accum1.tex,
       compFbo2: accum2.fbo,
       compAccumTex2: accum2.tex,
+      blackTex,
     }
   }, [])
 
@@ -557,7 +566,8 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
         if (l.isAdjustment) {
           // Adjustment layers have no content — they modify the composite below
           contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: 'normal', isAdjustment: true, mask: l.mask, transform: l.transform })
-        } else if (l.frameA) {
+        } else {
+          // Content layer: use frame if available, otherwise render as black (empty kf/tr)
           contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never, mask: l.mask, transform: l.transform })
         }
       }
@@ -602,17 +612,25 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
         gl.activeTexture(gl.TEXTURE2)
         gl.bindTexture(gl.TEXTURE_2D, texs[readIdx])
         gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
-      } else {
+      } else if (layer.frameA) {
         // unit 1 = layer frame A
         gl.activeTexture(gl.TEXTURE1)
         gl.bindTexture(gl.TEXTURE_2D, ctx.textureA)
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameA!)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameA)
         gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
 
         // unit 2 = layer frame B
         gl.activeTexture(gl.TEXTURE2)
         gl.bindTexture(gl.TEXTURE_2D, ctx.textureB)
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.frameB!)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
+      } else {
+        // Empty layer (no video/image) — render as black
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, ctx.blackTex)
+        gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerA'), 1)
+        gl.activeTexture(gl.TEXTURE2)
+        gl.bindTexture(gl.TEXTURE_2D, ctx.blackTex)
         gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_layerB'), 2)
       }
 
