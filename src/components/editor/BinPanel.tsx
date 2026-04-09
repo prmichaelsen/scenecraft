@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { beatlabFileUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
+import { beatlabFileUrl, beatlabThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -281,12 +281,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
-                    onMouseEnter={() => kf.hasSelectedImage && onHoverPreview?.(beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`))}
+                    onMouseEnter={() => kf.hasSelectedImage && onHoverPreview?.(beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png?v=${kf.selected ?? 0}`))}
                     onMouseLeave={() => onHoverPreview?.(null)}
                   >
                     {kf.hasSelectedImage ? (
                       <img
-                        src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
+                        src={beatlabThumbUrl(projectName, `selected_keyframes/${kf.id}.png`)}
                         alt={kf.id}
                         className="w-full aspect-video object-cover pointer-events-none"
                         draggable={false}
@@ -326,7 +326,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       >
                         {entry.hasSelectedImage ? (
                           <img
-                            src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
+                            src={beatlabThumbUrl(projectName, `selected_keyframes/${entry.id}.png`)}
                             alt={entry.id}
                             className="w-full aspect-video object-cover pointer-events-none"
                         draggable={false}
@@ -406,7 +406,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onMouseLeave={() => onHoverPreview?.(null)}
                   >
                     <img
-                      src={beatlabFileUrl(projectName, c.path)}
+                      src={beatlabThumbUrl(projectName, c.path)}
                       alt={`${c.keyframeId} v${c.variant}`}
                       className="w-full aspect-video object-cover pointer-events-none"
                       loading="lazy"
@@ -475,7 +475,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           onMouseLeave={() => onHoverPreview?.(null)}
                         >
                           <img
-                            src={beatlabFileUrl(projectName, entry.path)}
+                            src={beatlabThumbUrl(projectName, entry.path)}
                             alt={entry.name}
                             className="w-full aspect-video object-cover"
                             loading="lazy"

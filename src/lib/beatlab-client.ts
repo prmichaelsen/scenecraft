@@ -6,6 +6,10 @@ export function beatlabFileUrl(project: string, path: string): string {
   return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/files/${path}`
 }
 
+export function beatlabThumbUrl(project: string, path: string): string {
+  return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/thumb/${path}`
+}
+
 export function beatlabThumbnailUrl(project: string, path: string): string {
   return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/thumbnail/${path}`
 }

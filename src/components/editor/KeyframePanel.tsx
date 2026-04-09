@@ -452,6 +452,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                 ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
                 value={promptText}
                 onChange={(e) => { setPromptText(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
+                onBlur={() => savePrompt()}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault()
