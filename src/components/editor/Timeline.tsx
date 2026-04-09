@@ -25,6 +25,7 @@ import { SuppressionTrack } from './SuppressionTrack'
 import { RulesTrack, type RuleSection } from './RulesTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
+import { CheckpointsPanel } from './CheckpointsPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
@@ -346,6 +347,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [scrollToSectionId, setScrollToSectionId] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
+  const [showCheckpoints, setShowCheckpoints] = useState(false)
   const [showDownloadPreview, setShowDownloadPreview] = useState(false)
   const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/beatlab-client').AudioDescription | null>(null)
   const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
@@ -539,6 +541,7 @@ export function Timeline({ data }: { data: EditorData }) {
   // Find active transition at current time (if any with selected video)
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
   const activeTransition = localTransitions.filter((tr) => {
+    if (tr.hidden) return false
     if (tr.trackId !== selectedTrackId) return false
     const fromKf = kfMap.get(tr.from)
     const toKf = kfMap.get(tr.to)
@@ -905,6 +908,7 @@ export function Timeline({ data }: { data: EditorData }) {
     setShowSections(false)
     setShowSettings(false)
     setShowLogs(false)
+    setShowCheckpoints(false)
     setSelectedAudioDescription(null)
     setShowDownloadPreview(false)
     setSelectedRuleSection(null)
@@ -1775,20 +1779,11 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
-            onClick={async () => {
-              const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/checkpoint`
-              const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-              if (res.ok) {
-                const d = await res.json()
-                alert(`Checkpoint saved: ${d.filename}`)
-              } else {
-                alert('Checkpoint failed')
-              }
-            }}
-            className="text-xs px-2 py-1 rounded transition-colors bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200"
-            title="Create a backup of the project database"
+            onClick={() => { const was = showCheckpoints; closeAllPanels(); if (!was) setShowCheckpoints(true) }}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showCheckpoints ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
+            title="Database checkpoints — save, restore, manage snapshots"
           >
-            Checkpoint
+            Checkpoints
           </button>
 
           <TimelineSwitcher projectName={data.projectName} onSwitch={() => router.invalidate()} />
@@ -2160,6 +2155,12 @@ export function Timeline({ data }: { data: EditorData }) {
         <VersionHistoryPanel
           projectName={data.projectName}
           onClose={() => setShowVersions(false)}
+          onRestore={() => router.invalidate()}
+        />
+      ) : showCheckpoints ? (
+        <CheckpointsPanel
+          projectName={data.projectName}
+          onClose={() => setShowCheckpoints(false)}
           onRestore={() => router.invalidate()}
         />
       ) : showBin ? (
