@@ -1572,7 +1572,7 @@ export function Timeline({ data }: { data: EditorData }) {
         />
 
         {/* Controls bar */}
-        <div className="flex items-center gap-4 px-4 py-1.5 bg-gray-900 border-b border-gray-800 shrink-0">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 bg-gray-900 border-b border-gray-800 shrink-0">
           <button
             onClick={handlePlayPause}
             className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 rounded transition-colors"
