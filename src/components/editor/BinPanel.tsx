@@ -285,10 +285,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onMouseLeave={() => onHoverPreview?.(null)}
                   >
                     {kf.hasSelectedImage ? (
-                      <LazyThumb
+                      <img
                         src={beatlabThumbUrl(projectName, `selected_keyframes/${kf.id}.png`)}
                         alt={kf.id}
-                        className="w-full aspect-video bg-gray-800 pointer-events-none"
+                        className="w-full aspect-video object-cover pointer-events-none"
+                        draggable={false}
+                        loading="lazy"
                       />
                     ) : (
                       <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
@@ -323,10 +325,10 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         onMouseLeave={() => onHoverPreview?.(null)}
                       >
                         {entry.hasSelectedImage ? (
-                          <LazyThumb
+                          <img
                             src={beatlabThumbUrl(projectName, `selected_keyframes/${entry.id}.png`)}
                             alt={entry.id}
-                            className="w-full aspect-video bg-gray-800 pointer-events-none"
+                            className="w-full aspect-video object-cover pointer-events-none"
                         draggable={false}
                             loading="lazy"
                           />
@@ -403,10 +405,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, c.path))}
                     onMouseLeave={() => onHoverPreview?.(null)}
                   >
-                    <LazyThumb
+                    <img
                       src={beatlabThumbUrl(projectName, c.path)}
                       alt={`${c.keyframeId} v${c.variant}`}
-                      className="w-full aspect-video bg-gray-800 pointer-events-none"
+                      className="w-full aspect-video object-cover pointer-events-none"
+                      loading="lazy"
+                      draggable={false}
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="text-[7px] text-gray-300 truncate">{c.keyframeId} v{c.variant}</div>
@@ -470,10 +474,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, entry.path))}
                           onMouseLeave={() => onHoverPreview?.(null)}
                         >
-                          <LazyThumb
+                          <img
                             src={beatlabThumbUrl(projectName, entry.path)}
                             alt={entry.name}
-                            className="w-full aspect-video bg-gray-800"
+                            className="w-full aspect-video object-cover"
+                            loading="lazy"
+                            draggable={false}
                           />
                         </PoolItemWithTags>
                       )
@@ -516,108 +522,6 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
         )}
       </div>
       </div>
-    </div>
-  )
-}
-
-// Lazy thumbnail component — only fetches when visible, batched via shared queue
-const thumbMemCache = new Map<string, string>() // url → objectURL
-const THUMB_DB = 'beatlab-thumb-cache'
-const THUMB_STORE = 'thumbs'
-
-function openThumbDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(THUMB_DB, 1)
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(THUMB_STORE)) req.result.createObjectStore(THUMB_STORE)
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function getThumbBlob(key: string): Promise<Blob | null> {
-  try {
-    const db = await openThumbDb()
-    return new Promise((resolve) => {
-      const req = db.transaction(THUMB_STORE, 'readonly').objectStore(THUMB_STORE).get(key)
-      req.onsuccess = () => resolve(req.result ?? null)
-      req.onerror = () => resolve(null)
-    })
-  } catch { return null }
-}
-
-async function putThumbBlob(key: string, blob: Blob): Promise<void> {
-  try {
-    const db = await openThumbDb()
-    db.transaction(THUMB_STORE, 'readwrite').objectStore(THUMB_STORE).put(blob, key)
-  } catch {}
-}
-
-const thumbQueue: { url: string; resolve: (blobUrl: string) => void }[] = []
-let thumbFlushing = false
-
-function flushThumbQueue() {
-  if (thumbFlushing || thumbQueue.length === 0) return
-  thumbFlushing = true
-  const batch = thumbQueue.splice(0, 20)
-  Promise.all(
-    batch.map(async ({ url, resolve }) => {
-      try {
-        if (thumbMemCache.has(url)) { resolve(thumbMemCache.get(url)!); return }
-        // Check IndexedDB
-        const cached = await getThumbBlob(url)
-        if (cached) {
-          const blobUrl = URL.createObjectURL(cached)
-          thumbMemCache.set(url, blobUrl)
-          resolve(blobUrl)
-          return
-        }
-        // Network fetch
-        const res = await fetch(url)
-        const blob = await res.blob()
-        const blobUrl = URL.createObjectURL(blob)
-        thumbMemCache.set(url, blobUrl)
-        putThumbBlob(url, blob) // fire and forget
-        resolve(blobUrl)
-      } catch {
-        resolve('')
-      }
-    })
-  ).finally(() => {
-    thumbFlushing = false
-    if (thumbQueue.length > 0) setTimeout(flushThumbQueue, 50)
-  })
-}
-
-function LazyThumb({ src, alt, className }: { src: string; alt: string; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [blobUrl, setBlobUrl] = useState(() => thumbMemCache.get(src) || '')
-  const requested = useRef(false)
-
-  useEffect(() => {
-    if (blobUrl || requested.current) return
-    const el = ref.current
-    if (!el) return
-    const obs = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && !requested.current) {
-        requested.current = true
-        obs.disconnect()
-        if (thumbCache.has(src)) {
-          setBlobUrl(thumbMemCache.get(src)!)
-        } else {
-          thumbQueue.push({ url: src, resolve: (u) => setBlobUrl(u) })
-          flushThumbQueue()
-        }
-      }
-    }, { rootMargin: '200px' })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [src, blobUrl])
-
-  return (
-    <div ref={ref} className={className || 'w-full aspect-video bg-gray-800'}>
-      {blobUrl && <img src={blobUrl} alt={alt} className="w-full h-full object-cover" draggable={false} />}
     </div>
   )
 }
