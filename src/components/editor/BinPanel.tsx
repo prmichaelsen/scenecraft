@@ -73,6 +73,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
   const [unselectedCandidates, setUnselectedCandidates] = useState<UnselectedCandidate[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates'>('keyframes')
+  const [kfSubTab, setKfSubTab] = useState<'active' | 'bin'>('active')
+  const [trSubTab, setTrSubTab] = useState<'active' | 'bin'>('active')
   const scrollPositions = useRef<Record<string, number>>(
     typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem('beatlab-bin-scroll') || '{}') } catch { return {} } })() : {}
   )
@@ -96,8 +98,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
       // Background preload thumbnails into IndexedDB
       const thumbUrls = [
-        ...(poolData.keyframes || []).map((e: PoolEntry) => beatlabThumbUrl(projectName, e.path)),
-        ...(candData || []).map((c: UnselectedCandidate) => beatlabThumbUrl(projectName, c.path)),
+        ...(poolData.keyframes || []).map((e: PoolEntry) => beatlabFileUrl(projectName, e.path)),
+        ...(candData || []).map((c: UnselectedCandidate) => beatlabFileUrl(projectName, c.path)),
       ]
       preloadThumbs(thumbUrls)
     } finally {
@@ -272,48 +274,41 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
         {loading ? (
           <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
         ) : tab === 'keyframes' ? (
-          allKfCount === 0 ? (
-            <div className="p-4 text-center text-sm text-gray-600">Empty</div>
-          ) : (
-            <div className="p-2 space-y-1">
-              {/* Hover preview */}
-              {/* Active keyframes */}
-              <div className="grid grid-cols-3 gap-1">
-                {sortItems(activeKeyframes).map((kf) => (
-                  <div
-                    key={kf.id}
-                    className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
-                    draggable={kf.hasSelectedImage}
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
-                      e.dataTransfer.effectAllowed = 'copy'
-                    }}
-                    onMouseEnter={() => kf.hasSelectedImage && onHoverPreview?.(beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png?v=${kf.selected ?? 0}`))}
-                    onMouseLeave={() => onHoverPreview?.(null)}
-                  >
-                    {kf.hasSelectedImage ? (
-                      <img
-                        src={beatlabThumbUrl(projectName, `selected_keyframes/${kf.id}.png`)}
-                        alt={kf.id}
-                        className="w-full aspect-video object-cover pointer-events-none"
-                        draggable={false}
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
-                        <span className="text-[8px] text-gray-600">{kf.id}</span>
+          <div className="flex flex-col h-full">
+            <div className="flex border-b border-gray-800 shrink-0">
+              <button onClick={() => setKfSubTab('active')} className={`flex-1 text-[10px] py-1.5 ${kfSubTab === 'active' ? 'text-gray-200 border-b border-blue-500' : 'text-gray-500'}`}>Active ({activeKeyframes.length})</button>
+              <button onClick={() => setKfSubTab('bin')} className={`flex-1 text-[10px] py-1.5 ${kfSubTab === 'bin' ? 'text-gray-200 border-b border-red-500' : 'text-gray-500'}`}>Bin ({keyframeEntries.length})</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {kfSubTab === 'active' ? (
+                activeKeyframes.length === 0 ? <div className="text-center text-sm text-gray-600 py-4">No keyframes</div> : (
+                  <div className="grid grid-cols-3 gap-1">
+                    {sortItems(activeKeyframes).map((kf) => (
+                      <div
+                        key={kf.id}
+                        className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
+                        draggable={kf.hasSelectedImage}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
+                          e.dataTransfer.effectAllowed = 'copy'
+                        }}
+                        onMouseEnter={() => kf.hasSelectedImage && onHoverPreview?.(beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png?v=${kf.selected ?? 0}`))}
+                        onMouseLeave={() => onHoverPreview?.(null)}
+                      >
+                        {kf.hasSelectedImage ? (
+                          <img src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)} alt={kf.id} className="w-full aspect-video object-cover pointer-events-none" draggable={false} loading="lazy" />
+                        ) : (
+                          <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[8px] text-gray-600">{kf.id}</span></div>
+                        )}
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="text-[7px] text-gray-300 truncate">{kf.id} @ {kf.timestamp}</div>
+                        </div>
                       </div>
-                    )}
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="text-[7px] text-gray-300 truncate">{kf.id} @ {kf.timestamp}</div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              {/* Binned keyframes */}
-              {keyframeEntries.length > 0 && (
-                <>
-                  <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
+                )
+              ) : (
+                keyframeEntries.length === 0 ? <div className="text-center text-sm text-gray-600 py-4">Bin empty</div> : (
                   <div className="grid grid-cols-3 gap-1">
                     {sortItems(keyframeEntries).map((entry) => (
                       <div
@@ -322,9 +317,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         draggable
                         onDragStart={(e) => {
                           e.dataTransfer.setData('application/x-beatlab-bin-kf', entry.id)
-                          if (entry.hasSelectedImage) {
-                            e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
-                          }
+                          if (entry.hasSelectedImage) e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
                           e.dataTransfer.effectAllowed = 'copy'
                         }}
                         onClick={() => handleRestoreKeyframe(entry.id)}
@@ -332,17 +325,9 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         onMouseLeave={() => onHoverPreview?.(null)}
                       >
                         {entry.hasSelectedImage ? (
-                          <img
-                            src={beatlabThumbUrl(projectName, `selected_keyframes/${entry.id}.png`)}
-                            alt={entry.id}
-                            className="w-full aspect-video object-cover pointer-events-none"
-                        draggable={false}
-                            loading="lazy"
-                          />
+                          <img src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)} alt={entry.id} className="w-full aspect-video object-cover pointer-events-none" draggable={false} loading="lazy" />
                         ) : (
-                          <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
-                            <span className="text-[8px] text-gray-600">{entry.id}</span>
-                          </div>
+                          <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[8px] text-gray-600">{entry.id}</span></div>
                         )}
                         <div className="absolute bottom-0 left-0 right-0 bg-red-900/70 px-1 py-0.5">
                           <div className="text-[7px] text-red-300 truncate">{entry.id} — click to restore</div>
@@ -350,50 +335,55 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       </div>
                     ))}
                   </div>
-                </>
+                )
               )}
             </div>
-          )
+          </div>
         ) : tab === 'transitions' ? (
-          allTrCount === 0 ? (
-            <div className="p-4 text-center text-sm text-gray-600">Empty</div>
-          ) : (
-            <div className="p-2 space-y-1">
-              {/* Active transitions as video grid */}
-              <div className="grid grid-cols-2 gap-1">
-                {sortItems(activeTransitions.filter((tr) => tr.hasSelectedVideo)).map((tr) => (
-                  <PoolVideoCard
-                    key={tr.id}
-                    entry={{ name: `${tr.id} (${tr.from}→${tr.to})`, path: `selected_transitions/${tr.id}_slot_0.mp4`, size: 0 }}
-                    projectName={projectName}
-                    isSelected={false}
-                    onSelect={() => {}}
-                    draggable
-                  />
-                ))}
-              </div>
-              {/* Transitions without video */}
-              {activeTransitions.filter((tr) => !tr.hasSelectedVideo).length > 0 && (
-                <div className="text-[10px] text-gray-500 uppercase tracking-wider mt-2">No Video</div>
-              )}
-              {sortItems(activeTransitions.filter((tr) => !tr.hasSelectedVideo)).map((tr) => (
-                <div key={tr.id} className="px-2 py-1 bg-gray-800/30 rounded text-[10px] text-gray-500">
-                  {tr.id}: {tr.from} → {tr.to} ({tr.durationSeconds.toFixed(1)}s)
-                </div>
-              ))}
-              {/* Binned transitions */}
-              {transitionEntries.length > 0 && (
-                <>
-                  <div className="text-[10px] text-red-400/60 uppercase tracking-wider mt-2">Deleted</div>
-                  {sortItems(transitionEntries).map((entry) => (
-                    <div key={entry.id} className="px-2 py-1 bg-red-900/20 rounded text-[10px] text-gray-400 cursor-pointer hover:bg-red-900/30" onClick={() => handleRestoreTransition(entry.id)}>
-                      {entry.id}: {entry.from} → {entry.to} — click to restore
+          <div className="flex flex-col h-full">
+            <div className="flex border-b border-gray-800 shrink-0">
+              <button onClick={() => setTrSubTab('active')} className={`flex-1 text-[10px] py-1.5 ${trSubTab === 'active' ? 'text-gray-200 border-b border-orange-500' : 'text-gray-500'}`}>Active ({activeTransitions.length})</button>
+              <button onClick={() => setTrSubTab('bin')} className={`flex-1 text-[10px] py-1.5 ${trSubTab === 'bin' ? 'text-gray-200 border-b border-red-500' : 'text-gray-500'}`}>Bin ({transitionEntries.length})</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {trSubTab === 'active' ? (
+                activeTransitions.length === 0 ? <div className="text-center text-sm text-gray-600 py-4">No transitions</div> : (
+                  <>
+                    <div className="grid grid-cols-2 gap-1">
+                      {sortItems(activeTransitions.filter((tr) => tr.hasSelectedVideo)).map((tr) => (
+                        <PoolVideoCard
+                          key={tr.id}
+                          entry={{ name: `${tr.id} (${tr.from}→${tr.to})`, path: `selected_transitions/${tr.id}_slot_0.mp4`, size: 0 }}
+                          projectName={projectName}
+                          isSelected={false}
+                          onSelect={() => {}}
+                          draggable
+                        />
+                      ))}
                     </div>
-                  ))}
-                </>
+                    {activeTransitions.filter((tr) => !tr.hasSelectedVideo).length > 0 && (
+                      <div className="text-[10px] text-gray-500 uppercase tracking-wider mt-2">No Video</div>
+                    )}
+                    {sortItems(activeTransitions.filter((tr) => !tr.hasSelectedVideo)).map((tr) => (
+                      <div key={tr.id} className="px-2 py-1 bg-gray-800/30 rounded text-[10px] text-gray-500">
+                        {tr.id}: {tr.from} → {tr.to} ({tr.durationSeconds.toFixed(1)}s)
+                      </div>
+                    ))}
+                  </>
+                )
+              ) : (
+                transitionEntries.length === 0 ? <div className="text-center text-sm text-gray-600 py-4">Bin empty</div> : (
+                  <>
+                    {sortItems(transitionEntries).map((entry) => (
+                      <div key={entry.id} className="px-2 py-1 bg-red-900/20 rounded text-[10px] text-gray-400 cursor-pointer hover:bg-red-900/30" onClick={() => handleRestoreTransition(entry.id)}>
+                        {entry.id}: {entry.from} → {entry.to} — click to restore
+                      </div>
+                    ))}
+                  </>
+                )
               )}
             </div>
-          )
+          </div>
         ) : tab === 'candidates' ? (
           unselectedCandidates.length === 0 ? (
             <div className="p-4 text-center text-sm text-gray-600">No unselected candidates</div>
@@ -413,7 +403,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     onMouseLeave={() => onHoverPreview?.(null)}
                   >
                     <img
-                      src={beatlabThumbUrl(projectName, c.path)}
+                      src={beatlabFileUrl(projectName, c.path)}
                       alt={`${c.keyframeId} v${c.variant}`}
                       className="w-full aspect-video object-cover pointer-events-none"
                       loading="lazy"
@@ -433,11 +423,6 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             <div className="p-4 text-center text-sm text-gray-600">Pool is empty</div>
           ) : (
             <div className="space-y-3 p-2">
-              {hoverPreview && (
-                <div className="rounded overflow-hidden border border-gray-700">
-                  <img src={hoverPreview} className="w-full aspect-video object-cover" draggable={false} />
-                </div>
-              )}
               {/* Tag filter */}
               {allPoolTags.length > 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -482,7 +467,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           onMouseLeave={() => onHoverPreview?.(null)}
                         >
                           <img
-                            src={beatlabThumbUrl(projectName, entry.path)}
+                            src={beatlabFileUrl(projectName, entry.path)}
                             alt={entry.name}
                             className="w-full aspect-video object-cover"
                             loading="lazy"
