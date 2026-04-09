@@ -93,6 +93,13 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       setPoolKeyframes(poolData.keyframes || [])
       setPoolSegments(poolData.segments || [])
       setUnselectedCandidates(candData)
+
+      // Background preload thumbnails into IndexedDB
+      const thumbUrls = [
+        ...(poolData.keyframes || []).map((e: PoolEntry) => beatlabThumbUrl(projectName, e.path)),
+        ...(candData || []).map((c: UnselectedCandidate) => beatlabThumbUrl(projectName, c.path)),
+      ]
+      preloadThumbs(thumbUrls)
     } finally {
       setLoading(false)
     }
@@ -524,6 +531,65 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       </div>
     </div>
   )
+}
+
+// Thumbnail cache: memory + IndexedDB, background preloading
+const thumbMemCache = new Map<string, string>() // url → objectURL
+const THUMB_DB = 'beatlab-thumb-cache'
+const THUMB_STORE = 'thumbs'
+
+function openThumbDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(THUMB_DB, 1)
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(THUMB_STORE)) req.result.createObjectStore(THUMB_STORE) }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function getOrFetchThumb(url: string): Promise<string> {
+  if (thumbMemCache.has(url)) return thumbMemCache.get(url)!
+  try {
+    const db = await openThumbDb()
+    const cached: Blob | null = await new Promise((resolve) => {
+      const req = db.transaction(THUMB_STORE, 'readonly').objectStore(THUMB_STORE).get(url)
+      req.onsuccess = () => resolve(req.result ?? null)
+      req.onerror = () => resolve(null)
+    })
+    if (cached) {
+      const blobUrl = URL.createObjectURL(cached)
+      thumbMemCache.set(url, blobUrl)
+      return blobUrl
+    }
+  } catch {}
+  // Network fetch + persist
+  const res = await fetch(url)
+  const blob = await res.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  thumbMemCache.set(url, blobUrl)
+  try { const db = await openThumbDb(); db.transaction(THUMB_STORE, 'readwrite').objectStore(THUMB_STORE).put(blob, url) } catch {}
+  return blobUrl
+}
+
+/** Preload a batch of thumbnail URLs in the background. */
+async function preloadThumbs(urls: string[]) {
+  const BATCH = 20
+  for (let i = 0; i < urls.length; i += BATCH) {
+    await Promise.all(urls.slice(i, i + BATCH).map((u) => getOrFetchThumb(u).catch(() => {})))
+  }
+}
+
+/** Hook: returns a cached blob URL for a thumbnail, fetching if needed. */
+function useCachedThumb(url: string | null): string {
+  const [blobUrl, setBlobUrl] = useState(() => (url && thumbMemCache.get(url)) || '')
+  useEffect(() => {
+    if (!url) { setBlobUrl(''); return }
+    if (thumbMemCache.has(url)) { setBlobUrl(thumbMemCache.get(url)!); return }
+    let cancelled = false
+    getOrFetchThumb(url).then((u) => { if (!cancelled) setBlobUrl(u) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [url])
+  return blobUrl
 }
 
 // Pool blob cache: in-memory + IndexedDB persistence
