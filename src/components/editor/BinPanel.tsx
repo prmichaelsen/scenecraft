@@ -109,6 +109,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
   useEffect(() => { loadBin() }, [loadBin])
 
+
   // Restore scroll position after loading completes and content renders
   useEffect(() => {
     if (loading) return
@@ -212,10 +213,10 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
         <div className="flex items-center gap-1">
           <button
             onClick={() => loadBin()}
-            className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1"
-            title="Refresh bin"
+            className="text-xs text-green-500 hover:text-green-400 transition-colors px-1"
+            title="Refresh bin/pool data"
           >
-            ↻
+            ↻ Refresh
           </button>
           <button
             onClick={onClose}

@@ -566,8 +566,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
         if (l.isAdjustment) {
           // Adjustment layers have no content — they modify the composite below
           contentLayers.push({ frameA: null, frameB: null, blendFactor: 0, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: 'normal', isAdjustment: true, mask: l.mask, transform: l.transform })
-        } else {
-          // Content layer: use frame if available, otherwise render as black (empty kf/tr)
+        } else if (l.frameA) {
           contentLayers.push({ frameA: l.frameA, frameB: l.frameB || l.frameA, blendFactor: l.blendFactor, opacity: l.opacity, red: l.red ?? 1, green: l.green ?? 1, blue: l.blue ?? 1, black: l.black ?? 0, saturation: l.saturation ?? 1, hueShift: l.hueShift ?? 0, invert: l.invert ?? 0, blendMode: l.blendMode, chromaKey: l.chromaKey as never, mask: l.mask, transform: l.transform })
         }
       }
