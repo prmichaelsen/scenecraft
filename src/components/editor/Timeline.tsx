@@ -28,6 +28,7 @@ import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { TimelineSwitcher } from './TimelineSwitcher'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { SettingsPanel } from './SettingsPanel'
+import { LogPanel } from './LogPanel'
 import { AudioDescriptionTrack } from './AudioDescriptionTrack'
 import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
 
@@ -344,6 +345,7 @@ export function Timeline({ data }: { data: EditorData }) {
   const [showSections, setShowSections] = useState(false)
   const [scrollToSectionId, setScrollToSectionId] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
   const [showDownloadPreview, setShowDownloadPreview] = useState(false)
   const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/beatlab-client').AudioDescription | null>(null)
   const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
@@ -902,6 +904,7 @@ export function Timeline({ data }: { data: EditorData }) {
     setShowVersions(false)
     setShowSections(false)
     setShowSettings(false)
+    setShowLogs(false)
     setSelectedAudioDescription(null)
     setShowDownloadPreview(false)
     setSelectedRuleSection(null)
@@ -1798,6 +1801,14 @@ export function Timeline({ data }: { data: EditorData }) {
             Settings
           </button>
 
+          <button
+            onClick={() => { const was = showLogs; closeAllPanels(); if (!was) setShowLogs(true) }}
+            className={`text-xs px-2 py-1 rounded transition-colors ${showLogs ? 'bg-gray-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
+            title="Server logs"
+          >
+            Logs
+          </button>
+
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
           </div>
@@ -2135,6 +2146,8 @@ export function Timeline({ data }: { data: EditorData }) {
           }}
           onClose={() => setShowDownloadPreview(false)}
         />
+      ) : showLogs ? (
+        <LogPanel onClose={() => setShowLogs(false)} />
       ) : showSettings ? (
         <SettingsPanel
           data={data}

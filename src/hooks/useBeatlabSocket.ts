@@ -14,8 +14,23 @@ export type JobMessage =
   | { type: 'job_status'; jobId: string; status: string; completed: number; total: number; result: unknown; error: string | null }
   | { type: 'error'; message: string }
   | { type: 'timeline_warning'; route: string; warnings: string[] }
+  | { type: 'log'; message: string; timestamp: string; level?: string }
 
 type JobListener = (msg: JobMessage) => void
+
+// ── Server log store ────────────────────────────────────────────────
+const MAX_LOGS = 500
+const _logs: { message: string; timestamp: string; level: string }[] = []
+const _logSubscribers = new Set<() => void>()
+
+export function getServerLogs() { return _logs }
+export function subscribeToLogs(cb: () => void) {
+  _logSubscribers.add(cb)
+  return () => { _logSubscribers.delete(cb) }
+}
+export function useServerLogs() {
+  return useSyncExternalStore(subscribeToLogs, () => _logs, () => _logs)
+}
 
 // ── Module-level singleton ──────────────────────────────────────────
 
@@ -35,6 +50,12 @@ function setConnected(value: boolean) {
 }
 
 function routeMessage(msg: JobMessage) {
+  // Capture log messages
+  if (msg.type === 'log') {
+    _logs.push({ message: msg.message, timestamp: msg.timestamp, level: msg.level || 'info' })
+    if (_logs.length > MAX_LOGS) _logs.splice(0, _logs.length - MAX_LOGS)
+    for (const cb of _logSubscribers) cb()
+  }
   // Notify global listeners
   for (const listener of globalListeners) {
     listener(msg)

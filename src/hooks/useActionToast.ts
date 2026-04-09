@@ -1,4 +1,4 @@
-import { useToast } from '@prmichaelsen/pretty-toasts/standalone'
+import { useToast } from './useToast'
 
 interface ToastConfig {
   title: string
@@ -22,10 +22,15 @@ export function useActionToast() {
       success({ title: options.success.title, message: options.success.message })
       return result
     } catch (err) {
+      const requestId = `req_${Date.now().toString(36)}`
+      const stack = err instanceof Error ? err.stack || err.message : String(err)
       error({
         title: options.error.title,
-        message: options.error.message ?? (err instanceof Error ? err.message : 'Unknown error'),
+        message: `${options.error.message ?? (err instanceof Error ? err.message : 'Unknown error')} [${requestId}]`,
       })
+      if (typeof window !== 'undefined') {
+        ;(window as unknown as Record<string, unknown>).__lastError = { requestId, stack, message: options.error.message, timestamp: new Date().toISOString() }
+      }
       return undefined
     }
   }

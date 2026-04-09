@@ -1,4 +1,5 @@
 import { HeadContent, Scripts, createRootRoute, Outlet } from '@tanstack/react-router'
+import { ToastProvider, StandaloneToastContainer } from '@prmichaelsen/pretty-toasts/standalone'
 import appCss from '../styles.css?url'
 
 export const Route = createRootRoute({
@@ -35,7 +36,12 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="bg-gray-950 text-gray-100 min-h-screen">
-        {children}
+        <ToastProvider>
+          {children}
+          <div className="relative z-[60]">
+            <StandaloneToastContainer />
+          </div>
+        </ToastProvider>
         <Scripts />
       </body>
     </html>
