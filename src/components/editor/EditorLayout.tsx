@@ -103,47 +103,60 @@ const components = {
 
 function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   // Layout:
-  // +------------------------------+-----------+-----------+
-  // |                              | Properties| Sections  |
-  // |     Timeline (preview +      | (top)     |           |
-  // |      tracks, ~65% width)     |           |           |
-  // |                              |-----------+-----------|
-  // |                              | Bin/Logs  | Chat      |
-  // +------------------------------+-----------+-----------+
-  //         flex                     280px        200px
+  // [Left]  +------------------------------+-----------+-----------+
+  // [hidden]|                              | Properties| Sections  |
+  //         |     Timeline (flex)           |  (400px)  |  (240px)  |
+  //         |                              |           |-----------|
+  //         |                              |-----------| Chat      |
+  //         |                              | Bin/Logs  |           |
+  //         +------------------------------+-----------+-----------+
+  //
+  // Build right-to-left using addGroup to avoid insertion ordering issues.
 
-  // Col 1: Left sidebar (starts collapsed)
+  // Step 1: Create groups right-to-left
+
+  // Col 4: Right sidebar (full height, 240px)
+  const rightSidebarGroup = api.addGroup({ direction: 'right' })
+
+  // Col 3: Properties column (400px) — to the left of right sidebar
+  const propsGroup = api.addGroup({
+    referenceGroup: rightSidebarGroup,
+    direction: 'left',
+  })
+
+  // Step 2: Add panels to groups
+
+  // Col 1: Left sidebar (starts hidden)
+  const leftGroup = api.addGroup({ direction: 'left' })
   api.addPanel({
     id: 'leftSidebar',
     component: 'placeholder',
     title: 'Explorer',
     params: { label: '' },
-    initialWidth: 200,
+    position: { referenceGroup: leftGroup },
   })
-  // Collapse it immediately — group.api.setSize sets width to 0
-  const leftPanel = api.getPanel('leftSidebar')
-  if (leftPanel) leftPanel.api.setSize({ width: 0 })
+  leftGroup.api.setVisible(false)
 
-  // Col 2: Center — the existing Timeline (preview + tracks)
+  // Col 2: Timeline — goes into the remaining center space (left of props)
   api.addPanel({
     id: 'timeline',
     component: 'timeline',
     title: 'Timeline',
     params: { data },
-    position: { referencePanel: 'leftSidebar', direction: 'right' },
+    position: { referenceGroup: propsGroup, direction: 'left' },
   })
 
-  // Col 3: Properties top — Settings for now (KF/TR/ColorGrade later)
+  // Col 3 top: Properties (Settings placeholder for KF/TR/ColorGrade)
   api.addPanel({
     id: 'properties',
     component: 'settings',
     title: 'Properties',
     params: { data },
-    position: { referencePanel: 'timeline', direction: 'right' },
+    position: { referenceGroup: propsGroup },
     initialWidth: 400,
   })
 
-  // Col 3 bottom: Bin (active tab) + Logs, Checkpoints, Versions as tabs
+  // Col 3 bottom: Bin + Logs/Checkpoints/Versions as tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
@@ -175,16 +188,17 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
-  // Col 4: Right sidebar — full height, Sections on top, Chat below (split inside sidebar)
+  // Col 4 top: Sections
   api.addPanel({
     id: 'sections',
     component: 'sections',
     title: 'Sections',
     params: { data },
-    position: { referencePanel: 'timeline', direction: 'right' },
+    position: { referenceGroup: rightSidebarGroup },
     initialWidth: 240,
   })
 
+  // Col 4 bottom: Chat (split inside right sidebar)
   api.addPanel({
     id: 'chat',
     component: 'placeholder',
