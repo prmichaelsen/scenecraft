@@ -254,7 +254,7 @@ export function WorkspaceMenu({ onReset }: { onReset: () => void }) {
           <div className="px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider">View</div>
           <button
             className="w-full text-left px-3 py-1.5 text-xs text-blue-400 hover:bg-gray-700"
-            onClick={() => { setOpen(false) }}
+            onClick={() => { onReset(); setOpen(false) }}
           >
             Default
           </button>
@@ -263,14 +263,7 @@ export function WorkspaceMenu({ onReset }: { onReset: () => void }) {
             className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200"
             onClick={() => { setOpen(false) }}
           >
-            Save Workspace View...
-          </button>
-          <div className="border-t border-gray-700 my-1" />
-          <button
-            className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200"
-            onClick={() => { onReset(); setOpen(false) }}
-          >
-            Reset to Default
+            Save Workspace View
           </button>
         </div>
       )}
