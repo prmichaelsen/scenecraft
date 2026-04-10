@@ -1722,14 +1722,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 await postUpdateTransitionStyle(data.projectName, trId, { maskCenterX: cx, maskCenterY: cy } as never)
               }}
             />
-            {/* Transform mode toggle */}
-            <button
-              onClick={() => setTransformMode((p) => !p)}
-              className={`absolute top-2 right-2 z-30 text-[10px] px-1.5 py-0.5 rounded ${transformMode ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50' : 'bg-gray-800/70 text-gray-400 hover:text-gray-300 border border-transparent'}`}
-              title="Toggle transform mode (T)"
-            >
-              {transformMode ? 'Transform ON' : 'T'}
-            </button>
           </div>
         </div>
 
@@ -1779,6 +1771,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             title="Center timeline on playhead"
           >
             ◎
+          </button>
+
+          {/* Transform mode toggle */}
+          <button
+            onClick={() => setTransformMode((p) => !p)}
+            className={`text-xs px-2 py-1 rounded transition-colors font-serif ${transformMode ? 'bg-blue-500/20 text-blue-300 border border-dashed border-blue-500/60' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 border border-dashed border-gray-600'}`}
+            title="Toggle transform mode (T)"
+          >
+            T
           </button>
 
           {/* Add keyframe at playhead */}
