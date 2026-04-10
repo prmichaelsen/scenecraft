@@ -2446,6 +2446,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           onDataChange={() => refreshTimeline()}
           audioDescriptions={aiAudioDescriptions}
           audioEvents={aiAudioEvents}
+          initialPromptRoster={data.promptRoster}
         />
       ) : selectedTransition ? (
         <TransitionPanel
@@ -2453,6 +2454,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           transition={selectedTransition}
           projectName={data.projectName}
           motionPrompt={data.meta.motionPrompt}
+          initialPromptRoster={data.promptRoster}
           audioDescriptions={aiAudioDescriptions}
           keyframes={keyframes}
           currentTime={currentTime}

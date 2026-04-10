@@ -28,9 +28,10 @@ type KeyframePanelProps = {
   onDataChange: () => void
   audioDescriptions?: AudioDescription[]
   audioEvents?: AudioEvent[]
+  initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[]
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onUnlink, onDataChange, audioDescriptions, audioEvents }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onUnlink, onDataChange, audioDescriptions, audioEvents, initialPromptRoster }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -194,7 +195,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto">
           {tab === 'details' ? (
-            <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} />
+            <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} initialPromptRoster={initialPromptRoster} />
           ) : tab === 'candidates' ? (
             <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           ) : tab === 'browse' ? (
@@ -208,9 +209,10 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
   )
 }
 
-function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataChange }: { kf: KeyframeWithTime; projectName: string; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; onDataChange: () => void }) {
+function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataChange, initialPromptRoster }: { kf: KeyframeWithTime; projectName: string; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; onDataChange: () => void; initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[] }) {
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptText, setPromptText] = useState(kf.prompt)
+  const [promptRoster, setPromptRoster] = useState<import('@/lib/beatlab-client').PromptRosterEntry[]>(initialPromptRoster || [])
   const [saving, setSaving] = useState(false)
   const [hasImage, setHasImage] = useState(kf.hasSelectedImage)
   const [generating, setGenerating] = useState(false)
@@ -448,6 +450,44 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
           </div>
           {editingPrompt ? (
             <div className="space-y-1">
+              {/* Prompt roster selector */}
+              <div className="flex items-center gap-1">
+                <select
+                  className="flex-1 bg-gray-800 text-[10px] text-gray-400 border border-gray-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-500"
+                  value=""
+                  onChange={(e) => {
+                    const entry = promptRoster.find((p) => p.id === e.target.value)
+                    if (entry) setPromptText(entry.template)
+                  }}
+                >
+                  <option value="">Insert from roster...</option>
+                  {Object.entries(
+                    promptRoster.reduce<Record<string, typeof promptRoster>>((acc, p) => {
+                      (acc[p.category] = acc[p.category] || []).push(p)
+                      return acc
+                    }, {})
+                  ).map(([cat, entries]) => (
+                    <optgroup key={cat} label={cat}>
+                      {entries.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                <button
+                  onClick={async () => {
+                    if (!promptText.trim()) { alert('Write a prompt first, then save it to the roster.'); return }
+                    const name = prompt('Name for this prompt template:')
+                    if (!name) return
+                    const category = prompt('Category (e.g., general, style, composition):', 'general') || 'general'
+                    const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+                    await postAddPromptRoster(projectName, name, promptText, category)
+                    setPromptRoster(await fetchPromptRoster(projectName))
+                  }}
+                  className="text-[9px] text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                  title="Save current prompt to roster"
+                >
+                  + Save
+                </button>
+              </div>
               <textarea
                 ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
                 value={promptText}

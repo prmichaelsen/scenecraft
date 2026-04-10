@@ -35,6 +35,7 @@ import {
   type BeatSuppression,
   type AudioDescription,
   fetchDescriptions,
+  fetchPromptRoster,
 } from '@/lib/beatlab-client'
 import {
   fetchNarrative,
@@ -159,13 +160,14 @@ export type EditorData = {
   audioDescriptions: AudioDescription[]
   tracks: import('@/lib/beatlab-client').Track[]
   audioOnsets: Record<string, Record<string, { time: number; strength: number }[]>>
+  promptRoster: import('@/lib/beatlab-client').PromptRosterEntry[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
     // Split: heavy AI data is cached client-side, only light data refetched on invalidate
-    const [kfData, beatsData, effectsData, narrativeData, timelineData, settingsData, descriptionsData] = await Promise.all([
+    const [kfData, beatsData, effectsData, narrativeData, timelineData, settingsData, descriptionsData, promptRosterData] = await Promise.all([
       fetchKeyframes(data.name).catch((e) => { console.error('[editor] fetchKeyframes failed:', e); return { meta: null, keyframes: [], transitions: [], audioFile: null } }),
       fetchBeats(data.name).catch((e) => { console.error('[editor] fetchBeats failed:', e); return { beats: [], sections: [] } }),
       fetchEffects(data.name).catch((e) => { console.error('[editor] fetchEffects failed:', e); return { effects: [], suppressions: [] } }),
@@ -173,6 +175,7 @@ const getEditorData = createServerFn({ method: 'GET' })
       fetchTimelines(data.name).catch(() => null),
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
       fetchDescriptions(data.name).catch(() => [] as AudioDescription[]),
+      fetchPromptRoster(data.name).catch(() => [] as import('@/lib/beatlab-client').PromptRosterEntry[]),
     ])
     // AI data placeholder — loaded separately on client to avoid refetching 5MB on every invalidate
     const aiData = { activeFile: null as string | null, events: [] as AudioEvent[], sections: [] as { start_time: number; end_time: number; type: string; label: string; description: string }[], rules: [] as import('@/lib/beatlab-client').AudioRule[], ruleCount: 0, onsets: {} as Record<string, Record<string, { time: number; strength: number }[]>> }
@@ -299,6 +302,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         chromaKey: t.chromaKey as import('@/lib/beatlab-client').ChromaKeyConfig | undefined,
         hidden: !!t.hidden,
       })),
+      promptRoster: promptRosterData,
     }
   })
 

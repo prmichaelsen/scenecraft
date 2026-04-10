@@ -35,6 +35,7 @@ type TransitionPanelProps = {
   onDuplicateToPrev: () => void
   onDataChange: () => void
   onHoverPreview?: (url: string | null) => void
+  initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[]
 }
 
 export function TransitionPanel({
@@ -50,6 +51,7 @@ export function TransitionPanel({
   onDuplicateToPrev,
   onDataChange,
   onHoverPreview,
+  initialPromptRoster,
 }: TransitionPanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
@@ -439,15 +441,7 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
   const [useSectionDesc, setUseSectionDesc] = useState(transition.includeSectionDesc ?? !!sectionDescription)
   const [saving, setSaving] = useState(false)
-  const [promptRoster, setPromptRoster] = useState<import('@/lib/beatlab-client').PromptRosterEntry[]>([])
-  const [showRosterEditor, setShowRosterEditor] = useState(false)
-
-  // Load prompt roster
-  useEffect(() => {
-    import('@/lib/beatlab-client').then(({ fetchPromptRoster }) => {
-      fetchPromptRoster(projectName).then(setPromptRoster)
-    })
-  }, [projectName])
+  const [promptRoster, setPromptRoster] = useState<import('@/lib/beatlab-client').PromptRosterEntry[]>(initialPromptRoster || [])
 
   useEffect(() => {
     setAction(transition.action)
