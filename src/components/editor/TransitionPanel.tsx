@@ -803,6 +803,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
   })
   const COUNT_OPTIONS = [1, 2, 3, 4] as const
   const [generationCount, setGenerationCount] = useState<number>(4)
+  const [endFrameMode, setEndFrameMode] = useState<'keyframe' | 'next-tr' | 'none'>('keyframe')
 
   useEffect(() => {
     setCandidates(transition.candidates)
@@ -835,7 +836,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
 
     try {
       const result = await generateTransitionCandidates({
-        data: { projectName, transitionId: transition.id, count: generationCount, duration: generationDuration },
+        data: { projectName, transitionId: transition.id, count: generationCount, duration: generationDuration, ...(endFrameMode === 'next-tr' && { useNextTransitionFrame: true }), ...(endFrameMode === 'none' && { noEndFrame: true }) },
       })
       console.log('[TransitionPanel] generate result:', result)
 
@@ -852,7 +853,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
       console.error('Generate transition candidates failed:', e)
       alert(`Failed to generate: ${e}`)
     }
-  }, [projectName, transition, jobCtx, entityKey, generationCount, generationDuration])
+  }, [projectName, transition, jobCtx, entityKey, generationCount, generationDuration, endFrameMode])
 
   const handleSelect = useCallback(async (variantIndex: number) => {
     setSelecting(true)
@@ -912,6 +913,22 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* End frame mode */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">End</span>
+        <div className="flex gap-0.5 flex-1">
+          {([['keyframe', 'Keyframe'], ['next-tr', 'Next Tr'], ['none', 'None']] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => setEndFrameMode(mode)}
+              className={`flex-1 text-[10px] py-1 rounded transition-colors ${endFrameMode === mode ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 

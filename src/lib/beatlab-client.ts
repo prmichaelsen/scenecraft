@@ -533,11 +533,11 @@ export async function postUpdateMeta(project: string, fields: Record<string, str
   return res.json()
 }
 
-export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number, duration?: number) {
+export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number, duration?: number, useNextTransitionFrame?: boolean, noEndFrame?: boolean) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }) }),
+    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }), ...(useNextTransitionFrame && { useNextTransitionFrame: true }), ...(noEndFrame && { noEndFrame: true }) }),
   })
   return res.json() as Promise<{ jobId: string; transitionId: string; candidates?: Record<string, string[]> }>
 }

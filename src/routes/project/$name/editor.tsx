@@ -588,11 +588,11 @@ export const selectTransitions = createServerFn({ method: 'POST' })
   })
 
 export const generateTransitionCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number; duration?: number }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number; duration?: number; useNextTransitionFrame?: boolean; noEndFrame?: boolean }) => input)
   .handler(async ({ data }) => {
-    console.log('[serverFn] generateTransitionCandidates:', data.projectName, data.transitionId, data.count, 'duration:', data.duration)
+    console.log('[serverFn] generateTransitionCandidates:', data.projectName, data.transitionId, data.count, 'duration:', data.duration, 'useNextTrFrame:', data.useNextTransitionFrame, 'noEndFrame:', data.noEndFrame)
     try {
-      const result = await postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex, data.duration)
+      const result = await postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex, data.duration, data.useNextTransitionFrame, data.noEndFrame)
       console.log('[serverFn] generateTransitionCandidates result:', JSON.stringify(result).slice(0, 200))
       return result
     } catch (e) {

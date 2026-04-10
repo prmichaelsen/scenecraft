@@ -151,11 +151,28 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
   const [sortBy, setSortBy] = useState<'timeline' | 'recent' | 'oldest'>('timeline')
 
+  const parseTs = (ts: string) => {
+    const parts = ts.split(':')
+    if (parts.length === 2) return parseInt(parts[0], 10) * 60 + parseFloat(parts[1])
+    return parseFloat(ts) || 0
+  }
   const idNum = (id: string) => parseInt(id.replace(/\D/g, '') || '0', 10)
+  // Build a map from keyframe ID to timeline position for transition sorting
+  const kfTimeMap = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const kf of activeKeyframes) m.set(kf.id, parseTs(kf.timestamp))
+    for (const kf of keyframeEntries) m.set(kf.id, parseTs(kf.timestamp))
+    return m
+  }, [activeKeyframes, keyframeEntries])
   const sortItems = <T extends { id: string }>(items: T[]) => {
     if (sortBy === 'recent') return [...items].sort((a, b) => idNum(b.id) - idNum(a.id))
     if (sortBy === 'oldest') return [...items].sort((a, b) => idNum(a.id) - idNum(b.id))
-    return items
+    // Timeline sort: by timestamp for keyframes, by from-kf timestamp for transitions
+    return [...items].sort((a, b) => {
+      const aTs = 'timestamp' in a ? parseTs((a as { timestamp: string }).timestamp) : ('from' in a ? (kfTimeMap.get((a as { from: string }).from) ?? 0) : 0)
+      const bTs = 'timestamp' in b ? parseTs((b as { timestamp: string }).timestamp) : ('from' in b ? (kfTimeMap.get((b as { from: string }).from) ?? 0) : 0)
+      return aTs - bTs
+    })
   }
   const sortByName = <T extends { name: string }>(items: T[]) => {
     if (sortBy === 'recent') return [...items].sort((a, b) => b.name.localeCompare(a.name))
