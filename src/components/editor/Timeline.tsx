@@ -2240,6 +2240,12 @@ export function Timeline({ data }: { data: EditorData }) {
           onSeek={(time) => {
             if (seekFnRef.current) seekFnRef.current(time)
             else setCurrentTime(time)
+            // Scroll timeline to show the playhead
+            if (scrollRef.current) {
+              const x = time * pxPerSec
+              const vw = scrollRef.current.clientWidth
+              scrollRef.current.scrollLeft = Math.max(0, x - vw / 3)
+            }
           }}
           onSectionsChange={() => router.invalidate()}
           currentTime={currentTime}
