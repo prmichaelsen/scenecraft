@@ -450,6 +450,39 @@ export async function postRemoveMarker(project: string, id: string) {
   })
 }
 
+// Prompt Roster
+
+export type PromptRosterEntry = { id: string; name: string; template: string; category: string }
+
+export async function fetchPromptRoster(project: string): Promise<PromptRosterEntry[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster`)
+  if (!res.ok) return []
+  const data = await res.json() as { prompts: PromptRosterEntry[] }
+  return data.prompts
+}
+
+export async function postAddPromptRoster(project: string, name: string, template: string, category: string = 'general') {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/add`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, template, category }),
+  })
+  return res.json() as Promise<{ success: boolean; id: string }>
+}
+
+export async function postUpdatePromptRoster(project: string, id: string, updates: { name?: string; template?: string; category?: string }) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/update`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...updates }),
+  })
+}
+
+export async function postRemovePromptRoster(project: string, id: string) {
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/remove`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+}
+
 export async function fetchStagingCandidates(project: string, stagingId: string): Promise<string[]> {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/staging/${encodeURIComponent(stagingId)}`)
   if (!res.ok) return []

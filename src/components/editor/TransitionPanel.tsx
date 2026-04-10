@@ -442,6 +442,15 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
   const [useSectionDesc, setUseSectionDesc] = useState(transition.includeSectionDesc ?? !!sectionDescription)
   const [saving, setSaving] = useState(false)
+  const [promptRoster, setPromptRoster] = useState<import('@/lib/beatlab-client').PromptRosterEntry[]>([])
+  const [showRosterEditor, setShowRosterEditor] = useState(false)
+
+  // Load prompt roster
+  useEffect(() => {
+    import('@/lib/beatlab-client').then(({ fetchPromptRoster }) => {
+      fetchPromptRoster(projectName).then(setPromptRoster)
+    })
+  }, [projectName])
 
   useEffect(() => {
     setAction(transition.action)
@@ -540,6 +549,45 @@ function ActionPromptEditor({ transition, projectName, sectionDescription }: { t
             {generating ? 'Generating...' : action ? 'Regenerate' : 'Generate'}
           </button>
         </div>
+      </div>
+
+      {/* Prompt roster selector */}
+      <div className="flex items-center gap-1">
+        <select
+          className="flex-1 bg-gray-800 text-[10px] text-gray-400 border border-gray-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-orange-500"
+          value=""
+          onChange={(e) => {
+            const entry = promptRoster.find((p) => p.id === e.target.value)
+            if (entry) setAction(entry.template)
+          }}
+        >
+          <option value="">Insert from roster...</option>
+          {Object.entries(
+            promptRoster.reduce<Record<string, typeof promptRoster>>((acc, p) => {
+              (acc[p.category] = acc[p.category] || []).push(p)
+              return acc
+            }, {})
+          ).map(([cat, entries]) => (
+            <optgroup key={cat} label={cat}>
+              {entries.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <button
+          onClick={async () => {
+            if (!action.trim()) { alert('Write a prompt first, then save it to the roster.'); return }
+            const name = prompt('Name for this prompt template:')
+            if (!name) return
+            const category = prompt('Category (e.g., general, camera, style):', 'general') || 'general'
+            const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+            await postAddPromptRoster(projectName, name, action, category)
+            setPromptRoster(await fetchPromptRoster(projectName))
+          }}
+          className="text-[9px] text-orange-400 hover:text-orange-300 whitespace-nowrap"
+          title="Save current prompt to roster"
+        >
+          + Save
+        </button>
       </div>
 
       <textarea
