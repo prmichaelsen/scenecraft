@@ -173,6 +173,7 @@ All beatlab REST endpoints exposed as Claude tools. Generic parameterized tools 
 **Generic tools:**
 - `update_curve` — `{ transition_id, curve_type: "opacity"|"saturation"|"red"|"green"|"blue"|"hue_shift"|"invert"|"black", points: [[x,y]...] }`
 - `update_transform_curve` — `{ transition_id, axis: "x"|"y"|"z", points: [[x,y]...] }`
+- `sql_query` — `{ sql: "SELECT ..." }` — execute arbitrary read-only SQL against project.db. The assistant can craft its own queries for ad-hoc analysis (e.g., "find transitions longer than 5 seconds", "count keyframes per section", "list effects with intensity > 0.9"). Enforced read-only: rejects any statement that isn't SELECT. Returns rows as JSON array.
 
 **Endpoint tools (auto-generated from REST API):**
 - `get_keyframes`, `add_keyframe`, `delete_keyframe`, `update_keyframe_prompt`, `update_keyframe_timestamp`
