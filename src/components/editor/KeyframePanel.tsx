@@ -508,7 +508,24 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                 className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none leading-relaxed overflow-hidden"
                 disabled={saving}
               />
-              <div className="text-[9px] text-gray-600">Ctrl+Enter to save, Esc to cancel</div>
+              <div className="flex items-center justify-between text-[9px] text-gray-600">
+                <span>Ctrl+Enter to save, Esc to cancel</span>
+                {promptText && (
+                  <button
+                    onClick={async () => {
+                      const name = window.prompt('Save prompt as:', promptText.slice(0, 40))
+                      if (!name) return
+                      const category = window.prompt('Category:', 'general') || 'general'
+                      const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+                      await postAddPromptRoster(projectName, name, promptText, category)
+                      setPromptRoster(await fetchPromptRoster(projectName))
+                    }}
+                    className="text-blue-400 hover:text-blue-300"
+                  >
+                    Save to roster
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div
