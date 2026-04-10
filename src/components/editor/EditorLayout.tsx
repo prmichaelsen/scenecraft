@@ -162,6 +162,7 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     id: 'logs',
     component: 'logs',
     title: 'Logs',
+    inactive: true,
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
@@ -170,6 +171,7 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     component: 'checkpoints',
     title: 'Checkpoints',
     params: { projectName: data.projectName },
+    inactive: true,
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
@@ -178,6 +180,7 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     component: 'settings',
     title: 'Settings',
     params: { data },
+    inactive: true,
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
