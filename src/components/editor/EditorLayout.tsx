@@ -123,7 +123,7 @@ const ADDABLE_PANELS = [
 
 // Track collapsed state + saved widths per group
 const collapsedState = new Map<string, { width: number; height: number }>()
-const COLLAPSED_SIZE = 40
+const COLLAPSED_SIZE = 34
 
 function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
   const [open, setOpen] = useState(false)

@@ -1,54 +1,53 @@
-/* VS Code Dark+ theme for dockview */
+/* Beatlab dark theme for dockview (matches gray-900/gray-800 editor) */
 
 .dv-dockview {
-  /* Core backgrounds */
-  --dv-background-color: #1e1e1e;
-  --dv-paneview-header-border-color: #1e1e1e;
-  --dv-separator-border: #1e1e1e;
+  /* Core backgrounds — match editor bg-gray-900 */
+  --dv-background-color: #111827;
+  --dv-paneview-header-border-color: #111827;
+  --dv-separator-border: #1f2937;
 
-  /* Tab bar background */
-  --dv-tabs-and-actions-container-background-color: #252526;
+  /* Tab bar background — gray-900 */
+  --dv-tabs-and-actions-container-background-color: #111827;
 
-  /* Active group, visible tab (selected) */
-  --dv-activegroup-visiblepanel-tab-background-color: #1e1e1e;
-  --dv-activegroup-visiblepanel-tab-color: #cccccc;
+  /* Active group, visible tab (selected) — slightly lighter */
+  --dv-activegroup-visiblepanel-tab-background-color: #1f2937;
+  --dv-activegroup-visiblepanel-tab-color: #d1d5db;
 
   /* Active group, hidden tab (unselected) */
-  --dv-activegroup-hiddenpanel-tab-background-color: #2d2d2d;
-  --dv-activegroup-hiddenpanel-tab-color: #969696;
+  --dv-activegroup-hiddenpanel-tab-background-color: #111827;
+  --dv-activegroup-hiddenpanel-tab-color: #6b7280;
 
   /* Inactive group, visible tab */
-  --dv-inactivegroup-visiblepanel-tab-background-color: #1e1e1e;
-  --dv-inactivegroup-visiblepanel-tab-color: #969696;
+  --dv-inactivegroup-visiblepanel-tab-background-color: #1f2937;
+  --dv-inactivegroup-visiblepanel-tab-color: #9ca3af;
 
   /* Inactive group, hidden tab */
-  --dv-inactivegroup-hiddenpanel-tab-background-color: #2d2d2d;
-  --dv-inactivegroup-hiddenpanel-tab-color: #969696;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #111827;
+  --dv-inactivegroup-hiddenpanel-tab-color: #6b7280;
 
-  /* No divider between tabs (VS Code style) */
+  /* No divider between tabs */
   --dv-tab-divider-color: transparent;
 
   /* Drag overlay */
-  --dv-drag-over-background-color: rgba(83, 89, 93, 0.5);
-  --dv-drag-over-border-color: #007acc;
+  --dv-drag-over-background-color: rgba(59, 130, 246, 0.15);
+  --dv-drag-over-border-color: #3b82f6;
 }
 
 /* --- Tab styling --- */
 
-/* Tab base — compact like VS Code */
 .dv-dockview .dv-default-tab {
   padding: 0 10px;
   font-size: 13px;
   height: 35px;
-  border-right: 1px solid #252526;
+  border-right: 1px solid #1f2937;
 }
 
-/* Active tab bottom highlight (VS Code blue underline) */
+/* Active tab bottom highlight (blue underline) */
 .dv-dockview .dv-active-group .dv-active-tab .dv-default-tab {
-  box-shadow: inset 0 -1px 0 0 #007acc;
+  box-shadow: inset 0 -1px 0 0 #3b82f6;
 }
 
-/* --- Close button (always visible, VS Code size) --- */
+/* --- Close button (always visible) --- */
 
 .dv-dockview .dv-default-tab-action {
   width: 16px;
@@ -76,14 +75,14 @@
 }
 
 .dv-dockview .dv-sash:hover {
-  background: #007acc;
+  background: #3b82f6;
   transition: background 0.15s 0.15s;
 }
 
 /* --- Panel content area --- */
 
 .dv-dockview .dv-content-container {
-  background: #1e1e1e;
+  background: #111827;
 }
 
 /* --- Group header actions (collapse + ellipsis) --- */
@@ -99,6 +98,7 @@
 
 .dv-dockview .dv-groupview-header-left .dv-tabs-container {
   gap: 0;
+  background: #111827;
 }
 
 .dv-dockview .dv-groupview-header-left .dv-default-tab {
@@ -109,8 +109,9 @@
   width: 100%;
   font-size: 11px;
   border-right: none;
-  border-bottom: 1px solid #252526;
+  border-bottom: 1px solid #1f2937;
   justify-content: flex-start;
+  background: #111827;
 }
 
 .dv-dockview .dv-groupview-header-left .dv-default-tab-action {
@@ -118,7 +119,8 @@
 }
 
 .dv-dockview .dv-groupview-header-left .dv-active-tab .dv-default-tab {
-  box-shadow: inset -1px 0 0 0 #007acc;
+  box-shadow: inset -1px 0 0 0 #3b82f6;
+  background: #1f2937;
 }
 
 .dv-dockview .dv-groupview-header-left .dv-right-actions-container {
@@ -130,9 +132,13 @@
   display: none !important;
 }
 
-/* Ensure the vertical header fills the group */
-.dv-dockview .dv-groupview-header-left .dv-groupview {
-  overflow: hidden;
+/* Ensure no black gap — collapsed group background matches theme */
+.dv-dockview .dv-groupview-header-left {
+  background: #111827;
+}
+
+.dv-dockview .dv-groupview-header-left .dv-tabs-and-actions-container {
+  background: #111827;
 }
 
 /* --- Scrollbar --- */
