@@ -151,23 +151,24 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referenceGroup: propsGroup, direction: 'left' },
   })
 
-  // Col 3 top: Properties placeholder (KF/TR/ColorGrade tabs in future)
-  api.addPanel({
-    id: 'properties',
-    component: 'placeholder',
-    title: 'Properties',
-    params: { label: 'Select a keyframe or transition' },
-    position: { referenceGroup: propsGroup },
-    initialWidth: 320,
-  })
-
-  // Col 3 bottom: Bin + Logs/Checkpoints/Versions/Settings as tabs
+  // Col 3: Single tab group (full height — no vertical split, max space for timeline)
+  // Bin default, Properties/Logs/Checkpoints/Settings as inactive tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
     title: 'Bin',
     params: { data },
-    position: { referencePanel: 'properties', direction: 'below' },
+    position: { referenceGroup: propsGroup },
+    initialWidth: 320,
+  })
+
+  api.addPanel({
+    id: 'properties',
+    component: 'placeholder',
+    title: 'Properties',
+    params: { label: 'Select a keyframe or transition' },
+    inactive: true,
+    position: { referencePanel: 'bin', direction: 'within' },
   })
 
   api.addPanel({
