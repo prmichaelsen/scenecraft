@@ -121,18 +121,49 @@ const ADDABLE_PANELS = [
   { id: 'properties', component: 'placeholder', title: 'Properties' },
 ] as const
 
+// Track collapsed state + saved widths per group
+const collapsedGroups = new Map<string, number>()
+const COLLAPSED_WIDTH = 36
+
 function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
   const [open, setOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+
+  const toggleCollapse = () => {
+    if (collapsed) {
+      // Expand: restore header and width
+      group.api.setHeaderPosition('top')
+      const savedWidth = collapsedGroups.get(group.id) || 320
+      collapsedGroups.delete(group.id)
+      group.api.setSize({ width: savedWidth })
+      setCollapsed(false)
+    } else {
+      // Collapse: save width, switch to vertical headers, shrink
+      collapsedGroups.set(group.id, group.api.width)
+      group.api.setHeaderPosition('left')
+      group.api.setSize({ width: COLLAPSED_WIDTH })
+      setCollapsed(true)
+    }
+  }
 
   return (
-    <div className="relative flex items-center pr-1">
+    <div className="relative flex items-center pr-1 gap-0.5">
       <button
-        onClick={() => setOpen(!open)}
-        className="text-gray-500 hover:text-gray-300 text-xs px-1 leading-none"
-        title="Add panel"
+        onClick={toggleCollapse}
+        className="text-gray-500 hover:text-gray-300 text-[10px] px-1 leading-none"
+        title={collapsed ? 'Expand panel' : 'Collapse panel'}
       >
-        &#x22EE;
+        {collapsed ? '▶' : '◀'}
       </button>
+      {!collapsed && (
+        <button
+          onClick={() => setOpen(!open)}
+          className="text-gray-500 hover:text-gray-300 text-xs px-1 leading-none"
+          title="Add panel"
+        >
+          &#x22EE;
+        </button>
+      )}
       {open && (
         <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-xl z-50 min-w-[140px] py-1">
           {ADDABLE_PANELS.map((p) => {

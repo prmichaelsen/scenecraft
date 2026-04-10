@@ -92,6 +92,36 @@
   padding-right: 4px;
 }
 
+/* --- Collapsed vertical header (sideways tabs) --- */
+
+.dv-dockview .dv-groupview-header-left .dv-tabs-container {
+  gap: 0;
+}
+
+.dv-dockview .dv-groupview-header-left .dv-default-tab {
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  padding: 8px 4px;
+  height: auto;
+  width: 100%;
+  font-size: 11px;
+  border-right: none;
+  border-bottom: 1px solid #252526;
+  justify-content: flex-start;
+}
+
+.dv-dockview .dv-groupview-header-left .dv-default-tab-action {
+  display: none;
+}
+
+.dv-dockview .dv-groupview-header-left .dv-active-tab .dv-default-tab {
+  box-shadow: inset -1px 0 0 0 #007acc;
+}
+
+.dv-dockview .dv-groupview-header-left .dv-right-actions-container {
+  padding: 2px 0;
+}
+
 /* --- Scrollbar --- */
 
 .dv-dockview .dv-scrollbar {
