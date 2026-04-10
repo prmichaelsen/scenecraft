@@ -107,11 +107,6 @@ function CustomTab(props: IDockviewPanelHeaderProps) {
     <DockviewDefaultTab
       {...props}
       hideClose={isManaged}
-      closeActionOverride={isManaged ? undefined : () => {
-        if (confirm(`Remove "${props.api.title}" panel?`)) {
-          props.api.close()
-        }
-      }}
     />
   )
 }
