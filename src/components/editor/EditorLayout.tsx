@@ -6,7 +6,6 @@ import type { EditorData } from '@/routes/project/$name/editor'
 import { Timeline } from './Timeline'
 import { LogPanel } from './LogPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
-import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
@@ -37,11 +36,6 @@ function LogDockPanel() {
 function CheckpointsDockPanel({ params }: IDockviewPanelProps<{ projectName: string }>) {
   const router = useRouter()
   return <CheckpointsPanel projectName={params.projectName} onClose={() => {}} onRestore={() => router.invalidate()} />
-}
-
-function VersionsDockPanel({ params }: IDockviewPanelProps<{ projectName: string }>) {
-  const router = useRouter()
-  return <VersionHistoryPanel projectName={params.projectName} onClose={() => {}} onRestore={() => router.invalidate()} />
 }
 
 function SettingsDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
@@ -92,7 +86,6 @@ const components = {
   timeline: TimelinePanel,
   logs: LogDockPanel,
   checkpoints: CheckpointsDockPanel,
-  versions: VersionsDockPanel,
   settings: SettingsDockPanel,
   sections: SectionsDockPanel,
   bin: BinDockPanel,
@@ -146,17 +139,17 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referenceGroup: propsGroup, direction: 'left' },
   })
 
-  // Col 3 top: Properties (Settings placeholder for KF/TR/ColorGrade)
+  // Col 3 top: Properties placeholder (KF/TR/ColorGrade tabs in future)
   api.addPanel({
     id: 'properties',
-    component: 'settings',
+    component: 'placeholder',
     title: 'Properties',
-    params: { data },
+    params: { label: 'Select a keyframe or transition' },
     position: { referenceGroup: propsGroup },
-    initialWidth: 400,
+    initialWidth: 320,
   })
 
-  // Col 3 bottom: Bin + Logs/Checkpoints/Versions as tabs
+  // Col 3 bottom: Bin + Logs/Checkpoints/Versions/Settings as tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
@@ -181,10 +174,10 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   })
 
   api.addPanel({
-    id: 'versions',
-    component: 'versions',
-    title: 'Versions',
-    params: { projectName: data.projectName },
+    id: 'settings',
+    component: 'settings',
+    title: 'Settings',
+    params: { data },
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
