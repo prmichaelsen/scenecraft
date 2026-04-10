@@ -141,7 +141,7 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
             </div>
             {/* Edit popover */}
             {isEditing && (
-              <div className="absolute top-full left-0 mt-0.5 z-50 pointer-events-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 w-48 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+              <div className="absolute top-full left-0 mt-0.5 z-[100] pointer-events-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 w-48 space-y-1.5" onClick={(e) => e.stopPropagation()}>
                 {/* Type selector */}
                 <div className="flex gap-1">
                   {(['note', 'todo', 'section'] as const).map((t) => (
