@@ -102,34 +102,56 @@ const components = {
 // --- Default Layout Builder ---
 
 function buildDefaultLayout(api: DockviewApi, data: EditorData) {
-  // Center — the existing Timeline (preview + tracks + KF/TR panels still inside)
+  // Layout matches the agreed mockup:
+  //
+  // +--------+----------------------------------+-----------------+---------------+
+  // |        |                                  | [KF] [TR] [CLR] |               |
+  // | Left   |         Video Preview            | Properties      |  Right Side   |
+  // | Side   |          (60% height)            |   (top)         |  (Sections)   |
+  // | bar    |                                  |                 |               |
+  // |--------+----------------------------------+-----------------+---------------|
+  // |(empty) |     Timeline (40% height)        | [Bin] [Logs]    | Chat          |
+  // +--------+----------------------------------+-----------------+---------------+
+  //   48px        ~60% width                      320px             240px
+
+  // Col 1: Left sidebar (empty placeholder, narrow)
+  api.addPanel({
+    id: 'leftSidebar',
+    component: 'placeholder',
+    title: 'Explorer',
+    params: { label: '' },
+    initialWidth: 48,
+  })
+
+  // Col 2: Center — the existing Timeline (preview + tracks + KF/TR panels still inside)
   api.addPanel({
     id: 'timeline',
     component: 'timeline',
     title: 'Timeline',
     params: { data },
+    position: { referencePanel: 'leftSidebar', direction: 'right' },
   })
 
-  // Properties column — Settings (placeholder for KF/TR/ColorGrade in future)
+  // Col 3: Properties top — KF/TR/ColorGrade placeholder (real panels need shared state)
   api.addPanel({
-    id: 'settings',
+    id: 'properties',
     component: 'settings',
-    title: 'Settings',
+    title: 'Properties',
     params: { data },
     position: { referencePanel: 'timeline', direction: 'right' },
-    initialWidth: 360,
+    initialWidth: 320,
   })
 
-  // Bottom of properties column — Bin
+  // Col 3 bottom: Bin (active tab) + Logs, Checkpoints, Versions as tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
     title: 'Bin',
     params: { data },
-    position: { referencePanel: 'settings', direction: 'below' },
+    position: { referencePanel: 'properties', direction: 'below' },
+    initialHeight: 300,
   })
 
-  // Tabs alongside Bin
   api.addPanel({
     id: 'logs',
     component: 'logs',
@@ -153,23 +175,24 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
-  // Right sidebar — Sections
+  // Col 4: Right sidebar top — Sections
   api.addPanel({
     id: 'sections',
     component: 'sections',
     title: 'Sections',
     params: { data },
-    position: { referencePanel: 'settings', direction: 'right' },
-    initialWidth: 280,
+    position: { referencePanel: 'properties', direction: 'right' },
+    initialWidth: 240,
   })
 
-  // Bottom of right sidebar — Chat placeholder
+  // Col 4 bottom: Chat
   api.addPanel({
     id: 'chat',
     component: 'placeholder',
     title: 'Chat',
     params: { label: 'Chat (coming soon)' },
     position: { referencePanel: 'sections', direction: 'below' },
+    initialHeight: 300,
   })
 }
 
