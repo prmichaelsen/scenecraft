@@ -401,11 +401,6 @@ export function TransitionPanel({
                 />
               </div>
 
-              {/* Action prompt */}
-              <div className="px-3 py-3 border-b border-gray-800">
-                <ActionPromptEditor transition={tr} projectName={projectName} sectionDescription={sectionDescription} />
-              </div>
-
               {/* Motion prompt (global) */}
               <div className="px-3 py-3">
                 <MotionPromptEditor projectName={projectName} motionPrompt={motionPrompt} />
@@ -415,7 +410,7 @@ export function TransitionPanel({
               <SectionDescription transition={tr} audioDescriptions={audioDescriptions} keyframes={keyframes} />
             </>
           ) : tab === 'candidates' ? (
-            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} />
+            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} sectionDescription={sectionDescription} />
           ) : tab === 'browse' ? (
             <BrowseTab transition={tr} projectName={projectName} onAssigned={() => {
               transition.hasSelectedVideo = true
@@ -850,7 +845,7 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName, onHoverPreview }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void }) {
+function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescription }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; sectionDescription: AudioDescription | null }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:video`
   const job = useJobState(entityKey)
@@ -911,7 +906,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview }: { transition
 
   const handleGenerate = useCallback(async () => {
     if (!transition.action) {
-      alert('Generate an action prompt first (Details tab) before generating video candidates.')
+      alert('Enter an action prompt above before generating video candidates.')
       return
     }
 
@@ -965,6 +960,9 @@ function CandidatesTab({ transition, projectName, onHoverPreview }: { transition
 
   return (
     <div className="p-2 space-y-3">
+      {/* Action prompt */}
+      <ActionPromptEditor transition={transition} projectName={projectName} sectionDescription={sectionDescription} />
+
       {/* Generation settings */}
       <div className="space-y-1.5">
         <div className="flex items-center gap-2">
