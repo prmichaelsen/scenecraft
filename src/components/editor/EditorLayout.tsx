@@ -25,50 +25,62 @@ export function useEditorLayout() {
 
 // --- Panel Components ---
 
+// Dockview panels need h-full w-full to fill their slot. The old panel components
+// use shrink-0 + fixed width from the side-panel layout, so we wrap them in a
+// constrained container that overrides those styles.
+
+function DockPanel({ children }: { children: React.ReactNode }) {
+  return <div className="h-full w-full overflow-hidden [&>*]:!w-full [&>*]:!shrink [&>*]:!h-full">{children}</div>
+}
+
 function TimelinePanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
-  return <Timeline data={params.data} v2 />
+  return <DockPanel><Timeline data={params.data} v2 /></DockPanel>
 }
 
 function LogDockPanel() {
-  return <LogPanel onClose={() => {}} />
+  return <DockPanel><LogPanel onClose={() => {}} /></DockPanel>
 }
 
 function CheckpointsDockPanel({ params }: IDockviewPanelProps<{ projectName: string }>) {
   const router = useRouter()
-  return <CheckpointsPanel projectName={params.projectName} onClose={() => {}} onRestore={() => router.invalidate()} />
+  return <DockPanel><CheckpointsPanel projectName={params.projectName} onClose={() => {}} onRestore={() => router.invalidate()} /></DockPanel>
 }
 
 function SettingsDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
   const router = useRouter()
-  return <SettingsPanel data={params.data} projectName={params.data.projectName} onClose={() => {}} onSave={() => router.invalidate()} />
+  return <DockPanel><SettingsPanel data={params.data} projectName={params.data.projectName} onClose={() => {}} onSave={() => router.invalidate()} /></DockPanel>
 }
 
 function SectionsDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
   return (
-    <NarrativeSectionPanel
-      sections={params.data.narrativeSections}
-      projectName={params.data.projectName}
-      onClose={() => {}}
-      onSeek={() => {}}
-      onSectionsChange={() => {}}
-      currentTime={0}
-    />
+    <DockPanel>
+      <NarrativeSectionPanel
+        sections={params.data.narrativeSections}
+        projectName={params.data.projectName}
+        onClose={() => {}}
+        onSeek={() => {}}
+        onSectionsChange={() => {}}
+        currentTime={0}
+      />
+    </DockPanel>
   )
 }
 
 function BinDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
   const router = useRouter()
   return (
-    <BinPanel
-      projectName={params.data.projectName}
-      onClose={() => {}}
-      onRestore={() => router.invalidate()}
-      poolSelection={null}
-      onPoolSelect={() => {}}
-      onInsertPoolItem={() => {}}
-      activeKeyframes={params.data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: true }))}
-      activeTransitions={params.data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: true }))}
-    />
+    <DockPanel>
+      <BinPanel
+        projectName={params.data.projectName}
+        onClose={() => {}}
+        onRestore={() => router.invalidate()}
+        poolSelection={null}
+        onPoolSelect={() => {}}
+        onInsertPoolItem={() => {}}
+        activeKeyframes={params.data.keyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: true }))}
+        activeTransitions={params.data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: true }))}
+      />
+    </DockPanel>
   )
 }
 
