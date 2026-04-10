@@ -134,6 +134,59 @@ milestones:
         estimated_hours: 3
         actual_hours: null
 
+  - id: milestone_4
+    name: AI Assistant Chat
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-4-ai-assistant-chat.md
+    tasks_total: 6
+    tasks_completed: 0
+    estimated_weeks: 4
+    tasks:
+      - id: task-15
+        name: Backend chat endpoint and DB storage
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-14-backend-chat-endpoint.md
+        estimated_hours: 10
+        actual_hours: null
+      - id: task-16
+        name: Frontend ChatPanel with streaming
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-15-frontend-chat-panel.md
+        estimated_hours: 10
+        actual_hours: null
+      - id: task-17
+        name: Tool calling and badges
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-16-tool-calling.md
+        estimated_hours: 12
+        actual_hours: null
+      - id: task-18
+        name: Elicitation confirmation UI
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-17-elicitation-ui.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-19
+        name: Image handling and vision
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-18-image-handling.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-20
+        name: MCP server integration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-19-mcp-integration.md
+        estimated_hours: 10
+        actual_hours: null
+
 tasks:
   milestone_1:
     - id: task-1
@@ -237,6 +290,55 @@ tasks:
       actual_hours: null
       started: null
 
+  milestone_4:
+    - id: task-15
+      name: Backend chat endpoint and DB storage
+      status: not_started
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-14-backend-chat-endpoint.md
+      estimated_hours: 10
+      actual_hours: null
+      started: null
+    - id: task-16
+      name: Frontend ChatPanel with streaming
+      status: not_started
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-15-frontend-chat-panel.md
+      estimated_hours: 10
+      actual_hours: null
+      started: null
+    - id: task-17
+      name: Tool calling and badges
+      status: not_started
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-16-tool-calling.md
+      estimated_hours: 12
+      actual_hours: null
+      started: null
+    - id: task-18
+      name: Elicitation confirmation UI
+      status: not_started
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-17-elicitation-ui.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-19
+      name: Image handling and vision
+      status: not_started
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-18-image-handling.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-20
+      name: MCP server integration
+      status: not_started
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-19-mcp-integration.md
+      estimated_hours: 10
+      actual_hours: null
+      started: null
   unassigned:
     - id: task-13
       name: Polish Interactive Transform Handles
@@ -254,12 +356,44 @@ tasks:
       estimated_hours: 3
       actual_hours: null
       started: null
+    - id: task-21
+      name: OpenAPI Spec Migration
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-20-openapi-migration.md
+      estimated_hours: 20
+      actual_hours: null
+      started: null
+    - id: task-22
+      name: AI-Driven Color Grading (P2)
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-21-ai-color-grading.md
+      estimated_hours: 10
+      actual_hours: null
+      started: null
+    - id: task-23
+      name: Multiple Conversation Threads
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-22-conversation-threads.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-24
+      name: Assistant Memory
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-23-assistant-memory.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
 
 documentation:
-  design_documents: 7
-  milestone_documents: 1
+  design_documents: 8
+  milestone_documents: 2
   pattern_documents: 0
-  task_documents: 13
+  task_documents: 24
 
 progress:
   planning: 80
@@ -285,6 +419,7 @@ recent_work:
 next_steps:
   - "M2: Dynamic Panel Layout — install dockview, migrate all panels to 4-column layout"
   - "M3: Contribution Points — backend/frontend placeholders, plugin manifest schema"
+  - "M4: AI Assistant Chat — Claude chat panel with tool calling, streaming, MCP integration"
   - Add editor settings panel
   - Per-section beat source selection
 
