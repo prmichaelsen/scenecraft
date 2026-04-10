@@ -71,17 +71,84 @@ A standard dockview panel component (already registered as a placeholder). Conta
 
 New WebSocket endpoint at `/ws/chat/{projectName}` on the beatlab server.
 
+**WebSocket message types** (matching agentbase.me pattern from `src/lib/chat/websocket.ts`):
+
+```typescript
+// Server → Client
+type ServerMessage =
+  | { type: 'chunk'; content: string }                    // streaming text token
+  | { type: 'tool_call'; toolCall: { id: string; name: string; input: Record<string, unknown> } }  // tool started (render pending badge)
+  | { type: 'tool_result'; toolResult: { id: string; output: unknown; isError?: boolean }; durationMs?: number }  // tool done (badge → success/error)
+  | { type: 'elicitation'; id: string; message: string; schema: object }   // confirmation needed
+  | { type: 'message'; message: PersistedMessage }        // full message to persist
+  | { type: 'complete' }                                  // stream done
+  | { type: 'status'; statusMessage?: string }            // status update
+
+// Client → Server
+type ClientMessage =
+  | { type: 'message'; content: string; images?: string[] }
+  | { type: 'elicitation_response'; id: string; action: 'accept' | 'decline'; content?: Record<string, unknown> }
+```
+
 **Message flow:**
 1. Client sends `{ type: "message", content: "...", images: [...] }`
 2. Server injects project context into system prompt
 3. Server calls Claude API with streaming + tool definitions
-4. Server streams back interleaved events:
-   - `{ type: "text", content: "..." }` — text tokens
-   - `{ type: "tool_use", id: "...", name: "...", input: {...} }` — tool call started
-   - `{ type: "tool_result", id: "...", result: {...} }` — tool call completed
-   - `{ type: "elicitation", id: "...", message: "...", schema: {...} }` — confirmation needed
-   - `{ type: "done" }` — stream complete
-5. Client responds to elicitations: `{ type: "elicitation_response", id: "...", action: "accept"|"decline" }`
+4. Server streams interleaved events: `chunk` → `tool_call` (pending) → `tool_result` (success/error) → `message` (persist) → `complete`
+5. Client responds to elicitations: `{ type: "elicitation_response", ... }`
+
+### Streaming State Machine (Frontend)
+
+The frontend maintains a `streamingBlocks` array that renders the in-progress response. This is the agentbase.me pattern from `ChatInterface.tsx`:
+
+```typescript
+type StreamingBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; status: 'pending' | 'success' | 'error' }
+
+// State management per WebSocket event:
+
+// On 'chunk': append text to last text block, or create new one
+setStreamingBlocks(prev => {
+  const last = prev[prev.length - 1]
+  if (last?.type === 'text') {
+    return [...prev.slice(0, -1), { type: 'text', text: last.text + msg.content }]
+  }
+  return [...prev, { type: 'text', text: msg.content }]
+})
+
+// On 'tool_call': insert tool_use block with pending status
+setStreamingBlocks(prev => [...prev, {
+  type: 'tool_use', id: msg.toolCall.id, name: msg.toolCall.name, status: 'pending'
+}])
+
+// On 'tool_result': update matching block's status inline
+setStreamingBlocks(prev => prev.map(b =>
+  b.type === 'tool_use' && b.id === msg.toolResult.id
+    ? { ...b, status: msg.toolResult.isError ? 'error' : 'success' }
+    : b
+))
+
+// On 'message': persist to message list, clear streaming
+setMessages(prev => [...prev, msg.message])
+setStreamingBlocks([])
+
+// On 'complete': clear streaming state
+setStreamingBlocks([])
+```
+
+MessageList renders `streamingBlocks` as a synthetic last item (not persisted). Persisted messages store content as mixed arrays:
+
+```typescript
+// Persisted message content (in chat_messages table)
+type MessageContent = string | Array<
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+>
+```
+
+This gives inline tool badges in both the streaming view AND when scrolling back through history.
 
 ### Project Context Injection
 
