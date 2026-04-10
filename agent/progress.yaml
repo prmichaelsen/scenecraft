@@ -46,7 +46,7 @@ milestones:
     started: 2026-04-10
     completed: null
     file: agent/milestones/milestone-2-dynamic-panel-layout.md
-    tasks_total: 6
+    tasks_total: 7
     tasks_completed: 1
     estimated_weeks: 3
     tasks:
@@ -93,6 +93,13 @@ milestones:
         started: null
         file: agent/tasks/milestone-2-dynamic-panel-layout/task-8-workspace-views-theme.md
         estimated_hours: 4
+        actual_hours: null
+      - id: task-12
+        name: V2 Layout Polish
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-12-v2-layout-polish.md
+        estimated_hours: 6
         actual_hours: null
 
   - id: milestone_3
@@ -195,6 +202,13 @@ tasks:
       milestone_id: milestone_2
       file: agent/tasks/milestone-2-dynamic-panel-layout/task-8-workspace-views-theme.md
       estimated_hours: 4
+      actual_hours: null
+    - id: task-12
+      name: V2 Layout Polish
+      status: not_started
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-12-v2-layout-polish.md
+      estimated_hours: 6
       actual_hours: null
       started: null
   milestone_3:
