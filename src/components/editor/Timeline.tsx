@@ -1647,7 +1647,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         >
           <div ref={previewContainerRef} className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
             {hoverPreviewUrl && (
-              <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
+              hoverPreviewUrl.endsWith('.mp4') ? (
+                <video src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" autoPlay muted loop playsInline />
+              ) : (
+                <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
+              )
             )}
             {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
               <BeatEffectPreview
@@ -2481,6 +2485,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             refreshTimeline()
           }}
           onDataChange={() => refreshTimeline()}
+          onHoverPreview={setHoverPreviewUrl}
         />
       ) : selectedAudioDescription ? (
         <AudioDescriptionPanel

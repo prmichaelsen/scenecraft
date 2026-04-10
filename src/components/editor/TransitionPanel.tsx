@@ -34,6 +34,7 @@ type TransitionPanelProps = {
   onDuplicateToNext: () => void
   onDuplicateToPrev: () => void
   onDataChange: () => void
+  onHoverPreview?: (url: string | null) => void
 }
 
 export function TransitionPanel({
@@ -48,6 +49,7 @@ export function TransitionPanel({
   onDuplicateToNext,
   onDuplicateToPrev,
   onDataChange,
+  onHoverPreview,
 }: TransitionPanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
@@ -413,7 +415,7 @@ export function TransitionPanel({
               <SectionDescription transition={tr} audioDescriptions={audioDescriptions} keyframes={keyframes} />
             </>
           ) : tab === 'candidates' ? (
-            <CandidatesTab transition={tr} projectName={projectName} />
+            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} />
           ) : tab === 'browse' ? (
             <BrowseTab transition={tr} projectName={projectName} onAssigned={() => {
               transition.hasSelectedVideo = true
@@ -848,7 +850,7 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName }: { transition: Transition; projectName: string }) {
+function CandidatesTab({ transition, projectName, onHoverPreview }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:video`
   const job = useJobState(entityKey)
@@ -1086,6 +1088,8 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
                 isSelected={isSelected}
                 disabled={selecting}
                 onSelect={() => handleSelect(variantNum)}
+                onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, videoPath))}
+                onMouseLeave={() => onHoverPreview?.(null)}
               />
             )
           })}
@@ -1214,8 +1218,9 @@ function ModalVideoCard({ videoPath, projectName }: { videoPath: string; project
 
 const videoBlobCache = new Map<string, string>() // url -> blob URL
 
-function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect }: {
+function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave }: {
   videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
+  onMouseEnter?: () => void; onMouseLeave?: () => void
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [loading, setLoading] = useState(false)
@@ -1246,8 +1251,8 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
         isSelected ? 'border-orange-500' : 'border-transparent hover:border-gray-600'
       } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
       onClick={onSelect}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => { setHovered(true); onMouseEnter?.() }}
+      onMouseLeave={() => { setHovered(false); onMouseLeave?.() }}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-beatlab-pool-path', videoPath)
