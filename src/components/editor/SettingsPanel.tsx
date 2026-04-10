@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { fetchSettings, postUpdateSettings, type ProjectSettings } from '@/lib/settings-client'
 import { updateMeta } from '@/routes/project/$name/editor'
 import type { EditorData } from '@/routes/project/$name/editor'
+import { fetchPromptRoster, postAddPromptRoster, postUpdatePromptRoster, postRemovePromptRoster, type PromptRosterEntry } from '@/lib/beatlab-client'
 
 type SettingsPanelProps = {
   data: EditorData
@@ -25,6 +26,12 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
   const [defaultTrPrompt, setDefaultTrPrompt] = useState(data.meta.defaultTransitionPrompt)
   const [defaultDuration, setDefaultDuration] = useState<number>((data.meta as Record<string, unknown>).default_video_duration as number || 8)
   const [defaultCount, setDefaultCount] = useState<number>((data.meta as Record<string, unknown>).default_gen_count as number || 4)
+  const [roster, setRoster] = useState<PromptRosterEntry[]>(data.promptRoster || [])
+  const [defaultPromptId, setDefaultPromptId] = useState<string>((data.meta as Record<string, unknown>).default_prompt_id as string || '')
+  const [editingRosterId, setEditingRosterId] = useState<string | null>(null)
+  const [editingRosterName, setEditingRosterName] = useState('')
+  const [editingRosterTemplate, setEditingRosterTemplate] = useState('')
+  const [editingRosterCategory, setEditingRosterCategory] = useState('general')
 
   useEffect(() => {
     fetchSettings(projectName)
@@ -143,6 +150,125 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            {/* Prompt Roster */}
+            <div className="px-3 py-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt Roster</div>
+                <button
+                  onClick={async () => {
+                    const name = window.prompt('New prompt name:')
+                    if (!name) return
+                    const result = await postAddPromptRoster(projectName, name, '', 'general')
+                    const updated = await fetchPromptRoster(projectName)
+                    setRoster(updated)
+                    setEditingRosterId(result.id)
+                    setEditingRosterName(name)
+                    setEditingRosterTemplate('')
+                    setEditingRosterCategory('general')
+                  }}
+                  className="text-[9px] text-green-400 hover:text-green-300"
+                >
+                  + New
+                </button>
+              </div>
+
+              {/* Default prompt selector */}
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Default Prompt</label>
+                <select
+                  value={defaultPromptId}
+                  onChange={async (e) => {
+                    setDefaultPromptId(e.target.value)
+                    await updateMeta({ data: { projectName, fields: { default_prompt_id: e.target.value } as never } })
+                  }}
+                  className="w-full bg-gray-800 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">None</option>
+                  {roster.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+
+              {/* Roster entries */}
+              <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                {roster.map((entry) => (
+                  <div key={entry.id} className="bg-gray-800/50 rounded p-2 space-y-1">
+                    {editingRosterId === entry.id ? (
+                      <>
+                        <input
+                          value={editingRosterName}
+                          onChange={(e) => setEditingRosterName(e.target.value)}
+                          className="w-full bg-gray-900 text-xs text-gray-300 rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                          placeholder="Name"
+                        />
+                        <select
+                          value={editingRosterCategory}
+                          onChange={(e) => setEditingRosterCategory(e.target.value)}
+                          className="w-full bg-gray-900 text-[10px] text-gray-400 rounded px-2 py-0.5 border border-gray-600 focus:outline-none"
+                        >
+                          {['general', 'camera', 'style', 'composition', 'effect'].map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                        <textarea
+                          value={editingRosterTemplate}
+                          onChange={(e) => setEditingRosterTemplate(e.target.value)}
+                          className="w-full bg-gray-900 text-xs text-gray-300 rounded p-2 border border-gray-600 focus:outline-none focus:border-blue-500 resize-y min-h-[60px]"
+                          placeholder="Prompt template..."
+                        />
+                        <div className="flex gap-1">
+                          <button
+                            onClick={async () => {
+                              await postUpdatePromptRoster(projectName, entry.id, { name: editingRosterName, template: editingRosterTemplate, category: editingRosterCategory })
+                              setRoster(await fetchPromptRoster(projectName))
+                              setEditingRosterId(null)
+                            }}
+                            className="text-[9px] text-green-400 hover:text-green-300"
+                          >
+                            Save
+                          </button>
+                          <button onClick={() => setEditingRosterId(null)} className="text-[9px] text-gray-500 hover:text-gray-300">Cancel</button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-gray-300 truncate">{entry.name}</div>
+                          <div className="text-[9px] text-gray-500 truncate">{entry.category} — {entry.template.slice(0, 60) || '(empty)'}{entry.template.length > 60 ? '...' : ''}</div>
+                        </div>
+                        <div className="flex gap-1.5 shrink-0 ml-2">
+                          <button
+                            onClick={() => {
+                              setEditingRosterId(entry.id)
+                              setEditingRosterName(entry.name)
+                              setEditingRosterTemplate(entry.template)
+                              setEditingRosterCategory(entry.category)
+                            }}
+                            className="text-[9px] text-blue-400 hover:text-blue-300"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await postRemovePromptRoster(projectName, entry.id)
+                              setRoster(await fetchPromptRoster(projectName))
+                              if (defaultPromptId === entry.id) {
+                                setDefaultPromptId('')
+                                await updateMeta({ data: { projectName, fields: { default_prompt_id: '' } as never } })
+                              }
+                            }}
+                            className="text-[9px] text-red-400/60 hover:text-red-400"
+                          >
+                            Del
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {roster.length === 0 && <div className="text-[10px] text-gray-600 text-center py-2">No saved prompts</div>}
               </div>
             </div>
 

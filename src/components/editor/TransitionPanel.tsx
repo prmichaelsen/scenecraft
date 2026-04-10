@@ -594,8 +594,23 @@ function ActionPromptEditor({ transition, projectName, sectionDescription, initi
         disabled={saving || generating}
         placeholder={generating ? 'Analyzing keyframe images with Claude...' : 'Enter a transition action prompt...'}
       />
-      <div className="text-[9px] text-gray-600">
-        {action ? 'Ctrl+Enter to save, Esc to revert. ' : ''}Sent to Veo for video generation.
+      <div className="flex items-center justify-between text-[9px] text-gray-600">
+        <span>{action ? 'Ctrl+Enter to save, Esc to revert. ' : ''}Sent to Veo for video generation.</span>
+        {action && (
+          <button
+            onClick={async () => {
+              const name = window.prompt('Save prompt as:', action.slice(0, 40))
+              if (!name) return
+              const category = window.prompt('Category:', 'general') || 'general'
+              const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+              await postAddPromptRoster(projectName, name, action, category)
+              setPromptRoster(await fetchPromptRoster(projectName))
+            }}
+            className="text-orange-400 hover:text-orange-300"
+          >
+            Save to roster
+          </button>
+        )}
       </div>
 
       <label className="flex items-center gap-2 cursor-pointer">
