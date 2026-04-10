@@ -16,6 +16,7 @@ import { KeyframePanel, preloadStills } from './KeyframePanel'
 import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
+import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
@@ -1350,7 +1351,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea')) return
 
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (matchesHotkey(e, 'delete') || matchesHotkey(e, 'deleteAlt')) {
         if (selectedKeyframeIds.size > 0) {
           const ids = [...selectedKeyframeIds]
           if (!confirm(`Delete ${ids.length} keyframes?`)) return
@@ -1373,8 +1374,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         }
       }
 
-      // Ctrl+C: copy selected keyframes, transition, suppression, or effects
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      // Copy selected keyframes, transition, suppression, or effects
+      if (matchesHotkey(e, 'copy')) {
         if (selectedKeyframeIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = [...selectedKeyframeIds]
@@ -1415,8 +1416,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         }
       }
 
-      // Ctrl+V: paste keyframes, transition style, suppression, or effects at playhead
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      // Paste keyframes, transition style, suppression, or effects at playhead
+      if (matchesHotkey(e, 'paste')) {
         if (trClipboard.current && selectedTransition && trClipboard.current !== selectedTransition.id) {
           e.preventDefault()
           import('@/lib/beatlab-client').then(({ postCopyTransitionStyle }) => {
@@ -1464,15 +1465,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         }
       }
 
-      // Ctrl+A: select all effects
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectedEffect) {
-        e.preventDefault()
+      // Select all effects
+      if (matchesHotkey(e, 'selectAll') && selectedEffect) {
+        handlePreventDefault(e, 'selectAll')
         setSelectedEffectIds(new Set(userEffects.map((fx) => fx.id)))
       }
 
-      // Ctrl+Z: undo
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault()
+      // Undo
+      if (matchesHotkey(e, 'undo')) {
+        handlePreventDefault(e, 'undo')
         import('@/lib/beatlab-client').then(({ postUndo }) => {
           postUndo(data.projectName).then((result) => {
             if (result.success) {
@@ -1561,34 +1562,32 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea')) return
 
-      if (e.code === 'Space') {
-        e.preventDefault()
+      if (matchesHotkey(e, 'playPause')) {
+        handlePreventDefault(e, 'playPause')
         handlePlayPause()
       }
 
-      // T: toggle transform mode
-      if (e.key === 't' || e.key === 'T') {
-        if (!e.ctrlKey && !e.metaKey) {
-          setTransformMode((p) => !p)
-        }
+      if (matchesHotkey(e, 'toggleTransformMode')) {
+        setTransformMode((p) => !p)
       }
 
-      // Arrow keys: navigate between keyframes
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        e.preventDefault()
+      // Navigate between keyframes
+      if (matchesHotkey(e, 'nextKeyframe')) {
+        handlePreventDefault(e, 'nextKeyframe')
         const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
-        if (e.key === 'ArrowRight') {
-          const next = sorted.find((kf) => kf.timeSeconds > currentTime + 0.1)
-          if (next) {
-            seekFnRef.current?.(next.timeSeconds)
-            setSelectedKeyframe(next)
-          }
-        } else {
-          const prev = [...sorted].reverse().find((kf) => kf.timeSeconds < currentTime - 0.1)
-          if (prev) {
-            seekFnRef.current?.(prev.timeSeconds)
-            setSelectedKeyframe(prev)
-          }
+        const next = sorted.find((kf) => kf.timeSeconds > currentTime + 0.1)
+        if (next) {
+          seekFnRef.current?.(next.timeSeconds)
+          setSelectedKeyframe(next)
+        }
+      }
+      if (matchesHotkey(e, 'prevKeyframe')) {
+        handlePreventDefault(e, 'prevKeyframe')
+        const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
+        const prev = [...sorted].reverse().find((kf) => kf.timeSeconds < currentTime - 0.1)
+        if (prev) {
+          seekFnRef.current?.(prev.timeSeconds)
+          setSelectedKeyframe(prev)
         }
       }
     }
