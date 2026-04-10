@@ -65,6 +65,7 @@ milestones:
         file: agent/tasks/milestone-2-dynamic-panel-layout/task-4-preview-timeline-panels.md
         estimated_hours: 8
         actual_hours: null
+        notes: "Deferred — do after Tasks 5-7 migrate panels out of Timeline.tsx first"
       - id: task-5
         name: Migrate property panels and extract Color Grading
         status: not_started
@@ -234,6 +235,7 @@ progress:
   overall: 75
 
 recent_work:
+  - "M2 Task 3: Installed dockview-react, created EditorLayout shell with 4-column default layout"
   - "Animated transform curves (X/Y/Z) — multi-curve canvas, pill tabs, DB migration, render pipeline"
   - "REST API migration from filesystem to beatlab server"
   - "WebGL beat-reactive preview with frame buffer cache"
