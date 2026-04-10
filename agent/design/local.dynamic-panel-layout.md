@@ -24,7 +24,7 @@ The current editor uses a single mutually-exclusive side panel controlled by 12+
 
 ## Solution
 
-Use **dockview-react** to create a 4-column layout with independent resizable panel groups. Each panel becomes a dockview panel component that can be moved, split, and arranged freely. Users save and toggle between workspace presets.
+Use **dockview-react** to create a 4-column layout with independent resizable panel groups. Each panel becomes a dockview panel component that can be moved, split, and arranged freely. Users save and toggle between workspace view presets.
 
 ### Default Layout
 
@@ -99,14 +99,11 @@ function MyPanel({ api, params }: IDockviewPanelProps<{ projectName: string }>) 
   onReady={(event: DockviewReadyEvent) => {
     const api = event.api
 
-    // Try restore saved layout
-    const saved = localStorage.getItem('beatlab-workspace-default')
-    if (saved) {
-      try {
-        api.fromJSON(JSON.parse(saved))
-        return
-      } catch { /* fall through to default */ }
-    }
+    // Try restore saved layout from DB
+    try {
+      await loadWorkspaceView(api, projectName, '_autosave')
+      return
+    } catch { /* fall through to default */ }
 
     // Build default layout
     buildDefaultLayout(api)
@@ -194,27 +191,40 @@ function buildDefaultLayout(api: DockviewApi) {
 #### Layout Serialization (Workspace Views)
 
 ```typescript
-// Save current layout as a named workspace
-function saveWorkspace(api: DockviewApi, name: string) {
+// Save current layout as a named workspace (to beatlab DB via REST)
+async function saveWorkspaceView(api: DockviewApi, project: string, name: string) {
   const layout = api.toJSON()
-  const workspaces = JSON.parse(localStorage.getItem('beatlab-workspaces') || '{}')
-  workspaces[name] = layout
-  localStorage.setItem('beatlab-workspaces', JSON.stringify(workspaces))
+  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/workspace-views/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layout }),
+  })
 }
 
 // Restore a workspace
-function loadWorkspace(api: DockviewApi, name: string) {
-  const workspaces = JSON.parse(localStorage.getItem('beatlab-workspaces') || '{}')
-  if (workspaces[name]) {
-    api.fromJSON(workspaces[name])
+async function loadWorkspaceView(api: DockviewApi, project: string, name: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/workspace-views/${encodeURIComponent(name)}`)
+  if (res.ok) {
+    const { layout } = await res.json()
+    api.fromJSON(layout)
   }
 }
 
-// Auto-save on layout change
-api.onDidLayoutChange(() => {
-  saveWorkspace(api, '_autosave')
-})
+// List saved workspaces
+async function listWorkspaceViews(project: string): Promise<string[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/workspace-views`)
+  if (!res.ok) return []
+  const { workspaces } = await res.json()
+  return workspaces
+}
+
+// Auto-save on layout change (debounced)
+api.onDidLayoutChange(debounce(() => {
+  saveWorkspaceView(api, projectName, '_autosave')
+}, 1000))
 ```
+
+Workspaces are persisted to the project's SQLite database via the beatlab REST API. This keeps them project-scoped, backed up by checkpoints, and available across devices. The backend stores workspace layouts as JSON in a `workspace_views` table keyed by name.
 
 ### Panel Component Migration
 

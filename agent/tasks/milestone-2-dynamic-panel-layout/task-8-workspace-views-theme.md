@@ -1,5 +1,6 @@
 # Task 8: Workspace Views and Theme
 
+
 **Milestone**: [M2 - Dynamic Panel Layout](../../milestones/milestone-2-dynamic-panel-layout.md)  
 **Design Reference**: [Dynamic Panel Layout](../../design/local.dynamic-panel-layout.md)  
 **Estimated Time**: 3-4 hours  
@@ -18,11 +19,13 @@ Implement workspace layout save/restore using YAML serialization to localStorage
 
 ### 1. Workspace Save/Restore
 
-Use `api.toJSON()` to serialize the layout and `js-yaml` (already a dep) to convert to YAML for human-readable storage in localStorage:
+Persist layouts to the project's SQLite database via REST API:
 
-- `saveWorkspace(api, name)` — serialize layout to YAML, store in `beatlab-workspaces` localStorage key
-- `loadWorkspace(api, name)` — parse YAML from localStorage, call `api.fromJSON()`
-- Auto-save on `api.onDidLayoutChange` to `_autosave` workspace
+- Add `workspace_views` table to `db.py`: `CREATE TABLE workspaces (name TEXT PRIMARY KEY, layout TEXT NOT NULL)`
+- Add backend endpoints: `GET /workspace-views` (list), `GET /workspace-views/:name` (load), `POST /workspace-views/:name` (save), `POST /workspace-views/:name/delete` (delete)
+- `saveWorkspaceView(api, project, name)` — serialize layout with `api.toJSON()`, POST to backend
+- `loadWorkspaceView(api, project, name)` — GET from backend, call `api.fromJSON()`
+- Auto-save on `api.onDidLayoutChange` (debounced 1s) to `_autosave` workspace
 - On `onReady`, try loading `_autosave` workspace first, fall back to default layout
 
 ### 2. Workspace Switcher UI
@@ -60,7 +63,7 @@ For panels that shouldn't be closeable (Preview, Timeline), configure dockview t
 - [ ] Dockview tabs match the dark theme (no white/light artifacts)
 - [ ] Resize handles are visible but subtle (matching gray-800)
 - [ ] Drag overlay styling matches the theme
-- [ ] YAML is used for serialization (not JSON)
+- [ ] Layouts persisted to SQLite via REST (not localStorage)
 
 ---
 
