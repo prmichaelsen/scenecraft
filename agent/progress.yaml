@@ -11,10 +11,11 @@ project:
 milestones:
   - id: milestone_1
     name: Audio Intelligence Integration
-    status: in_progress
+    status: completed
     started: 2026-03-29
+    completed: 2026-04-10
     tasks_total: 2
-    tasks_completed: 1
+    tasks_completed: 2
     tasks:
       - id: task-1
         name: Audio Intelligence Integration
@@ -29,12 +30,12 @@ milestones:
           File selector, WebGL integration, beat marker updates.
       - id: task-2
         name: Animated Transform Curves (X, Y, Z)
-        status: in_progress
+        status: completed
         started: 2026-04-10T00:00:00Z
         file: agent/tasks/milestone-1-audio-intelligence/task-2-animated-transform-curves.md
         estimated_hours: 10
         actual_hours: null
-        completed_date: null
+        completed_date: 2026-04-10T00:00:00Z
         notes: |
           Replace static transform sliders with animated X/Y/Z remap curves.
           Multi-curve canvas, pill tabs, DB migration, render pipeline.
@@ -47,10 +48,11 @@ documentation:
 
 progress:
   planning: 80
-  implementation: 60
-  overall: 65
+  implementation: 70
+  overall: 75
 
 recent_work:
+  - "Animated transform curves (X/Y/Z) — multi-curve canvas, pill tabs, DB migration, render pipeline"
   - "REST API migration from filesystem to beatlab server"
   - "WebGL beat-reactive preview with frame buffer cache"
   - "Transition track, panel, video generation (Veo), selection"
@@ -65,7 +67,6 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
-  - Implement animated transform curves (Task 2)
   - Add editor settings panel
   - Per-section beat source selection
 
