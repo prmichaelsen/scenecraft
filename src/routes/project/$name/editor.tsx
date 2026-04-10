@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Timeline } from '@/components/editor/Timeline'
-import { EditorLayout } from '@/components/editor/EditorLayout'
+import { EditorLayout, WorkspaceMenu, type EditorLayoutHandle } from '@/components/editor/EditorLayout'
+import { useRef } from 'react'
 import { StatusBar } from '@/components/editor/StatusBar'
 import { JobStateProvider } from '@/contexts/JobStateContext'
 import {
@@ -644,6 +645,7 @@ function EditorPage() {
   const data = Route.useLoaderData()
   const { name } = Route.useParams()
   const useV2 = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('layout') === 'v2'
+  const layoutRef = useRef<EditorLayoutHandle>(null)
 
   return (
     <JobStateProvider>
@@ -663,12 +665,17 @@ function EditorPage() {
         {data.timelineInfo && (
           <span className="text-xs text-purple-400 font-mono">{data.timelineInfo.active}</span>
         )}
-        {useV2 && <span className="text-[10px] text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded">v2 layout</span>}
+        {useV2 && (
+          <>
+            <span className="text-[10px] text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded">v2</span>
+            <WorkspaceMenu onReset={() => layoutRef.current?.resetLayout()} />
+          </>
+        )}
       </div>
 
       {/* v1: original Timeline, v2: dockview EditorLayout */}
       <div className="flex-1 min-h-0">
-        {useV2 ? <EditorLayout data={data} /> : <Timeline data={data} />}
+        {useV2 ? <EditorLayout ref={layoutRef} data={data} /> : <Timeline data={data} />}
       </div>
 
       {/* Status bar */}
