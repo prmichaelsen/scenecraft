@@ -1590,10 +1590,37 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           setSelectedKeyframe(prev)
         }
       }
+
+      // Curve pin navigation: [ / ]
+      if (matchesHotkey(e, 'nextCurvePin') || matchesHotkey(e, 'prevCurvePin')) {
+        if (!selectedTransition) return
+        const tr = selectedTransition
+        const fromKf = keyframes.find((k) => k.id === tr.from)
+        const toKf = keyframes.find((k) => k.id === tr.to)
+        if (!fromKf || !toKf || toKf.timeSeconds <= fromKf.timeSeconds) return
+        const span = toKf.timeSeconds - fromKf.timeSeconds
+        const curProgress = (currentTime - fromKf.timeSeconds) / span
+        // Collect all pin times from all curves
+        const curveKeys = ['opacityCurve', 'redCurve', 'greenCurve', 'blueCurve', 'blackCurve', 'saturationCurve', 'hueShiftCurve', 'invertCurve', 'transformXCurve', 'transformYCurve', 'transformZCurve'] as const
+        const pinTimes = new Set<number>()
+        for (const key of curveKeys) {
+          const curve = (tr as Record<string, unknown>)[key] as [number, number][] | null
+          if (curve) for (const [px] of curve) pinTimes.add(px)
+        }
+        const sorted = [...pinTimes].sort((a, b) => a - b)
+        const isNext = matchesHotkey(e, 'nextCurvePin')
+        const target = isNext
+          ? sorted.find((p) => p > curProgress + 0.001)
+          : [...sorted].reverse().find((p) => p < curProgress - 0.001)
+        if (target != null) {
+          const targetTime = fromKf.timeSeconds + target * span
+          seekFnRef.current?.(targetTime)
+        }
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [keyframes, currentTime, handlePlayPause])
+  }, [keyframes, currentTime, handlePlayPause, selectedTransition])
 
 
   return (
@@ -1642,28 +1669,44 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             <TransformHandles
               containerRef={previewContainerRef}
               transition={selectedTransition}
-              currentTime={currentTime}
+              linearProgress={(() => {
+                if (!selectedTransition) return 0
+                const fromKf = keyframes.find((k) => k.id === selectedTransition.from)
+                const toKf = keyframes.find((k) => k.id === selectedTransition.to)
+                if (!fromKf || !toKf || toKf.timeSeconds <= fromKf.timeSeconds) return 0
+                return Math.max(0, Math.min(0.999, (currentTime - fromKf.timeSeconds) / (toKf.timeSeconds - fromKf.timeSeconds)))
+              })()}
               transformMode={transformMode}
-              onCurveUpdate={async (trId, updates) => {
-                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
-                const style: Record<string, unknown> = {}
-                if ('transformX' in updates) { style.transformX = updates.transformX; if (selectedTransition) selectedTransition.transformX = updates.transformX as number }
-                if ('transformY' in updates) { style.transformY = updates.transformY; if (selectedTransition) selectedTransition.transformY = updates.transformY as number }
-                if ('transformZ' in updates) {
-                  const pts: [number, number][] = [[0, updates.transformZ as number], [1, updates.transformZ as number]]
-                  style.transformZCurve = pts
-                  if (selectedTransition) selectedTransition.transformZCurve = pts
+              onCurvePinUpdate={(trId, curveKey, progress, value) => {
+                if (!selectedTransition) return
+                // Auto-keyframe: insert or update pin on the curve
+                const styleKey = curveKey === 'transformXCurve' ? 'transformXCurve' : curveKey === 'transformYCurve' ? 'transformYCurve' : 'transformZCurve'
+                const existing = (selectedTransition as Record<string, unknown>)[curveKey] as [number, number][] | null
+                const pts: [number, number][] = existing ? [...existing] : curveKey === 'transformZCurve' ? [[0, 1], [1, 1]] : [[0, 0], [1, 0]]
+                // Find existing pin near this progress (±0.005)
+                const idx = pts.findIndex((p) => Math.abs(p[0] - progress) < 0.005)
+                if (idx >= 0) {
+                  pts[idx] = [pts[idx][0], value]
+                } else {
+                  pts.push([progress, value])
+                  pts.sort((a, b) => a[0] - b[0])
                 }
-                if ('maskCenterX' in updates) { style.maskCenterX = updates.maskCenterX; if (selectedTransition) selectedTransition.maskCenterX = updates.maskCenterX as number }
-                if ('maskCenterY' in updates) { style.maskCenterY = updates.maskCenterY; if (selectedTransition) selectedTransition.maskCenterY = updates.maskCenterY as number }
-                await postUpdateTransitionStyle(data.projectName, trId, style as never)
-                refreshTimeline()
+                // Update in-memory for immediate preview
+                ;(selectedTransition as Record<string, unknown>)[curveKey] = pts
+                // Debounced persist
+                import('@/lib/beatlab-client').then(({ postUpdateTransitionStyle }) => {
+                  postUpdateTransitionStyle(data.projectName, trId, { [styleKey]: pts } as never)
+                })
               }}
               onAnchorUpdate={async (trId, anchorX, anchorY) => {
                 if (selectedTransition) { selectedTransition.anchorX = anchorX; selectedTransition.anchorY = anchorY }
                 const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
                 await postUpdateTransitionStyle(data.projectName, trId, { anchorX, anchorY } as never)
-                refreshTimeline()
+              }}
+              onMaskCenterUpdate={async (trId, cx, cy) => {
+                if (selectedTransition) { selectedTransition.maskCenterX = cx; selectedTransition.maskCenterY = cy }
+                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                await postUpdateTransitionStyle(data.projectName, trId, { maskCenterX: cx, maskCenterY: cy } as never)
               }}
             />
             {/* Transform mode toggle */}

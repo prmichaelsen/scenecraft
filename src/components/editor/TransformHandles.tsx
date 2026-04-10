@@ -5,10 +5,11 @@ import { evaluateCurve } from '@/lib/remap-curve'
 type TransformHandlesProps = {
   containerRef: React.RefObject<HTMLDivElement | null>
   transition: Transition | null
-  currentTime: number
+  linearProgress: number
   transformMode: boolean
-  onCurveUpdate: (trId: string, updates: Record<string, unknown>) => void
+  onCurvePinUpdate: (trId: string, curveKey: string, progress: number, value: number) => void
   onAnchorUpdate: (trId: string, anchorX: number, anchorY: number) => void
+  onMaskCenterUpdate: (trId: string, cx: number, cy: number) => void
 }
 
 const HANDLE_SIZE = 8
@@ -20,10 +21,11 @@ type HandleType = 'position' | 'scale-tl' | 'scale-tr' | 'scale-bl' | 'scale-br'
 export function TransformHandles({
   containerRef,
   transition: tr,
-  currentTime,
+  linearProgress,
   transformMode,
-  onCurveUpdate,
+  onCurvePinUpdate,
   onAnchorUpdate,
+  onMaskCenterUpdate,
 }: TransformHandlesProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -48,23 +50,19 @@ export function TransformHandles({
     return () => ro.disconnect()
   }, [containerRef])
 
-  // Compute current transform values from curves
+  // Compute current transform values from curves at linearProgress
   const getTransformValues = useCallback(() => {
     if (!tr) return { x: 0, y: 0, scale: 1, anchorX: 0.5, anchorY: 0.5 }
-    const fromKfTime = 0 // We'd need the from-kf time, but for now use relative progress
-    const toKfTime = 1
-    // We don't have kf times here — the transition stores curves in 0-1 progress space
-    // so we need linearProgress, but we don't have from/to kf times in this component.
-    // For now, pass progress from parent. TODO: pass linearProgress as prop.
-    const x = tr.transformXCurve ? evaluateCurve(tr.transformXCurve, 0.5) : (tr.transformX ?? 0)
-    const y = tr.transformYCurve ? evaluateCurve(tr.transformYCurve, 0.5) : (tr.transformY ?? 0)
-    const scale = tr.transformZCurve ? evaluateCurve(tr.transformZCurve, 0.5) : 1
+    const p = linearProgress
+    const x = tr.transformXCurve ? evaluateCurve(tr.transformXCurve, p) : (tr.transformX ?? 0)
+    const y = tr.transformYCurve ? evaluateCurve(tr.transformYCurve, p) : (tr.transformY ?? 0)
+    const scale = tr.transformZCurve ? evaluateCurve(tr.transformZCurve, p) : 1
     return {
       x, y, scale,
       anchorX: tr.anchorX ?? 0.5,
       anchorY: tr.anchorY ?? 0.5,
     }
-  }, [tr])
+  }, [tr, linearProgress])
 
   // Draw handles
   useEffect(() => {
@@ -83,21 +81,11 @@ export function TransformHandles({
     const w = size.w
     const h = size.h
 
-    // Compute bounding box corners in canvas space
-    // Layer is at: position offset (vals.x, vals.y) with scale around anchor
-    const ax = vals.anchorX * w
-    const ay = vals.anchorY * h
-
-    // Bounding box in UV: corners are (0,0), (1,0), (1,1), (0,1)
-    // After scale around anchor: corner = (corner - anchor) * scale + anchor
-    // After position: corner + transform
+    // Bounding box corners: scale around anchor then offset by position
     const corners = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([u, v]) => {
       const sx = (u - vals.anchorX) * vals.scale + vals.anchorX
       const sy = (v - vals.anchorY) * vals.scale + vals.anchorY
-      return [
-        (sx + vals.x) * w,
-        (sy + vals.y) * h,
-      ]
+      return [(sx + vals.x) * w, (sy + vals.y) * h]
     })
 
     // Dashed bounding box
@@ -120,19 +108,17 @@ export function TransformHandles({
       ctx.strokeRect(cx - HANDLE_SIZE / 2, cy - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
     }
 
-    // Position crosshair + ring at anchor
+    // Position crosshair + ring at anchor (offset by position)
     const px = (vals.anchorX + vals.x) * w
     const py = (vals.anchorY + vals.y) * h
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
     ctx.lineWidth = 1.5
-    // Crosshair lines
     ctx.beginPath()
     ctx.moveTo(px - CROSSHAIR_SIZE / 2, py)
     ctx.lineTo(px + CROSSHAIR_SIZE / 2, py)
     ctx.moveTo(px, py - CROSSHAIR_SIZE / 2)
     ctx.lineTo(px, py + CROSSHAIR_SIZE / 2)
     ctx.stroke()
-    // Ring
     ctx.beginPath()
     ctx.arc(px, py, RING_SIZE / 2, 0, Math.PI * 2)
     ctx.stroke()
@@ -213,36 +199,36 @@ export function TransformHandles({
 
       if (ds.type === 'position') {
         if (ds.isAlt) {
-          // Alt+drag: move anchor
+          // Alt+drag: move anchor (static, not curve)
           const newAnchorX = Math.max(0, Math.min(1, (tr.anchorX ?? 0.5) + dx))
           const newAnchorY = Math.max(0, Math.min(1, (tr.anchorY ?? 0.5) + dy))
           onAnchorUpdate(tr.id, newAnchorX, newAnchorY)
         } else {
-          // Normal drag: move position
+          // Normal drag: auto-keyframe position curves
           let newX = ds.startValX + dx
           let newY = ds.startValY + dy
-          // Shift: constrain to axis
           if (ev.shiftKey) {
             if (Math.abs(dx) > Math.abs(dy)) newY = ds.startValY
             else newX = ds.startValX
           }
-          onCurveUpdate(tr.id, { transformX: newX, transformY: newY })
+          onCurvePinUpdate(tr.id, 'transformXCurve', linearProgress, newX)
+          onCurvePinUpdate(tr.id, 'transformYCurve', linearProgress, newY)
         }
       } else if (ds.type.startsWith('scale-')) {
-        // Scale: use distance from anchor as scale factor
         const vals = getTransformValues()
+        const containerRect = containerRef.current?.getBoundingClientRect()
         const anchorPx = vals.anchorX * size.w
         const anchorPy = vals.anchorY * size.h
-        const startDist = Math.hypot(ds.startX - anchorPx, ds.startY - anchorPy)
-        const curDist = Math.hypot(ev.clientX - (containerRef.current?.getBoundingClientRect().left ?? 0) - anchorPx, ev.clientY - (containerRef.current?.getBoundingClientRect().top ?? 0) - anchorPy)
+        const startDist = Math.hypot(ds.startX - (containerRect?.left ?? 0) - anchorPx, ds.startY - (containerRect?.top ?? 0) - anchorPy)
+        const curDist = Math.hypot(ev.clientX - (containerRect?.left ?? 0) - anchorPx, ev.clientY - (containerRect?.top ?? 0) - anchorPy)
         if (startDist > 5) {
           const newScale = Math.max(0.01, ds.startValX * (curDist / startDist))
-          onCurveUpdate(tr.id, { transformZ: newScale })
+          onCurvePinUpdate(tr.id, 'transformZCurve', linearProgress, newScale)
         }
       } else if (ds.type === 'mask-center') {
         const newX = Math.max(0, Math.min(1, ds.startValX + dx))
         const newY = Math.max(0, Math.min(1, ds.startValY + dy))
-        onCurveUpdate(tr.id, { maskCenterX: newX, maskCenterY: newY })
+        onMaskCenterUpdate(tr.id, newX, newY)
       }
     }
 
@@ -254,7 +240,7 @@ export function TransformHandles({
 
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [transformMode, tr, size, hitTest, getTransformValues, onCurveUpdate, onAnchorUpdate, containerRef])
+  }, [transformMode, tr, size, linearProgress, hitTest, getTransformValues, onCurvePinUpdate, onAnchorUpdate, onMaskCenterUpdate, containerRef])
 
   if (!transformMode || !tr) return null
 
