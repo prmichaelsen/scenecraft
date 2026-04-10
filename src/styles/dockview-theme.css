@@ -86,10 +86,13 @@
   background: #1e1e1e;
 }
 
-/* --- Group header actions (ellipsis menu) --- */
+/* --- Group header actions (collapse + ellipsis) --- */
 
 .dv-dockview .dv-right-actions-container {
+  display: flex;
+  align-items: center;
   padding-right: 4px;
+  height: 100%;
 }
 
 /* --- Collapsed vertical header (sideways tabs) --- */
@@ -101,7 +104,7 @@
 .dv-dockview .dv-groupview-header-left .dv-default-tab {
   writing-mode: vertical-lr;
   text-orientation: mixed;
-  padding: 8px 4px;
+  padding: 10px 6px;
   height: auto;
   width: 100%;
   font-size: 11px;
@@ -120,6 +123,16 @@
 
 .dv-dockview .dv-groupview-header-left .dv-right-actions-container {
   padding: 2px 0;
+}
+
+/* Hide content area when collapsed (header-left mode) */
+.dv-dockview .dv-groupview-header-left .dv-content-container {
+  display: none !important;
+}
+
+/* Ensure the vertical header fills the group */
+.dv-dockview .dv-groupview-header-left .dv-groupview {
+  overflow: hidden;
 }
 
 /* --- Scrollbar --- */

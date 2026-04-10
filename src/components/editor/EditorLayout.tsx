@@ -122,35 +122,46 @@ const ADDABLE_PANELS = [
 ] as const
 
 // Track collapsed state + saved widths per group
-const collapsedGroups = new Map<string, number>()
-const COLLAPSED_WIDTH = 36
+const collapsedState = new Map<string, { width: number; height: number }>()
+const COLLAPSED_SIZE = 40
 
 function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
   const [open, setOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => collapsedState.has(group.id))
 
   const toggleCollapse = () => {
     if (collapsed) {
-      // Expand: restore header and width
+      // Expand: restore header position and saved dimensions
+      const saved = collapsedState.get(group.id)
+      collapsedState.delete(group.id)
       group.api.setHeaderPosition('top')
-      const savedWidth = collapsedGroups.get(group.id) || 320
-      collapsedGroups.delete(group.id)
-      group.api.setSize({ width: savedWidth })
+      // Delay size restore to let header position change settle
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (saved) {
+            group.api.setSize({ width: saved.width, height: saved.height })
+          }
+        })
+      })
       setCollapsed(false)
     } else {
-      // Collapse: save width, switch to vertical headers, shrink
-      collapsedGroups.set(group.id, group.api.width)
+      // Collapse: save current size, vertical headers, shrink
+      collapsedState.set(group.id, { width: group.api.width, height: group.api.height })
       group.api.setHeaderPosition('left')
-      group.api.setSize({ width: COLLAPSED_WIDTH })
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          group.api.setSize({ width: COLLAPSED_SIZE })
+        })
+      })
       setCollapsed(true)
     }
   }
 
   return (
-    <div className="relative flex items-center pr-1 gap-0.5">
+    <div className="relative flex items-center justify-center gap-0 h-full">
       <button
         onClick={toggleCollapse}
-        className="text-gray-500 hover:text-gray-300 text-[10px] px-1 leading-none"
+        className="flex items-center justify-center w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-[rgba(255,255,255,0.1)] rounded text-sm"
         title={collapsed ? 'Expand panel' : 'Collapse panel'}
       >
         {collapsed ? '▶' : '◀'}
@@ -158,21 +169,21 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
       {!collapsed && (
         <button
           onClick={() => setOpen(!open)}
-          className="text-gray-500 hover:text-gray-300 text-xs px-1 leading-none"
+          className="flex items-center justify-center w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-[rgba(255,255,255,0.1)] rounded text-base"
           title="Add panel"
         >
           &#x22EE;
         </button>
       )}
       {open && (
-        <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-xl z-50 min-w-[140px] py-1">
+        <div className="absolute top-full right-0 mt-1 bg-[#252526] border border-[#3c3c3c] rounded shadow-xl z-50 min-w-[160px] py-1">
           {ADDABLE_PANELS.map((p) => {
             const exists = containerApi.getPanel(p.id)
             return (
               <button
                 key={p.id}
                 disabled={!!exists}
-                className="w-full text-left px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:text-gray-600 disabled:hover:bg-transparent"
+                className="w-full text-left px-3 py-1.5 text-xs text-[#cccccc] hover:bg-[#094771] disabled:text-[#5a5a5a] disabled:hover:bg-transparent"
                 onClick={() => {
                   containerApi.addPanel({
                     id: p.id,
