@@ -102,54 +102,41 @@ const components = {
 // --- Default Layout Builder ---
 
 function buildDefaultLayout(api: DockviewApi, data: EditorData) {
-  // Layout matches the agreed mockup:
-  //
-  // +--------+----------------------------------+-----------------+---------------+
-  // |        |                                  | [KF] [TR] [CLR] |               |
-  // | Left   |         Video Preview            | Properties      |  Right Side   |
-  // | Side   |          (60% height)            |   (top)         |  (Sections)   |
-  // | bar    |                                  |                 |               |
-  // |--------+----------------------------------+-----------------+---------------|
-  // |(empty) |     Timeline (40% height)        | [Bin] [Logs]    | Chat          |
-  // +--------+----------------------------------+-----------------+---------------+
-  //   48px        ~60% width                      320px             240px
+  // Layout:
+  // +------------------------------+-----------+-----------+
+  // |                              | Properties| Sections  |
+  // |     Timeline (preview +      | (top)     |           |
+  // |      tracks, ~65% width)     |           |           |
+  // |                              |-----------+-----------|
+  // |                              | Bin/Logs  | Chat      |
+  // +------------------------------+-----------+-----------+
+  //         flex                     280px        200px
 
-  // Col 1: Left sidebar (empty placeholder, narrow)
-  api.addPanel({
-    id: 'leftSidebar',
-    component: 'placeholder',
-    title: 'Explorer',
-    params: { label: '' },
-    initialWidth: 48,
-  })
-
-  // Col 2: Center — the existing Timeline (preview + tracks + KF/TR panels still inside)
+  // Col 1: Center — the existing Timeline (preview + tracks)
   api.addPanel({
     id: 'timeline',
     component: 'timeline',
     title: 'Timeline',
     params: { data },
-    position: { referencePanel: 'leftSidebar', direction: 'right' },
   })
 
-  // Col 3: Properties top — KF/TR/ColorGrade placeholder (real panels need shared state)
+  // Col 2: Properties top — Settings for now (KF/TR/ColorGrade later)
   api.addPanel({
     id: 'properties',
     component: 'settings',
     title: 'Properties',
     params: { data },
     position: { referencePanel: 'timeline', direction: 'right' },
-    initialWidth: 320,
+    initialWidth: 280,
   })
 
-  // Col 3 bottom: Bin (active tab) + Logs, Checkpoints, Versions as tabs
+  // Col 2 bottom: Bin (active tab) + Logs, Checkpoints, Versions as tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
     title: 'Bin',
     params: { data },
     position: { referencePanel: 'properties', direction: 'below' },
-    initialHeight: 300,
   })
 
   api.addPanel({
@@ -175,24 +162,23 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
-  // Col 4: Right sidebar top — Sections
+  // Col 3: Right sidebar top — Sections
   api.addPanel({
     id: 'sections',
     component: 'sections',
     title: 'Sections',
     params: { data },
     position: { referencePanel: 'properties', direction: 'right' },
-    initialWidth: 240,
+    initialWidth: 200,
   })
 
-  // Col 4 bottom: Chat
+  // Col 3 bottom: Chat
   api.addPanel({
     id: 'chat',
     component: 'placeholder',
     title: 'Chat',
     params: { label: 'Chat (coming soon)' },
     position: { referencePanel: 'sections', direction: 'below' },
-    initialHeight: 300,
   })
 }
 
