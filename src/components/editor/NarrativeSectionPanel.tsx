@@ -6,9 +6,12 @@ const STORAGE_KEY = 'beatlab-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
+type Marker = { id: string; time: number; label: string }
+
 type NarrativeSectionPanelProps = {
   sections: NarrativeSection[]
   projectName: string
+  markers?: Marker[]
   onClose: () => void
   onSeek: (time: number) => void
   onSectionsChange: () => void
@@ -28,7 +31,7 @@ function toTs(s: number): string {
   return `${m}:${sec < 10 ? '0' : ''}${sec.toFixed(2)}`
 }
 
-export function NarrativeSectionPanel({ sections: initialSections, projectName, onClose, onSeek, onSectionsChange, currentTime, scrollToId }: NarrativeSectionPanelProps) {
+export function NarrativeSectionPanel({ sections: initialSections, projectName, markers = [], onClose, onSeek, onSectionsChange, currentTime, scrollToId }: NarrativeSectionPanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -167,17 +170,24 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
           <div className="p-4 text-center text-sm text-gray-600">No narrative sections</div>
         ) : (
           <div className="divide-y divide-gray-800">
-            {sections.map((section) => (
-              <SectionCard
-                key={section.id}
-                section={section}
-                expanded={expandedId === section.id}
-                onToggle={() => setExpandedId(expandedId === section.id ? null : section.id)}
-                onChange={handleFieldChange}
-                onSeek={() => onSeek(parseTs(section.start))}
-                onDelete={() => handleDeleteSection(section.id)}
-              />
-            ))}
+            {sections.map((section, idx) => {
+              const sStart = parseTs(section.start)
+              const sEnd = section.end ? parseTs(section.end) : (idx < sections.length - 1 ? parseTs(sections[idx + 1].start) : Infinity)
+              const sectionMarkers = markers.filter((m) => m.label && m.time >= sStart && m.time < sEnd).sort((a, b) => a.time - b.time)
+              return (
+                <SectionCard
+                  key={section.id}
+                  section={section}
+                  markers={sectionMarkers}
+                  expanded={expandedId === section.id}
+                  onToggle={() => setExpandedId(expandedId === section.id ? null : section.id)}
+                  onChange={handleFieldChange}
+                  onSeek={() => onSeek(parseTs(section.start))}
+                  onSeekTo={onSeek}
+                  onDelete={() => handleDeleteSection(section.id)}
+                />
+              )
+            })}
           </div>
         )}
       </div>
@@ -185,12 +195,14 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
   )
 }
 
-function SectionCard({ section, expanded, onToggle, onChange, onSeek, onDelete }: {
+function SectionCard({ section, markers = [], expanded, onToggle, onChange, onSeek, onSeekTo, onDelete }: {
   section: NarrativeSection
+  markers?: Marker[]
   expanded: boolean
   onToggle: () => void
   onChange: (id: string, field: string, value: string | string[]) => void
   onSeek: () => void
+  onSeekTo?: (time: number) => void
   onDelete: () => void
 }) {
   const s = section
@@ -232,6 +244,23 @@ function SectionCard({ section, expanded, onToggle, onChange, onSeek, onDelete }
       {/* Expanded content */}
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
+          {/* Markers in this section */}
+          {markers.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">Markers ({markers.length})</div>
+              {markers.map((m) => (
+                <div key={m.id} className="flex items-center gap-2 px-2 py-1 bg-gray-800/50 rounded">
+                  <span className="text-[10px] text-amber-400 font-mono">{toTs(m.time)}</span>
+                  <span className="text-[10px] text-gray-300 flex-1 truncate">{m.label || '(unlabeled)'}</span>
+                  <button
+                    onClick={() => onSeekTo?.(m.time)}
+                    className="text-[9px] text-blue-400 hover:text-blue-300"
+                  >jump</button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex gap-2">
             <FieldInput label="Start" value={s.start} onChange={(v) => onChange(s.id, 'start', v)} />
             <FieldInput label="End" value={s.end || ''} onChange={(v) => onChange(s.id, 'end', v)} />

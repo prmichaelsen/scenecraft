@@ -2235,6 +2235,7 @@ export function Timeline({ data }: { data: EditorData }) {
         <NarrativeSectionPanel
           sections={data.narrativeSections}
           projectName={data.projectName}
+          markers={markers}
           onClose={() => { setShowSections(false); setScrollToSectionId(null) }}
           onSeek={(time) => {
             if (seekFnRef.current) seekFnRef.current(time)
