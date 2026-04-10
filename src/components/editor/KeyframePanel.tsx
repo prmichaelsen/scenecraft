@@ -764,14 +764,36 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
         )}
       </div>
 
-      <button
-        onClick={handleGenerate}
-        disabled={generating}
-        className="w-full text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
-        title="Generate image candidates from the selected keyframe image"
-      >
-        {generating ? 'Generating with Imagen...' : refinementPrompt ? 'Refine Selected Image' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
-      </button>
+      <div className="flex items-center">
+        <button
+          onClick={handleGenerate}
+          disabled={generating}
+          className="flex-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+          title="Generate image candidates from the selected keyframe image"
+        >
+          {generating ? (jobStatus || 'Generating with Imagen...') : refinementPrompt ? 'Refine Selected Image' : candidates.length > 0 ? 'Generate More' : 'Generate Candidates'}
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              const { fetchDirectoryListing } = await import('@/lib/beatlab-client')
+              const files = await fetchDirectoryListing(projectName, `keyframe_candidates/${kf.id}`)
+              const newCandidates = files
+                .filter((f: { name: string; isDirectory: boolean }) => !f.isDirectory && (f.name.endsWith('.png') || f.name.endsWith('.jpg')))
+                .map((f: { name: string }) => `keyframe_candidates/${kf.id}/${f.name}`)
+                .sort()
+              if (newCandidates.length > 0) {
+                setCandidates(newCandidates)
+                kf.candidates = newCandidates
+              }
+            } catch (e) { console.error('Refresh failed:', e) }
+          }}
+          className="ml-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1"
+          title="Refresh candidates from server"
+        >
+          ↻
+        </button>
+      </div>
 
       <button
         onClick={async () => {
