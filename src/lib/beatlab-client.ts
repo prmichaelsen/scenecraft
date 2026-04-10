@@ -420,24 +420,26 @@ export async function postUpdateRules(project: string, rules: AudioRule[]) {
   return res.json()
 }
 
-export async function fetchMarkers(project: string): Promise<{ id: string; time: number; label: string }[]> {
+export type MarkerType = 'note' | 'todo' | 'section'
+
+export async function fetchMarkers(project: string): Promise<{ id: string; time: number; label: string; type: MarkerType }[]> {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers`)
   if (!res.ok) return []
-  const data = await res.json() as { markers: { id: string; time: number; label: string }[] }
+  const data = await res.json() as { markers: { id: string; time: number; label: string; type: MarkerType }[] }
   return data.markers
 }
 
-export async function postAddMarker(project: string, id: string, time: number, label: string = '') {
+export async function postAddMarker(project: string, id: string, time: number, label: string = '', type: MarkerType = 'note') {
   await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/add`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, time, label }),
+    body: JSON.stringify({ id, time, label, type }),
   })
 }
 
-export async function postUpdateMarker(project: string, id: string, label: string) {
+export async function postUpdateMarker(project: string, id: string, updates: { label?: string; type?: MarkerType }) {
   await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/update`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, label }),
+    body: JSON.stringify({ id, ...updates }),
   })
 }
 

@@ -79,18 +79,19 @@ function TrackHeader({ track, isActive, scrollLeft, onSelect, onUpdate, onOpenSe
 }
 
 function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate, sectionMarkers, onSectionMarkerClick }: {
-  markers: { id: string; time: number; label: string }[]
+  markers: { id: string; time: number; label: string; type?: string }[]
   pxPerSec: number
   scrollLeft: number
   viewportWidth: number
   onAdd: (time: number) => void
   onRemove: (id: string) => void
-  onUpdate: (id: string, label: string) => void
+  onUpdate: (id: string, updates: { label?: string; type?: string }) => void
   sectionMarkers?: { id: string; time: number; label: string; notes?: string }[]
   onSectionMarkerClick?: (sectionId: string) => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
+  const [editType, setEditType] = useState<string>('note')
   const BUFFER_PX = 300
 
   return (
@@ -118,18 +119,19 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
                 e.stopPropagation()
                 setEditingId(m.id)
                 setEditText(m.label)
+                setEditType(m.type || 'note')
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation()
                 onRemove(m.id)
               }}
             >
-              {/* Wedge/triangle marker */}
+              {/* Wedge/triangle marker — color by type */}
               <svg width="10" height="10" viewBox="0 0 10 10" className="shrink-0">
-                <polygon points="5,10 0,0 10,0" fill="currentColor" className="text-amber-500/80 group-hover:text-amber-400" />
+                <polygon points="5,10 0,0 10,0" fill="currentColor" className={m.type === 'todo' ? 'text-green-500/80 group-hover:text-green-400' : m.type === 'section' ? 'text-blue-500/80 group-hover:text-blue-400' : 'text-amber-500/80 group-hover:text-amber-400'} />
               </svg>
               {/* Vertical line from tip */}
-              <div className="w-px flex-1 bg-amber-500/40 group-hover:bg-amber-400/60" />
+              <div className={`w-px flex-1 ${m.type === 'todo' ? 'bg-green-500/40 group-hover:bg-green-400/60' : m.type === 'section' ? 'bg-blue-500/40 group-hover:bg-blue-400/60' : 'bg-amber-500/40 group-hover:bg-amber-400/60'}`} />
               {/* Hover tooltip */}
               {!isEditing && m.label && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-[10px] text-gray-300 px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none max-w-[200px] truncate">
@@ -137,21 +139,39 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
                 </div>
               )}
             </div>
-            {/* Inline edit */}
+            {/* Edit popover */}
             {isEditing && (
-              <div className="absolute top-full left-0 mt-0.5 z-50 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="absolute top-full left-0 mt-0.5 z-50 pointer-events-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 w-48 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                {/* Type selector */}
+                <div className="flex gap-1">
+                  {(['note', 'todo', 'section'] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => { setEditType(t); onUpdate(m.id, { type: t }) }}
+                      className={`flex-1 text-[10px] py-0.5 rounded capitalize ${editType === t ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50' : 'bg-gray-700/50 text-gray-400 hover:text-gray-300 border border-transparent'}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                {/* Notes input */}
+                <div className="text-[9px] text-gray-500 uppercase tracking-wider">Notes</div>
                 <input
                   type="text"
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') { onUpdate(m.id, editText); setEditingId(null) }
+                    if (e.key === 'Enter') { onUpdate(m.id, { label: editText, type: editType }); setEditingId(null) }
                     if (e.key === 'Escape') setEditingId(null)
                   }}
-                  onBlur={() => { onUpdate(m.id, editText); setEditingId(null) }}
+                  onBlur={(e) => {
+                    // Don't close if clicking within the popover (e.g., type buttons)
+                    if (e.relatedTarget && (e.currentTarget.parentElement?.contains(e.relatedTarget as Node))) return
+                    onUpdate(m.id, { label: editText }); setEditingId(null)
+                  }}
                   autoFocus
-                  className="bg-gray-800 text-xs text-gray-300 border border-amber-500 rounded px-1.5 py-0.5 w-40 focus:outline-none"
-                  placeholder="Marker label..."
+                  className="bg-gray-900 text-xs text-gray-300 border border-gray-600 rounded px-1.5 py-0.5 w-full focus:outline-none focus:border-amber-500"
+                  placeholder="Add notes..."
                 />
               </div>
             )}
@@ -1887,9 +1907,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                   setMarkers((prev) => prev.filter((m) => m.id !== id))
                   postRemoveMarker(data.projectName, id).catch(() => {})
                 }}
-                onUpdate={(id, label) => {
-                  setMarkers((prev) => prev.map((m) => m.id === id ? { ...m, label } : m))
-                  postUpdateMarker(data.projectName, id, label).catch(() => {})
+                onUpdate={(id, updates) => {
+                  setMarkers((prev) => prev.map((m) => m.id === id ? { ...m, ...updates } : m))
+                  postUpdateMarker(data.projectName, id, updates).catch(() => {})
                 }}
                 sectionMarkers={data.narrativeSections.map((s) => {
                   const parts = s.start.split(':')
