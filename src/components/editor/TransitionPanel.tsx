@@ -1644,10 +1644,19 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
         const sorted = [...prev[activeAxis]].sort((a, b) => a[0] - b[0])
         const minX = sorted[draggingIdx - 1]?.[0] ?? 0
         const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
+        const isEndpoint = draggingIdx === 0 || draggingIdx === sorted.length - 1
         const existingEasing = sorted[draggingIdx][2]
         sorted[draggingIdx] = existingEasing != null
           ? [Math.max(minX, Math.min(maxX, nx)), ny, existingEasing]
           : [Math.max(minX, Math.min(maxX, nx)), ny]
+        // Shift+drag endpoint: move both endpoints to same Y
+        if (e.shiftKey && isEndpoint) {
+          const otherIdx = draggingIdx === 0 ? sorted.length - 1 : 0
+          const otherEasing = sorted[otherIdx][2]
+          sorted[otherIdx] = otherEasing != null
+            ? [sorted[otherIdx][0], ny, otherEasing]
+            : [sorted[otherIdx][0], ny]
+        }
         return { ...prev, [activeAxis]: sorted }
       })
       return
