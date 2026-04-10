@@ -117,6 +117,9 @@ export type Transition = {
   maskFeather: number | null
   transformX: number | null
   transformY: number | null
+  transformXCurve: [number, number, number?][] | null
+  transformYCurve: [number, number, number?][] | null
+  transformZCurve: [number, number, number?][] | null
   hidden: boolean
   effects: TransitionEffect[]
 }
@@ -259,6 +262,9 @@ const getEditorData = createServerFn({ method: 'GET' })
           maskFeather: tr.maskFeather != null ? tr.maskFeather as number : null,
           transformX: tr.transformX != null ? tr.transformX as number : null,
           transformY: tr.transformY != null ? tr.transformY as number : null,
+          transformXCurve: tr.transformXCurve ?? null,
+          transformYCurve: tr.transformYCurve ?? null,
+          transformZCurve: tr.transformZCurve ?? null,
           hidden: !!tr.hidden,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
@@ -364,6 +370,9 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           maskFeather: tr.maskFeather != null ? tr.maskFeather as number : null,
           transformX: tr.transformX != null ? tr.transformX as number : null,
           transformY: tr.transformY != null ? tr.transformY as number : null,
+          transformXCurve: tr.transformXCurve ?? null,
+          transformYCurve: tr.transformYCurve ?? null,
+          transformZCurve: tr.transformZCurve ?? null,
           hidden: !!tr.hidden,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }

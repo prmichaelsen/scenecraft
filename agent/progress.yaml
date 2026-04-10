@@ -29,8 +29,8 @@ milestones:
           File selector, WebGL integration, beat marker updates.
       - id: task-2
         name: Animated Transform Curves (X, Y, Z)
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-10T00:00:00Z
         file: agent/tasks/milestone-1-audio-intelligence/task-2-animated-transform-curves.md
         estimated_hours: 10
         actual_hours: null

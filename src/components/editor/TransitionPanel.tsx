@@ -231,34 +231,8 @@ export function TransitionPanel({
                   {tr.isAdjustment ? 'Adjustment Layer ✓' : 'Toggle Adjustment Layer'}
                 </button>
 
-                {/* Transform */}
-                <div className="space-y-1">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider">Transform</div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-gray-500 w-6">X</span>
-                    <input type="range" min={-0.5} max={0.5} step={0.005} value={tr.transformX ?? 0}
-                      onChange={async (e) => { const v = parseFloat(e.target.value); tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
-                      className="flex-1 h-1.5 accent-cyan-500" />
-                    <input type="number" min={-50} max={50} step={0.5}
-                      defaultValue={Math.round((tr.transformX ?? 0) * 100)}
-                      key={`tx-${tr.id}-${tr.transformX}`}
-                      onBlur={async (e) => { const raw = parseFloat(e.target.value); if (isNaN(raw)) return; const v = raw / 100; tr.transformX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformX: v } as never); onDataChange() }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                      className="w-12 bg-gray-800 text-[9px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 text-right" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-gray-500 w-6">Y</span>
-                    <input type="range" min={-0.5} max={0.5} step={0.005} value={tr.transformY ?? 0}
-                      onChange={async (e) => { const v = parseFloat(e.target.value); tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
-                      className="flex-1 h-1.5 accent-cyan-500" />
-                    <input type="number" min={-50} max={50} step={0.5}
-                      defaultValue={Math.round((tr.transformY ?? 0) * 100)}
-                      key={`ty-${tr.id}-${tr.transformY}`}
-                      onBlur={async (e) => { const raw = parseFloat(e.target.value); if (isNaN(raw)) return; const v = raw / 100; tr.transformY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { transformY: v } as never); onDataChange() }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                      className="w-12 bg-gray-800 text-[9px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 text-right" />
-                  </div>
-                </div>
+                {/* Transform Curves (X/Y/Z) */}
+                <TransformCurveEditor transition={tr} projectName={projectName} keyframes={keyframes} currentTime={currentTime} onDataChange={onDataChange} />
 
                 {/* Radial Mask */}
                 {(() => {
@@ -1289,6 +1263,389 @@ function ChromaKeyEditor({ transition, projectName, onDataChange }: { transition
         <input type="range" min={0} max={50} step={1} value={Math.round(feather * 100)}
           onChange={(e) => { const f = parseInt(e.target.value, 10) / 100; setFeather(f); save(color, threshold, f) }}
           className="w-full h-1.5 accent-amber-500" />
+      </div>
+    </div>
+  )
+}
+
+const TRANSFORM_AXES = ['X', 'Y', 'Z'] as const
+type TransformAxis = typeof TRANSFORM_AXES[number]
+const TRANSFORM_COLORS: Record<TransformAxis, string> = { X: '#00cccc', Y: '#cc44cc', Z: '#cccc00' }
+const TRANSFORM_LABELS: Record<TransformAxis, string> = { X: 'X Offset', Y: 'Y Offset', Z: 'Scale' }
+const TRANSFORM_DEFAULTS: Record<TransformAxis, number> = { X: 0, Y: 0, Z: 1 }
+const TRANSFORM_RANGES: Record<TransformAxis, { min: number; max: number }> = { X: { min: -1, max: 1 }, Y: { min: -1, max: 1 }, Z: { min: 0, max: 10 } }
+const TRANSFORM_CURVE_KEYS: Record<TransformAxis, 'transformXCurve' | 'transformYCurve' | 'transformZCurve'> = { X: 'transformXCurve', Y: 'transformYCurve', Z: 'transformZCurve' }
+const TRANSFORM_STYLE_KEYS: Record<TransformAxis, string> = { X: 'transformXCurve', Y: 'transformYCurve', Z: 'transformZCurve' }
+
+function TransformCurveEditor({ transition, projectName, keyframes, currentTime, onDataChange }: {
+  transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number; onDataChange?: () => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [activeAxis, setActiveAxis] = useState<TransformAxis>('X')
+  const [allPoints, setAllPoints] = useState<Record<TransformAxis, CurvePoint[]>>(() => ({
+    X: (transition.transformXCurve as CurvePoint[]) || [[0, 0], [1, 0]],
+    Y: (transition.transformYCurve as CurvePoint[]) || [[0, 0], [1, 0]],
+    Z: (transition.transformZCurve as CurvePoint[]) || [[0, 1], [1, 1]],
+  }))
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const PAD = 10
+  const ASPECT = 2
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 240, h: 120 })
+  const W = canvasSize.w
+  const H = canvasSize.h
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ro = new ResizeObserver((entries) => {
+      const { width } = entries[0].contentRect
+      if (width > 0) setCanvasSize({ w: width, h: Math.round(width / ASPECT) })
+    })
+    ro.observe(canvas)
+    return () => ro.disconnect()
+  }, [])
+
+  const range = TRANSFORM_RANGES[activeAxis]
+  const toCanvas = useCallback((x: number, y: number): [number, number] => [
+    PAD + x * (W - 2 * PAD),
+    H - PAD - ((y - range.min) / (range.max - range.min)) * (H - 2 * PAD),
+  ], [W, H, range])
+  const fromCanvas = useCallback((cx: number, cy: number): [number, number] => [
+    Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
+    Math.max(range.min, Math.min(range.max, range.min + ((H - PAD - cy) / (H - 2 * PAD)) * (range.max - range.min))),
+  ], [W, H, range])
+  const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    return [e.clientX - rect.left, e.clientY - rect.top]
+  }
+
+  // Draw all 3 curves
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = W * dpr
+    canvas.height = H * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = '#1a1a2e'
+    ctx.fillRect(0, 0, W, H)
+
+    // Grid
+    ctx.strokeStyle = '#333'
+    ctx.lineWidth = 0.5
+    for (let i = 0; i <= 4; i++) {
+      const [x] = toCanvas(i / 4, range.min)
+      const fracY = range.min + (i / 4) * (range.max - range.min)
+      const [, y] = toCanvas(0, fracY)
+      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
+    }
+
+    // Axis labels
+    ctx.fillStyle = '#666'
+    ctx.font = '8px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('Progress \u2192', W / 2, H - 1)
+    ctx.save()
+    ctx.translate(8, H / 2)
+    ctx.rotate(-Math.PI / 2)
+    ctx.fillText(TRANSFORM_LABELS[activeAxis], 0, 0)
+    ctx.restore()
+
+    // Reference line at default value
+    const defaultY = TRANSFORM_DEFAULTS[activeAxis]
+    const [, refY] = toCanvas(0, defaultY)
+    ctx.strokeStyle = '#555'
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    ctx.moveTo(PAD, refY)
+    ctx.lineTo(W - PAD, refY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Draw all 3 curves
+    for (const axis of TRANSFORM_AXES) {
+      const pts = [...allPoints[axis]].sort((a, b) => a[0] - b[0]) as CurvePoint[]
+      const color = TRANSFORM_COLORS[axis]
+      const isActive = axis === activeAxis
+      const axisRange = TRANSFORM_RANGES[axis]
+
+      const axisToCanvas = (x: number, y: number): [number, number] => [
+        PAD + x * (W - 2 * PAD),
+        H - PAD - ((y - axisRange.min) / (axisRange.max - axisRange.min)) * (H - 2 * PAD),
+      ]
+
+      // Curve line
+      const STEPS = 24
+      const curvePath: [number, number][] = []
+      for (let i = 0; i < pts.length; i++) {
+        if (i === 0) {
+          curvePath.push(axisToCanvas(pts[0][0], pts[0][1]))
+        } else {
+          const [x0] = pts[i - 1]
+          const [x1, y1] = pts[i]
+          const easing = getEasing(pts[i])
+          if (easing === 0) {
+            curvePath.push(axisToCanvas(x1, y1))
+          } else {
+            for (let s = 1; s <= STEPS; s++) {
+              const t = s / STEPS
+              const val = evaluateCurve(pts, x0 + t * (x1 - x0))
+              curvePath.push(axisToCanvas(x0 + t * (x1 - x0), val))
+            }
+          }
+        }
+      }
+
+      ctx.strokeStyle = isActive ? color : color + '33'
+      ctx.lineWidth = isActive ? 1.5 : 1
+      ctx.beginPath()
+      for (let i = 0; i < curvePath.length; i++) {
+        if (i === 0) ctx.moveTo(curvePath[i][0], curvePath[i][1])
+        else ctx.lineTo(curvePath[i][0], curvePath[i][1])
+      }
+      ctx.stroke()
+
+      // Points (only for active axis, or all for hit-testing visual)
+      for (let i = 0; i < pts.length; i++) {
+        const [cx, cy] = axisToCanvas(pts[i][0], pts[i][1])
+        const isEndpoint = i === 0 || i === pts.length - 1
+        const isHovered = isActive && hoveredIdx === i
+        const isDragging = isActive && draggingIdx === i
+        const r = isDragging ? 3.5 : isHovered ? 3 : isActive ? 2.5 : 1.5
+
+        ctx.beginPath()
+        if (isEndpoint) {
+          ctx.arc(cx, cy, r, 0, Math.PI * 2)
+          ctx.fillStyle = isDragging ? color : isHovered ? color : isActive ? '#555' : color + '33'
+        } else {
+          ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy); ctx.closePath()
+          ctx.fillStyle = isActive ? color : color + '33'
+        }
+        ctx.fill()
+
+        if (isActive && (isHovered || isDragging)) {
+          ctx.fillStyle = color
+          ctx.font = '7px monospace'
+          ctx.textAlign = cx > W / 2 ? 'right' : 'left'
+          const labelX = cx > W / 2 ? cx - 8 : cx + 8
+          ctx.fillText(`${pts[i][1].toFixed(2)}`, labelX, cy + 3)
+        }
+        const ptEasing = getEasing(pts[i])
+        if (isActive && i > 0 && ptEasing > 0) {
+          ctx.fillStyle = color + 'cc'
+          ctx.font = 'bold 8px monospace'
+          ctx.textAlign = 'center'
+          ctx.fillText(EASING_LABELS[ptEasing], cx, cy - r - 3)
+        }
+      }
+    }
+
+    // Playhead
+    const fromKf = keyframes.find((k) => k.id === transition.from)
+    const toKf = keyframes.find((k) => k.id === transition.to)
+    if (fromKf && toKf) {
+      const span = toKf.timeSeconds - fromKf.timeSeconds
+      if (span > 0) {
+        const linearProgress = Math.max(0, Math.min(1, (currentTime - fromKf.timeSeconds) / span))
+        const activePts = [...allPoints[activeAxis]].sort((a, b) => a[0] - b[0]) as CurvePoint[]
+        const val = evaluateCurve(activePts, linearProgress)
+        const [phx, phy] = toCanvas(linearProgress, val)
+        const [, bottomY] = toCanvas(0, range.min)
+        const [, topY] = toCanvas(0, range.max)
+
+        ctx.strokeStyle = '#ffffff44'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(phx, topY)
+        ctx.lineTo(phx, bottomY)
+        ctx.stroke()
+
+        ctx.beginPath()
+        ctx.arc(phx, phy, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#fff'
+        ctx.fill()
+        ctx.strokeStyle = TRANSFORM_COLORS[activeAxis]
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+    }
+  }, [allPoints, activeAxis, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to, W, H])
+
+  const save = useCallback(async (axis: TransformAxis, newPoints: CurvePoint[]) => {
+    setSaving(true)
+    const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
+    const cleaned: CurvePoint[] = sorted.map((p) => p[2] ? [p[0], p[1], p[2]] : [p[0], p[1]])
+    try {
+      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+      const defaultVal = TRANSFORM_DEFAULTS[axis]
+      const isDefault = cleaned.length === 2 && cleaned[0][1] === defaultVal && cleaned[1][1] === defaultVal && !cleaned[0][2] && !cleaned[1][2]
+      await postUpdateTransitionStyle(projectName, transition.id, { [TRANSFORM_STYLE_KEYS[axis]]: isDefault ? null : cleaned } as Record<string, unknown> as never)
+      ;(transition as Record<string, unknown>)[TRANSFORM_CURVE_KEYS[axis]] = isDefault ? null : cleaned
+      onDataChange?.()
+    } catch (e) {
+      console.error(`Save transform ${axis} curve failed:`, e)
+    } finally {
+      setSaving(false)
+    }
+  }, [projectName, transition, onDataChange])
+
+  const handleCycleEasing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    const sorted = [...allPoints[activeAxis]].sort((a, b) => a[0] - b[0]) as CurvePoint[]
+    for (let i = 1; i < sorted.length; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
+        const cur = getEasing(sorted[i])
+        const next = (cur + 1) % EASING_COUNT
+        sorted[i] = [sorted[i][0], sorted[i][1], next]
+        setAllPoints((prev) => ({ ...prev, [activeAxis]: sorted }))
+        save(activeAxis, sorted)
+        return
+      }
+    }
+  }, [allPoints, activeAxis, save, toCanvas])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button === 2) return
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+
+    // Auto-switch: check all axes for hit, switch if needed
+    for (const axis of TRANSFORM_AXES) {
+      const axisRange = TRANSFORM_RANGES[axis]
+      const axisToCanvas = (x: number, y: number): [number, number] => [
+        PAD + x * (W - 2 * PAD),
+        H - PAD - ((y - axisRange.min) / (axisRange.max - axisRange.min)) * (H - 2 * PAD),
+      ]
+      const sorted = [...allPoints[axis]].sort((a, b) => a[0] - b[0])
+      for (let i = 0; i < sorted.length; i++) {
+        const [px, py] = axisToCanvas(sorted[i][0], sorted[i][1])
+        if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
+          if (axis !== activeAxis) setActiveAxis(axis)
+          setDraggingIdx(i)
+          return
+        }
+      }
+    }
+
+    // No existing point hit — add new point on active axis
+    const [nx, ny] = fromCanvas(pos[0], pos[1])
+    const newPoints: CurvePoint[] = [...allPoints[activeAxis], [nx, ny]]
+    newPoints.sort((a, b) => a[0] - b[0])
+    setAllPoints((prev) => ({ ...prev, [activeAxis]: newPoints }))
+    save(activeAxis, newPoints)
+  }, [allPoints, activeAxis, save, fromCanvas, W, H])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    if (draggingIdx !== null) {
+      const [nx, ny] = fromCanvas(pos[0], pos[1])
+      setAllPoints((prev) => {
+        const sorted = [...prev[activeAxis]].sort((a, b) => a[0] - b[0])
+        const minX = sorted[draggingIdx - 1]?.[0] ?? 0
+        const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
+        const existingEasing = sorted[draggingIdx][2]
+        sorted[draggingIdx] = existingEasing != null
+          ? [Math.max(minX, Math.min(maxX, nx)), ny, existingEasing]
+          : [Math.max(minX, Math.min(maxX, nx)), ny]
+        return { ...prev, [activeAxis]: sorted }
+      })
+      return
+    }
+    // Hover detection on active axis only
+    const sorted = [...allPoints[activeAxis]].sort((a, b) => a[0] - b[0])
+    let found: number | null = null
+    for (let i = 0; i < sorted.length; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) { found = i; break }
+    }
+    setHoveredIdx(found)
+  }, [draggingIdx, allPoints, activeAxis, fromCanvas, toCanvas])
+
+  const handleMouseUp = useCallback(() => {
+    if (draggingIdx !== null) { setDraggingIdx(null); save(activeAxis, allPoints[activeAxis]) }
+  }, [draggingIdx, allPoints, activeAxis, save])
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    const pos = mouseToCanvas(e)
+    if (!pos) return
+    const sorted = [...allPoints[activeAxis]].sort((a, b) => a[0] - b[0])
+    for (let i = 1; i < sorted.length - 1; i++) {
+      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
+      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
+        const newPoints = sorted.filter((_, j) => j !== i)
+        setAllPoints((prev) => ({ ...prev, [activeAxis]: newPoints }))
+        save(activeAxis, newPoints)
+        setHoveredIdx(null)
+        return
+      }
+    }
+  }, [allPoints, activeAxis, save, toCanvas])
+
+  const handleReset = useCallback(() => {
+    const defaultVal = TRANSFORM_DEFAULTS[activeAxis]
+    const defaultPoints: CurvePoint[] = [[0, defaultVal], [1, defaultVal]]
+    setAllPoints((prev) => ({ ...prev, [activeAxis]: defaultPoints }))
+    save(activeAxis, defaultPoints)
+    setHoveredIdx(null)
+  }, [activeAxis, save])
+
+  const activePoints = allPoints[activeAxis]
+  const defaultVal = TRANSFORM_DEFAULTS[activeAxis]
+  const hasChanges = activePoints.length > 2 || activePoints.some((p) => p[1] !== defaultVal || (p[2] && p[2] > 0))
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider">Transform</div>
+        <button
+          onClick={handleReset}
+          disabled={saving || !hasChanges}
+          className="text-[10px] text-gray-500 hover:text-gray-300 disabled:text-gray-700 transition-colors"
+        >
+          Reset {activeAxis}
+        </button>
+      </div>
+      {/* Pill tabs */}
+      <div className="flex gap-0.5">
+        {TRANSFORM_AXES.map((axis) => (
+          <button
+            key={axis}
+            onClick={() => setActiveAxis(axis)}
+            className={`flex-1 text-[9px] py-1 rounded transition-colors ${activeAxis === axis ? 'text-white font-medium' : 'text-gray-500 hover:text-gray-300 bg-gray-800'}`}
+            style={activeAxis === axis ? { backgroundColor: TRANSFORM_COLORS[axis] + '44', color: TRANSFORM_COLORS[axis] } : undefined}
+          >
+            {axis}
+          </button>
+        ))}
+      </div>
+      <canvas
+        ref={canvasRef}
+        className="w-full rounded border border-gray-700 cursor-crosshair"
+        style={{ width: '100%', height: 'auto', aspectRatio: `${ASPECT} / 1` }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
+        onDoubleClick={handleDoubleClick}
+        onContextMenu={handleCycleEasing}
+      />
+      <div className="text-[8px] text-gray-600">
+        <span className="text-gray-500">Click</span> add · <span className="text-gray-500">Drag</span> move · <span className="text-gray-500">Dbl-click</span> remove · <span className="text-gray-500">Right-click</span> easing
       </div>
     </div>
   )
