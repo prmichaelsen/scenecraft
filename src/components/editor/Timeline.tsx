@@ -905,7 +905,7 @@ export function Timeline({ data }: { data: EditorData }) {
     if (!opts?.keepPool) setPoolSelection(null)
     setShowBin(false)
     setShowVersions(false)
-    setShowSections(false)
+    // showSections is independent — not closed by closeAllPanels
     setShowSettings(false)
     setShowLogs(false)
     setShowCheckpoints(false)
@@ -1793,7 +1793,7 @@ export function Timeline({ data }: { data: EditorData }) {
           </button>
 
           <button
-            onClick={() => { const was = showSections; closeAllPanels(); if (!was) setShowSections(true) }}
+            onClick={() => setShowSections((v) => !v)}
             className={`text-xs px-2 py-1 rounded transition-colors ${showSections ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
             title="Edit narrative sections"
           >
@@ -2231,26 +2231,6 @@ export function Timeline({ data }: { data: EditorData }) {
           activeTransitions={localTransitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
           onHoverPreview={setHoverPreviewUrl}
         />
-      ) : showSections ? (
-        <NarrativeSectionPanel
-          sections={data.narrativeSections}
-          projectName={data.projectName}
-          markers={markers}
-          onClose={() => { setShowSections(false); setScrollToSectionId(null) }}
-          onSeek={(time) => {
-            if (seekFnRef.current) seekFnRef.current(time)
-            else setCurrentTime(time)
-            // Scroll timeline to show the playhead
-            if (scrollRef.current) {
-              const x = time * pxPerSec
-              const vw = scrollRef.current.clientWidth
-              scrollRef.current.scrollLeft = Math.max(0, x - vw / 3)
-            }
-          }}
-          onSectionsChange={() => router.invalidate()}
-          currentTime={currentTime}
-          scrollToId={scrollToSectionId}
-        />
       ) : selectedKeyframe ? (
         <KeyframePanel
           key={selectedKeyframe.id}
@@ -2424,6 +2404,28 @@ export function Timeline({ data }: { data: EditorData }) {
           />
         )
       })() : null}
+
+      {/* Sections sidebar — independent of mutex panel chain */}
+      {showSections && (
+        <NarrativeSectionPanel
+          sections={data.narrativeSections}
+          projectName={data.projectName}
+          markers={markers}
+          onClose={() => { setShowSections(false); setScrollToSectionId(null) }}
+          onSeek={(time) => {
+            if (seekFnRef.current) seekFnRef.current(time)
+            else setCurrentTime(time)
+            if (scrollRef.current) {
+              const x = time * pxPerSec
+              const vw = scrollRef.current.clientWidth
+              scrollRef.current.scrollLeft = Math.max(0, x - vw / 3)
+            }
+          }}
+          onSectionsChange={() => router.invalidate()}
+          currentTime={currentTime}
+          scrollToId={scrollToSectionId}
+        />
+      )}
 
       {/* Import dialog */}
       {showImport && (
