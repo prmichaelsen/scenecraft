@@ -412,7 +412,7 @@ export function TransitionPanel({
               <SectionDescription transition={tr} audioDescriptions={audioDescriptions} keyframes={keyframes} />
             </>
           ) : tab === 'candidates' ? (
-            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} sectionDescription={sectionDescription} />
+            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} sectionDescription={sectionDescription} initialPromptRoster={initialPromptRoster} />
           ) : tab === 'browse' ? (
             <BrowseTab transition={tr} projectName={projectName} onAssigned={() => {
               transition.hasSelectedVideo = true
@@ -432,7 +432,7 @@ export function TransitionPanel({
   )
 }
 
-function ActionPromptEditor({ transition, projectName, sectionDescription }: { transition: Transition; projectName: string; sectionDescription: AudioDescription | null }) {
+function ActionPromptEditor({ transition, projectName, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[] }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:action`
   const job = useJobState(entityKey)
@@ -839,7 +839,7 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescription }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; sectionDescription: AudioDescription | null }) {
+function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[] }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:video`
   const job = useJobState(entityKey)
@@ -955,7 +955,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
   return (
     <div className="p-2 space-y-3">
       {/* Action prompt */}
-      <ActionPromptEditor transition={transition} projectName={projectName} sectionDescription={sectionDescription} />
+      <ActionPromptEditor transition={transition} projectName={projectName} sectionDescription={sectionDescription} initialPromptRoster={initialPromptRoster} />
 
       {/* Generation settings */}
       <div className="space-y-1.5">
