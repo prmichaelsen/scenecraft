@@ -237,11 +237,21 @@ tasks:
       actual_hours: null
       started: null
 
+  unassigned:
+    - id: task-13
+      name: Polish Interactive Transform Handles
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-13-interactive-transform-polish.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+
 documentation:
-  design_documents: 6
+  design_documents: 7
   milestone_documents: 1
   pattern_documents: 0
-  task_documents: 11
+  task_documents: 13
 
 progress:
   planning: 80
