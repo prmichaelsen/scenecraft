@@ -246,6 +246,14 @@ tasks:
       estimated_hours: 5
       actual_hours: null
       started: null
+    - id: task-14
+      name: Polish End Frame Modes
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-14-polish-end-frame-modes.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
 
 documentation:
   design_documents: 7
