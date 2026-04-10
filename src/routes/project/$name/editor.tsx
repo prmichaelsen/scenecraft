@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { Timeline } from '@/components/editor/Timeline'
+import { EditorLayout } from '@/components/editor/EditorLayout'
 import { StatusBar } from '@/components/editor/StatusBar'
 import { JobStateProvider } from '@/contexts/JobStateContext'
 import {
@@ -663,9 +663,9 @@ function EditorPage() {
         )}
       </div>
 
-      {/* Timeline */}
+      {/* Editor Layout (dockview panels) */}
       <div className="flex-1 min-h-0">
-        <Timeline data={data} />
+        <EditorLayout data={data} />
       </div>
 
       {/* Status bar */}

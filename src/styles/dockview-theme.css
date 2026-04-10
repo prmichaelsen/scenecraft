@@ -1,0 +1,19 @@
+/* Dockview dark theme overrides to match beatlab editor (bg-gray-900, border-gray-800) */
+
+.dv-dockview {
+  --dv-background-color: #111827; /* gray-900 */
+  --dv-paneview-header-border-color: #1f2937; /* gray-800 */
+  --dv-tabs-and-actions-container-background-color: #111827;
+  --dv-activegroup-visiblepanel-tab-background-color: #1f2937;
+  --dv-activegroup-hiddenpanel-tab-background-color: #111827;
+  --dv-inactivegroup-visiblepanel-tab-background-color: #1f2937;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #111827;
+  --dv-tab-divider-color: #374151; /* gray-700 */
+  --dv-activegroup-visiblepanel-tab-color: #d1d5db; /* gray-300 */
+  --dv-activegroup-hiddenpanel-tab-color: #6b7280; /* gray-500 */
+  --dv-inactivegroup-visiblepanel-tab-color: #9ca3af; /* gray-400 */
+  --dv-inactivegroup-hiddenpanel-tab-color: #6b7280; /* gray-500 */
+  --dv-separator-border: #1f2937;
+  --dv-drag-over-background-color: rgba(59, 130, 246, 0.15); /* blue-500/15 */
+  --dv-drag-over-border-color: #3b82f6; /* blue-500 */
+}

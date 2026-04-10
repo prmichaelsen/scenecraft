@@ -12,6 +12,7 @@
     "@prmichaelsen/pretty-toasts": "^3.0.6",
     "@tanstack/react-router": "^1.132.0",
     "@tanstack/react-start": "^1.132.0",
+    "dockview-react": "^5.2.0",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.577.0",
     "react": "^19.0.0",

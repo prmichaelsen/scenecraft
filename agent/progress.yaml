@@ -42,21 +42,22 @@ milestones:
 
   - id: milestone_2
     name: Dynamic Panel Layout
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-10
     completed: null
     file: agent/milestones/milestone-2-dynamic-panel-layout.md
     tasks_total: 6
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 3
     tasks:
       - id: task-3
         name: Install dockview and create EditorLayout shell
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-10T00:00:00Z
         file: agent/tasks/milestone-2-dynamic-panel-layout/task-3-editor-layout-shell.md
         estimated_hours: 4
-        actual_hours: null
+        actual_hours: 0.5
+        completed_date: 2026-04-10T00:30:00Z
       - id: task-4
         name: Extract Preview and Timeline panels
         status: not_started
@@ -124,6 +125,102 @@ milestones:
         file: agent/tasks/milestone-3-contribution-points/task-11-package-yaml-schema.md
         estimated_hours: 3
         actual_hours: null
+
+tasks:
+  milestone_1:
+    - id: task-1
+      name: Audio Intelligence Integration
+      status: completed
+      milestone_id: milestone_1
+      file: agent/tasks/milestone-1-audio-intelligence/task-1-audio-intelligence-integration.md
+      estimated_hours: 10
+      actual_hours: null
+      started: 2026-03-29
+      completed_date: null
+    - id: task-2
+      name: Animated Transform Curves (X, Y, Z)
+      status: completed
+      milestone_id: milestone_1
+      file: agent/tasks/milestone-1-audio-intelligence/task-2-animated-transform-curves.md
+      estimated_hours: 10
+      actual_hours: null
+      started: 2026-04-10T00:00:00Z
+      completed_date: 2026-04-10T00:00:00Z
+  milestone_2:
+    - id: task-3
+      name: Install dockview and create EditorLayout shell
+      status: completed
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-3-editor-layout-shell.md
+      estimated_hours: 4
+      actual_hours: 0.5
+      started: 2026-04-10T00:00:00Z
+      completed_date: 2026-04-10T00:30:00Z
+    - id: task-4
+      name: Extract Preview and Timeline panels
+      status: not_started
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-4-preview-timeline-panels.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-5
+      name: Migrate property panels and extract Color Grading
+      status: not_started
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-5-property-panels.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-6
+      name: Migrate utility panels
+      status: not_started
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-6-utility-panels.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-7
+      name: Sidebars and toggle controls
+      status: not_started
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-7-sidebars-toggles.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-8
+      name: Workspace views and theme
+      status: not_started
+      milestone_id: milestone_2
+      file: agent/tasks/milestone-2-dynamic-panel-layout/task-8-workspace-views-theme.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+  milestone_3:
+    - id: task-9
+      name: Backend Placeholder Methods
+      status: not_started
+      milestone_id: milestone_3
+      file: agent/tasks/milestone-3-contribution-points/task-9-backend-placeholder-methods.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-10
+      name: Frontend Placeholder Methods
+      status: not_started
+      milestone_id: milestone_3
+      file: agent/tasks/milestone-3-contribution-points/task-10-frontend-placeholder-methods.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-11
+      name: Package.yaml Schema & Validation
+      status: not_started
+      milestone_id: milestone_3
+      file: agent/tasks/milestone-3-contribution-points/task-11-package-yaml-schema.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
 
 documentation:
   design_documents: 6
