@@ -328,6 +328,12 @@ Server's `ANTHROPIC_API_KEY` environment variable (same key used for image gener
 
 ## Future Considerations
 
+- **OpenAPI spec migration**: Define the beatlab REST API as `openapi.yaml`, then auto-generate:
+  - TypeScript types for frontend (replace hand-written `beatlab-client.ts`, `version-client.ts`, etc.)
+  - Claude tool definitions from endpoint schemas (no manual tool list maintenance)
+  - Python request/response validation on the server
+  - API documentation
+  - This eliminates the "tool definition maintenance" trade-off entirely — tools stay in sync with the API automatically. Could be its own milestone given 50+ endpoints in `api_server.py`.
 - AI-driven color grading (P2): user describes aesthetic, Claude sees frame via vision, calls curve update tools
 - Multiple conversation threads per project
 - Conversation search/filter
