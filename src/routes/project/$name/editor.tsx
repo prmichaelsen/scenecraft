@@ -668,7 +668,7 @@ function EditorPage() {
         {useV2 && (
           <>
             <span className="text-[10px] text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded">v2</span>
-            <WorkspaceMenu onReset={() => layoutRef.current?.resetLayout()} />
+            <WorkspaceMenu projectName={name} onReset={() => layoutRef.current?.resetLayout()} api={layoutRef.current?.getApi() ?? null} />
           </>
         )}
       </div>

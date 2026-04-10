@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useCallback, useImperativeHandle, forwardRef, useState } from 'react'
+import { createContext, useContext, useRef, useCallback, useImperativeHandle, forwardRef, useState, useEffect } from 'react'
 import {
   DockviewReact, DockviewDefaultTab,
   type DockviewReadyEvent, type DockviewApi,
@@ -14,6 +14,7 @@ import { SettingsPanel } from './SettingsPanel'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
 import { useRouter } from '@tanstack/react-router'
+import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
 
 // --- Editor Layout Context ---
 
@@ -295,6 +296,7 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
 
 export type EditorLayoutHandle = {
   resetLayout: () => void
+  getApi: () => DockviewApi | null
 }
 
 type EditorLayoutProps = {
@@ -305,6 +307,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
   const apiRef = useRef<DockviewApi | null>(null)
   const dataRef = useRef(data)
   dataRef.current = data
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useImperativeHandle(ref, () => ({
     resetLayout() {
@@ -312,11 +315,36 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
       if (!api) return
       api.clear()
       buildDefaultLayout(api, dataRef.current)
+      saveWorkspaceView(dataRef.current.projectName, '_autosave', api.toJSON()).catch(() => {})
     },
+    getApi() { return apiRef.current },
   }), [])
 
-  const onReady = useCallback((event: DockviewReadyEvent) => {
+  // Auto-save layout on changes (debounced 2s)
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api) return
+    const disposable = api.onDidLayoutChange(() => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(() => {
+        saveWorkspaceView(dataRef.current.projectName, '_autosave', api.toJSON()).catch(() => {})
+      }, 2000)
+    })
+    return () => { disposable.dispose(); if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+  }, [])
+
+  const onReady = useCallback(async (event: DockviewReadyEvent) => {
     apiRef.current = event.api
+
+    // Try restoring saved layout from DB
+    try {
+      const saved = await fetchWorkspaceView(dataRef.current.projectName, '_autosave')
+      if (saved && typeof saved === 'object') {
+        event.api.fromJSON(saved as Parameters<typeof event.api.fromJSON>[0])
+        return
+      }
+    } catch { /* fall through to default */ }
+
     buildDefaultLayout(event.api, dataRef.current)
   }, [])
 
@@ -335,8 +363,16 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
 
 // --- Workspace Menu ---
 
-export function WorkspaceMenu({ onReset }: { onReset: () => void }) {
+export function WorkspaceMenu({ projectName, onReset, api }: { projectName: string; onReset: () => void; api: DockviewApi | null }) {
   const [open, setOpen] = useState(false)
+  const [savedViews, setSavedViews] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!open) return
+    fetchWorkspaceViews(projectName).then((views) => {
+      setSavedViews(Object.keys(views).filter((k) => k !== '_autosave'))
+    }).catch(() => {})
+  }, [open, projectName])
 
   return (
     <div className="relative">
@@ -355,10 +391,30 @@ export function WorkspaceMenu({ onReset }: { onReset: () => void }) {
           >
             Default
           </button>
+          {savedViews.map((name) => (
+            <button
+              key={name}
+              className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+              onClick={async () => {
+                if (!api) return
+                const layout = await fetchWorkspaceView(projectName, name)
+                if (layout) api.fromJSON(layout as Parameters<typeof api.fromJSON>[0])
+                setOpen(false)
+              }}
+            >
+              {name}
+            </button>
+          ))}
           <div className="border-t border-gray-700 my-1" />
           <button
             className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200"
-            onClick={() => { setOpen(false) }}
+            onClick={() => {
+              if (!api) return
+              const name = prompt('Workspace view name:')
+              if (!name?.trim()) return
+              saveWorkspaceView(projectName, name.trim(), api.toJSON()).catch(() => {})
+              setOpen(false)
+            }}
           >
             Save Workspace View
           </button>
