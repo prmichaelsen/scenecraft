@@ -27,7 +27,7 @@ export function useEditorLayout() {
 // --- Panel Components ---
 
 function TimelinePanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
-  return <Timeline data={params.data} />
+  return <Timeline data={params.data} v2 />
 }
 
 function LogDockPanel() {

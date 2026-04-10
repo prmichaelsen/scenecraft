@@ -314,7 +314,7 @@ const DEFAULT_AUDIO_HEIGHT = 0 // 0 means flex-1 (fill remaining space)
 const MIN_AUDIO_HEIGHT = 60
 const MAX_AUDIO_HEIGHT = 400
 
-export function Timeline({ data }: { data: EditorData }) {
+export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const router = useRouter()
   const [currentTime, setCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
@@ -714,8 +714,18 @@ export function Timeline({ data }: { data: EditorData }) {
       // Find active transition for this track
       const tKfMap = new Map(tKfs.map((kf) => [kf.id, kf]))
       // Find transition spanning current time — highest z-index (last/highest ID) wins when overlapping
+      // Check if current time falls within any hidden transition — if so, skip this layer entirely
+      const inHiddenTr = tTrs.some((tr) => {
+        if (!tr.hidden) return false
+        const from = tKfMap.get(tr.from)
+        const to = tKfMap.get(tr.to)
+        if (!from || !to) return false
+        return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
+      })
+      if (inHiddenTr) {
+        return { frameA: null, frameB: null, blendFactor: 0, opacity: 0, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+      }
       const activeTr = tTrs.filter((tr) => {
-        if (tr.hidden) return false
         const from = tKfMap.get(tr.from)
         const to = tKfMap.get(tr.to)
         if (!from || !to) return false
@@ -1755,6 +1765,7 @@ export function Timeline({ data }: { data: EditorData }) {
             </button>
           )}
 
+          {!v2 && <>
           <button
             onClick={() => { const was = showBin; closeAllPanels(); if (!was) setShowBin(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showBin ? 'bg-blue-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
@@ -1762,6 +1773,7 @@ export function Timeline({ data }: { data: EditorData }) {
           >
             Bin
           </button>
+          </>}
 
           <button
             onClick={async () => {
@@ -1797,6 +1809,7 @@ export function Timeline({ data }: { data: EditorData }) {
             Import
           </button>
 
+          {!v2 && <>
           <button
             onClick={() => setShowSections((v) => !v)}
             className={`text-xs px-2 py-1 rounded transition-colors ${showSections ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200'}`}
@@ -1838,6 +1851,7 @@ export function Timeline({ data }: { data: EditorData }) {
           >
             Logs
           </button>
+          </>}
 
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
@@ -2146,8 +2160,9 @@ export function Timeline({ data }: { data: EditorData }) {
       </div>
 
       {/* Side panels — mutually exclusive: only one renders at a time.
-         Priority order: settings > versions > bin > sections > keyframe > transition > audioDesc > effect */}
-      {showDownloadPreview ? (
+         Priority order: settings > versions > bin > sections > keyframe > transition > audioDesc > effect
+         In v2 mode, these panels live in dockview — skip rendering here. */}
+      {v2 ? null : showDownloadPreview ? (
         <DownloadPreviewPanel
           currentTime={currentTime}
           duration={effectiveDuration}
@@ -2411,8 +2426,8 @@ export function Timeline({ data }: { data: EditorData }) {
         )
       })() : null}
 
-      {/* Sections sidebar — independent of mutex panel chain */}
-      {showSections && (
+      {/* Sections sidebar — independent of mutex panel chain (v2: rendered in dockview) */}
+      {!v2 && showSections && (
         <NarrativeSectionPanel
           sections={data.narrativeSections}
           projectName={data.projectName}
