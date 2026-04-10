@@ -93,11 +93,43 @@ milestones:
         estimated_hours: 4
         actual_hours: null
 
+  - id: milestone_3
+    name: Contribution Points (Phase 1)
+    status: not_started
+    started: null
+    completed: null
+    file: null
+    tasks_total: 3
+    tasks_completed: 0
+    estimated_weeks: 2
+    tasks:
+      - id: task-9
+        name: Backend Placeholder Methods
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-3-contribution-points/task-9-backend-placeholder-methods.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-10
+        name: Frontend Placeholder Methods
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-3-contribution-points/task-10-frontend-placeholder-methods.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-11
+        name: Package.yaml Schema & Validation
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-3-contribution-points/task-11-package-yaml-schema.md
+        estimated_hours: 3
+        actual_hours: null
+
 documentation:
   design_documents: 6
   milestone_documents: 1
   pattern_documents: 0
-  task_documents: 8
+  task_documents: 11
 
 progress:
   planning: 80
@@ -121,6 +153,7 @@ recent_work:
 
 next_steps:
   - "M2: Dynamic Panel Layout — install dockview, migrate all panels to 4-column layout"
+  - "M3: Contribution Points — backend/frontend placeholders, plugin manifest schema"
   - Add editor settings panel
   - Per-section beat source selection
 
