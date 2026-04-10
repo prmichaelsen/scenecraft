@@ -17,3 +17,20 @@
   --dv-drag-over-background-color: rgba(59, 130, 246, 0.15); /* blue-500/15 */
   --dv-drag-over-border-color: #3b82f6; /* blue-500 */
 }
+
+/* Smaller close button */
+.dv-dockview .dv-default-tab-action {
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.dv-dockview .dv-default-tab:hover .dv-default-tab-action {
+  opacity: 0.6;
+}
+
+.dv-dockview .dv-default-tab-action:hover {
+  opacity: 1 !important;
+}

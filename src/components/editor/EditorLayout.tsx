@@ -1,5 +1,9 @@
 import { createContext, useContext, useRef, useCallback, useImperativeHandle, forwardRef, useState } from 'react'
-import { DockviewReact, type DockviewReadyEvent, type DockviewApi, type IDockviewPanelProps } from 'dockview-react'
+import {
+  DockviewReact, DockviewDefaultTab,
+  type DockviewReadyEvent, type DockviewApi,
+  type IDockviewPanelProps, type IDockviewPanelHeaderProps, type IDockviewHeaderActionsProps,
+} from 'dockview-react'
 import 'dockview-react/dist/styles/dockview.css'
 import '@/styles/dockview-theme.css'
 import type { EditorData } from '@/routes/project/$name/editor'
@@ -88,6 +92,76 @@ function PlaceholderPanel({ params }: IDockviewPanelProps<{ label: string }>) {
   return (
     <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-gray-900">
       {params.label}
+    </div>
+  )
+}
+
+// --- Custom Tab (smaller close button with confirm) ---
+
+const MANAGED_PANELS = new Set(['leftSidebar', 'timeline', 'sections', 'chat'])
+
+function CustomTab(props: IDockviewPanelHeaderProps) {
+  const isManaged = MANAGED_PANELS.has(props.api.id)
+  return (
+    <DockviewDefaultTab
+      {...props}
+      hideClose={isManaged}
+      closeActionOverride={isManaged ? undefined : () => {
+        if (confirm(`Remove "${props.api.title}" panel?`)) {
+          props.api.close()
+        }
+      }}
+    />
+  )
+}
+
+// --- Right Header Actions (ellipsis menu to add panels) ---
+
+const ADDABLE_PANELS = [
+  { id: 'bin', component: 'bin', title: 'Bin' },
+  { id: 'logs', component: 'logs', title: 'Logs' },
+  { id: 'checkpoints', component: 'checkpoints', title: 'Checkpoints' },
+  { id: 'settings', component: 'settings', title: 'Settings' },
+  { id: 'properties', component: 'placeholder', title: 'Properties' },
+] as const
+
+function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="relative flex items-center pr-1">
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-gray-500 hover:text-gray-300 text-xs px-1 leading-none"
+        title="Add panel"
+      >
+        &#x22EE;
+      </button>
+      {open && (
+        <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-xl z-50 min-w-[140px] py-1">
+          {ADDABLE_PANELS.map((p) => {
+            const exists = containerApi.getPanel(p.id)
+            return (
+              <button
+                key={p.id}
+                disabled={!!exists}
+                className="w-full text-left px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:text-gray-600 disabled:hover:bg-transparent"
+                onClick={() => {
+                  containerApi.addPanel({
+                    id: p.id,
+                    component: p.component,
+                    title: p.title,
+                    position: { referenceGroup: group },
+                  })
+                  setOpen(false)
+                }}
+              >
+                {p.title}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -250,6 +324,8 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
     <EditorLayoutContext.Provider value={{ api: apiRef.current }}>
       <DockviewReact
         components={components}
+        defaultTabComponent={CustomTab}
+        rightHeaderActionsComponent={GroupActions}
         onReady={onReady}
         className="h-full"
       />
