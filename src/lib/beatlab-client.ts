@@ -557,6 +557,13 @@ export async function postUpdateTransitionAction(project: string, transitionId: 
   return res.json()
 }
 
+export async function fetchMeta(project: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/keyframes`)
+  if (!res.ok) return {}
+  const data = await res.json()
+  return (data.meta || {}) as Record<string, unknown>
+}
+
 export async function postUpdateMeta(project: string, fields: Record<string, string>) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-meta`, {
     method: 'POST',

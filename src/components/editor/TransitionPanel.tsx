@@ -866,16 +866,21 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
   // Video generation duration — closest of [4, 6, 8] to transition duration
   const DURATION_OPTIONS = [4, 6, 8] as const
   const [generationDuration, setGenerationDuration] = useState<number>(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('beatlab-default-video-duration') : null
-    if (saved) return parseInt(saved, 10)
     const dur = transition.durationSeconds
     return DURATION_OPTIONS.reduce((best, opt) => Math.abs(opt - dur) < Math.abs(best - dur) ? opt : best, 8)
   })
   const COUNT_OPTIONS = [1, 2, 3, 4] as const
-  const [generationCount, setGenerationCount] = useState<number>(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('beatlab-default-gen-count') : null
-    return saved ? parseInt(saved, 10) : 4
-  })
+  const [generationCount, setGenerationCount] = useState<number>(4)
+
+  // Load defaults from project meta
+  useEffect(() => {
+    import('@/lib/beatlab-client').then(({ fetchMeta }) => {
+      fetchMeta(projectName).then((meta) => {
+        if (meta.default_video_duration) setGenerationDuration(meta.default_video_duration)
+        if (meta.default_gen_count) setGenerationCount(meta.default_gen_count)
+      }).catch(() => {})
+    })
+  }, [projectName])
   const [endFrameMode, setEndFrameMode] = useState<'keyframe' | 'next-tr' | 'none'>('keyframe')
 
   useEffect(() => {
@@ -966,7 +971,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
             {DURATION_OPTIONS.map((d) => (
               <button
                 key={d}
-                onClick={() => { setGenerationDuration(d); localStorage.setItem('beatlab-default-video-duration', String(d)) }}
+                onClick={() => { setGenerationDuration(d); updateMeta({ data: { projectName, fields: { default_video_duration: d } } }) }}
                 className={`flex-1 text-[10px] py-1 rounded transition-colors ${generationDuration === d ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
               >
                 {d}s
@@ -980,7 +985,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
             {COUNT_OPTIONS.map((c) => (
               <button
                 key={c}
-                onClick={() => { setGenerationCount(c); localStorage.setItem('beatlab-default-gen-count', String(c)) }}
+                onClick={() => { setGenerationCount(c); updateMeta({ data: { projectName, fields: { default_gen_count: c } } }) }}
                 className={`flex-1 text-[10px] py-1 rounded transition-colors ${generationCount === c ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
               >
                 {c}
