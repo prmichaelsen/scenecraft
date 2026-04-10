@@ -2076,6 +2076,15 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
         sorted[draggingIdx] = existingEasing != null
           ? [Math.max(minX, Math.min(maxX, nx)), newY, existingEasing]
           : [Math.max(minX, Math.min(maxX, nx)), newY]
+        // Shift+drag endpoint: move both endpoints to same Y
+        const isEndpoint = draggingIdx === 0 || draggingIdx === sorted.length - 1
+        if (e.shiftKey && isEndpoint && !lockY) {
+          const otherIdx = draggingIdx === 0 ? sorted.length - 1 : 0
+          const otherEasing = sorted[otherIdx][2]
+          sorted[otherIdx] = otherEasing != null
+            ? [sorted[otherIdx][0], newY, otherEasing]
+            : [sorted[otherIdx][0], newY]
+        }
         return sorted
       })
       return
@@ -2414,6 +2423,12 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
         const minX = sorted[draggingIdx - 1]?.[0] ?? 0
         const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
         sorted[draggingIdx] = [Math.max(minX, Math.min(maxX, nx)), ny]
+        // Shift+drag endpoint: move both endpoints to same Y
+        const isEndpoint = draggingIdx === 0 || draggingIdx === sorted.length - 1
+        if (e.shiftKey && isEndpoint) {
+          const otherIdx = draggingIdx === 0 ? sorted.length - 1 : 0
+          sorted[otherIdx] = [sorted[otherIdx][0], ny]
+        }
         return sorted
       })
       return
