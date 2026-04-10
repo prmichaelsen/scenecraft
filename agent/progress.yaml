@@ -40,11 +40,64 @@ milestones:
           Replace static transform sliders with animated X/Y/Z remap curves.
           Multi-curve canvas, pill tabs, DB migration, render pipeline.
 
+  - id: milestone_2
+    name: Dynamic Panel Layout
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-2-dynamic-panel-layout.md
+    tasks_total: 6
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-3
+        name: Install dockview and create EditorLayout shell
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-3-editor-layout-shell.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-4
+        name: Extract Preview and Timeline panels
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-4-preview-timeline-panels.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-5
+        name: Migrate property panels and extract Color Grading
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-5-property-panels.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-6
+        name: Migrate utility panels
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-6-utility-panels.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-7
+        name: Sidebars and toggle controls
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-7-sidebars-toggles.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-8
+        name: Workspace views and theme
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-2-dynamic-panel-layout/task-8-workspace-views-theme.md
+        estimated_hours: 4
+        actual_hours: null
+
 documentation:
-  design_documents: 5
-  milestone_documents: 0
+  design_documents: 6
+  milestone_documents: 1
   pattern_documents: 0
-  task_documents: 2
+  task_documents: 8
 
 progress:
   planning: 80
@@ -67,6 +120,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M2: Dynamic Panel Layout — install dockview, migrate all panels to 4-column layout"
   - Add editor settings panel
   - Per-section beat source selection
 
