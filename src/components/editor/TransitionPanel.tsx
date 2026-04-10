@@ -610,7 +610,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
   const handleAdd = useCallback(async (type: string) => {
     const { postAddTransitionEffect } = await import('@/lib/beatlab-client')
     const defaults: Record<string, Record<string, number>> = {
-      strobe: { period: 0.125, duty: 0.5 },
+      strobe: { flashMs: 60, blackMs: 60 },
       invert: { amount: 1 },
     }
     const result = await postAddTransitionEffect(projectName, transition.id, type, defaults[type] || {})
@@ -657,30 +657,45 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
             </div>
             <button onClick={() => handleDelete(fx.id)} className="text-[9px] text-red-400/60 hover:text-red-400">&times;</button>
           </div>
-          {fx.type === 'strobe' && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] text-gray-500 w-12">Period</span>
-                <input
-                  type="range" min={0.02} max={1} step={0.01}
-                  value={fx.params.period || (1 / (fx.params.frequency || 8))}
-                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, period: parseFloat(e.target.value) } })}
-                  className="flex-1 h-1.5 accent-teal-500"
-                />
-                <span className="text-[9px] text-gray-400 w-12 text-right">{((fx.params.period || (1 / (fx.params.frequency || 8))) * 1000).toFixed(0)}ms</span>
+          {fx.type === 'strobe' && (() => {
+            // Derive flashMs/blackMs from legacy period/duty or new params
+            const flashMs = fx.params.flashMs ?? ((fx.params.period || 0.125) * (fx.params.duty || 0.5) * 1000)
+            const blackMs = fx.params.blackMs ?? ((fx.params.period || 0.125) * (1 - (fx.params.duty || 0.5)) * 1000)
+            return (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] text-gray-500 w-12">Flash</span>
+                  <input
+                    type="range" min={10} max={500} step={5}
+                    value={flashMs}
+                    onChange={(e) => {
+                      const newFlash = parseFloat(e.target.value)
+                      const totalSec = (newFlash + blackMs) / 1000
+                      const duty = newFlash / (newFlash + blackMs)
+                      handleUpdate(fx.id, { params: { ...fx.params, flashMs: newFlash, blackMs, period: totalSec, duty } })
+                    }}
+                    className="flex-1 h-1.5 accent-teal-500"
+                  />
+                  <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round(flashMs)}ms</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] text-gray-500 w-12">Black</span>
+                  <input
+                    type="range" min={10} max={500} step={5}
+                    value={blackMs}
+                    onChange={(e) => {
+                      const newBlack = parseFloat(e.target.value)
+                      const totalSec = (flashMs + newBlack) / 1000
+                      const duty = flashMs / (flashMs + newBlack)
+                      handleUpdate(fx.id, { params: { ...fx.params, flashMs, blackMs: newBlack, period: totalSec, duty } })
+                    }}
+                    className="flex-1 h-1.5 accent-teal-500"
+                  />
+                  <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round(blackMs)}ms</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] text-gray-500 w-12">Black</span>
-                <input
-                  type="range" min={0.05} max={0.95} step={0.05}
-                  value={1 - (fx.params.duty || 0.5)}
-                  onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, duty: 1 - parseFloat(e.target.value) } })}
-                  className="flex-1 h-1.5 accent-teal-500"
-                />
-                <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round((1 - (fx.params.duty || 0.5)) * 100)}%</span>
-              </div>
-            </div>
-          )}
+            )
+          })()}
           {fx.type === 'invert' && (
             <div className="flex items-center gap-2">
               <span className="text-[9px] text-gray-500 w-12">Amount</span>
