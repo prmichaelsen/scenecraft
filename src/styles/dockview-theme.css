@@ -127,18 +127,22 @@
   padding: 2px 0;
 }
 
-/* Hide content area when collapsed (header-left mode) */
+/* Collapsed mode: hide content, force group to header width only */
 .dv-dockview .dv-groupview-header-left .dv-content-container {
   display: none !important;
 }
 
-/* Ensure no black gap — collapsed group background matches theme */
 .dv-dockview .dv-groupview-header-left {
   background: #111827;
 }
 
 .dv-dockview .dv-groupview-header-left .dv-tabs-and-actions-container {
   background: #111827;
+}
+
+/* Force the groupview to not expand beyond the vertical header */
+.dv-dockview .dv-groupview-header-left .dv-view-container {
+  display: none !important;
 }
 
 /* --- Scrollbar --- */
