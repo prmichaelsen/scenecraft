@@ -122,6 +122,8 @@ export type Transition = {
   transformXCurve: [number, number, number?][] | null
   transformYCurve: [number, number, number?][] | null
   transformZCurve: [number, number, number?][] | null
+  anchorX: number | null
+  anchorY: number | null
   hidden: boolean
   effects: TransitionEffect[]
 }
@@ -267,6 +269,8 @@ const getEditorData = createServerFn({ method: 'GET' })
           transformXCurve: tr.transformXCurve ?? null,
           transformYCurve: tr.transformYCurve ?? null,
           transformZCurve: tr.transformZCurve ?? null,
+          anchorX: tr.anchorX != null ? tr.anchorX as number : null,
+          anchorY: tr.anchorY != null ? tr.anchorY as number : null,
           hidden: !!tr.hidden,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }
@@ -375,6 +379,8 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           transformXCurve: tr.transformXCurve ?? null,
           transformYCurve: tr.transformYCurve ?? null,
           transformZCurve: tr.transformZCurve ?? null,
+          anchorX: tr.anchorX != null ? tr.anchorX as number : null,
+          anchorY: tr.anchorY != null ? tr.anchorY as number : null,
           hidden: !!tr.hidden,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
         }

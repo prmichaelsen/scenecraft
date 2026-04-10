@@ -16,6 +16,7 @@ import { KeyframePanel, preloadStills } from './KeyframePanel'
 import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
+import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
 import { evaluateCurve } from '@/lib/remap-curve'
@@ -360,6 +361,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
   const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<Set<string>>(new Set())
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
+  const [transformMode, setTransformMode] = useState(false)
+  const previewContainerRef = useRef<HTMLDivElement>(null)
   const [showBin, setShowBin] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
@@ -790,11 +793,14 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const trTransformX = activeTr.transformXCurve ? evaluateCurve(activeTr.transformXCurve, linearProgress) : (activeTr.transformX ?? 0)
         const trTransformY = activeTr.transformYCurve ? evaluateCurve(activeTr.transformYCurve, linearProgress) : (activeTr.transformY ?? 0)
         const trScale = activeTr.transformZCurve ? evaluateCurve(activeTr.transformZCurve, linearProgress) : 1.0
-        const hasTransform = trTransformX !== 0 || trTransformY !== 0 || trScale !== 1.0 || activeTr.transformXCurve || activeTr.transformYCurve || activeTr.transformZCurve
+        const hasAnchor = activeTr.anchorX != null || activeTr.anchorY != null
+        const hasTransform = trTransformX !== 0 || trTransformY !== 0 || trScale !== 1.0 || hasAnchor || activeTr.transformXCurve || activeTr.transformYCurve || activeTr.transformZCurve
         const transform = hasTransform ? {
           x: trTransformX,
           y: trTransformY,
           scale: trScale,
+          anchorX: activeTr.anchorX ?? 0.5,
+          anchorY: activeTr.anchorY ?? 0.5,
         } : undefined
 
         if (activeTr.isAdjustment) {
@@ -1560,6 +1566,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         handlePlayPause()
       }
 
+      // T: toggle transform mode
+      if (e.key === 't' || e.key === 'T') {
+        if (!e.ctrlKey && !e.metaKey) {
+          setTransformMode((p) => !p)
+        }
+      }
+
       // Arrow keys: navigate between keyframes
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault()
@@ -1593,7 +1606,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           className="bg-gray-950 flex items-center justify-center shrink-0 overflow-hidden"
           style={{ height: previewHeight }}
         >
-          <div className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
+          <div ref={previewContainerRef} className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
             {hoverPreviewUrl && (
               <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
             )}
@@ -1627,6 +1640,41 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 <span className="text-white/70 text-xs">Loading frames...</span>
               </div>
             )}
+            <TransformHandles
+              containerRef={previewContainerRef}
+              transition={selectedTransition}
+              currentTime={currentTime}
+              transformMode={transformMode}
+              onCurveUpdate={async (trId, updates) => {
+                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                const style: Record<string, unknown> = {}
+                if ('transformX' in updates) { style.transformX = updates.transformX; if (selectedTransition) selectedTransition.transformX = updates.transformX as number }
+                if ('transformY' in updates) { style.transformY = updates.transformY; if (selectedTransition) selectedTransition.transformY = updates.transformY as number }
+                if ('transformZ' in updates) {
+                  const pts: [number, number][] = [[0, updates.transformZ as number], [1, updates.transformZ as number]]
+                  style.transformZCurve = pts
+                  if (selectedTransition) selectedTransition.transformZCurve = pts
+                }
+                if ('maskCenterX' in updates) { style.maskCenterX = updates.maskCenterX; if (selectedTransition) selectedTransition.maskCenterX = updates.maskCenterX as number }
+                if ('maskCenterY' in updates) { style.maskCenterY = updates.maskCenterY; if (selectedTransition) selectedTransition.maskCenterY = updates.maskCenterY as number }
+                await postUpdateTransitionStyle(data.projectName, trId, style as never)
+                refreshTimeline()
+              }}
+              onAnchorUpdate={async (trId, anchorX, anchorY) => {
+                if (selectedTransition) { selectedTransition.anchorX = anchorX; selectedTransition.anchorY = anchorY }
+                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                await postUpdateTransitionStyle(data.projectName, trId, { anchorX, anchorY } as never)
+                refreshTimeline()
+              }}
+            />
+            {/* Transform mode toggle */}
+            <button
+              onClick={() => setTransformMode((p) => !p)}
+              className={`absolute top-2 right-2 z-30 text-[10px] px-1.5 py-0.5 rounded ${transformMode ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50' : 'bg-gray-800/70 text-gray-400 hover:text-gray-300 border border-transparent'}`}
+              title="Toggle transform mode (T)"
+            >
+              {transformMode ? 'Transform ON' : 'T'}
+            </button>
           </div>
         </div>
 
