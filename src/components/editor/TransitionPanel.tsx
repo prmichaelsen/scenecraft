@@ -617,10 +617,12 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
     setEffects((prev) => [...prev, { id: result.id, type, params: defaults[type] || {}, enabled: true }])
   }, [projectName, transition.id])
 
-  const handleUpdate = useCallback(async (id: string, updates: { params?: Record<string, number>; enabled?: boolean }) => {
+  const handleUpdate = useCallback((id: string, updates: { params?: Record<string, number>; enabled?: boolean }) => {
+    setEffects((prev) => prev.map((e) => e.id === id ? { ...e, ...updates } : e))
+  }, [])
+  const handleUpdatePersist = useCallback(async (id: string, updates: { params?: Record<string, number>; enabled?: boolean }) => {
     const { postUpdateTransitionEffect } = await import('@/lib/beatlab-client')
     await postUpdateTransitionEffect(projectName, id, updates)
-    setEffects((prev) => prev.map((e) => e.id === id ? { ...e, ...updates } : e))
   }, [projectName])
 
   const handleDelete = useCallback(async (id: string) => {
@@ -650,7 +652,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
               <input
                 type="checkbox"
                 checked={fx.enabled}
-                onChange={(e) => handleUpdate(fx.id, { enabled: e.target.checked })}
+                onChange={(e) => { const v = e.target.checked; handleUpdate(fx.id, { enabled: v }); handleUpdatePersist(fx.id, { enabled: v }) }}
                 className="rounded border-gray-600 bg-gray-800 text-teal-500 w-3 h-3"
               />
               <span className="text-[10px] text-gray-300 uppercase">{fx.type}</span>
@@ -674,6 +676,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
                       const duty = newFlash / (newFlash + blackMs)
                       handleUpdate(fx.id, { params: { ...fx.params, flashMs: newFlash, blackMs, period: totalSec, duty } })
                     }}
+                    onPointerUp={() => handleUpdatePersist(fx.id, { params: fx.params })}
                     className="flex-1 h-1.5 accent-teal-500"
                   />
                   <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round(flashMs)}ms</span>
@@ -689,6 +692,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
                       const duty = flashMs / (flashMs + newBlack)
                       handleUpdate(fx.id, { params: { ...fx.params, flashMs, blackMs: newBlack, period: totalSec, duty } })
                     }}
+                    onPointerUp={() => handleUpdatePersist(fx.id, { params: fx.params })}
                     className="flex-1 h-1.5 accent-teal-500"
                   />
                   <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round(blackMs)}ms</span>
@@ -703,6 +707,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
                 type="range" min={0} max={1} step={0.05}
                 value={fx.params.amount ?? 1}
                 onChange={(e) => handleUpdate(fx.id, { params: { ...fx.params, amount: parseFloat(e.target.value) } })}
+                onPointerUp={() => handleUpdatePersist(fx.id, { params: fx.params })}
                 className="flex-1 h-1.5 accent-pink-500"
               />
               <span className="text-[9px] text-gray-400 w-12 text-right">{Math.round((fx.params.amount ?? 1) * 100)}%</span>
