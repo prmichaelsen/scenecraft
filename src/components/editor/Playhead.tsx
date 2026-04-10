@@ -78,11 +78,11 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef, 
 
       {/* Draggable cap — wider hit target, only this captures clicks, follows vertical scroll */}
       <div
-        className="absolute -left-2 w-4 h-4 cursor-grab active:cursor-grabbing z-20 pointer-events-auto"
+        className="absolute -left-[5px] w-[11px] h-[11px] cursor-grab active:cursor-grabbing z-20 pointer-events-auto"
         style={{ top: scrollTop }}
         onMouseDown={handleMouseDown}
       >
-        <div className="absolute left-1.5 top-0.5 w-3 h-3 bg-red-500 rounded-full pointer-events-none" />
+        <div className="absolute inset-0 bg-red-500 pointer-events-none" style={{ clipPath: 'polygon(50% 100%, 0% 0%, 100% 0%)' }} />
       </div>
     </div>
   )
