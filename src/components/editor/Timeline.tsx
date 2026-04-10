@@ -757,9 +757,14 @@ export function Timeline({ data }: { data: EditorData }) {
           radius: activeTr.maskRadius,
           feather: activeTr.maskFeather ?? 0,
         } : undefined
-        const transform = (activeTr.transformX != null || activeTr.transformY != null) ? {
-          x: activeTr.transformX ?? 0,
-          y: activeTr.transformY ?? 0,
+        const trTransformX = activeTr.transformXCurve ? evaluateCurve(activeTr.transformXCurve, linearProgress) : (activeTr.transformX ?? 0)
+        const trTransformY = activeTr.transformYCurve ? evaluateCurve(activeTr.transformYCurve, linearProgress) : (activeTr.transformY ?? 0)
+        const trScale = activeTr.transformZCurve ? evaluateCurve(activeTr.transformZCurve, linearProgress) : 1.0
+        const hasTransform = trTransformX !== 0 || trTransformY !== 0 || trScale !== 1.0 || activeTr.transformXCurve || activeTr.transformYCurve || activeTr.transformZCurve
+        const transform = hasTransform ? {
+          x: trTransformX,
+          y: trTransformY,
+          scale: trScale,
         } : undefined
 
         if (activeTr.isAdjustment) {
@@ -2010,6 +2015,7 @@ export function Timeline({ data }: { data: EditorData }) {
                       renderProgress={renderProgress}
                       scrollLeft={scrollLeft}
                       viewportWidth={viewportWidth}
+                      isActiveTrack={isActive}
                     />
                   </div>
                 </div>

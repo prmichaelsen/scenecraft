@@ -20,7 +20,7 @@ export type TrackLayer = {
   chromaKey?: { color: [number, number, number]; threshold: number; feather: number }
   isAdjustment?: boolean
   mask?: { centerX: number; centerY: number; radius: number; feather: number }
-  transform?: { x: number; y: number }
+  transform?: { x: number; y: number; scale?: number }
 }
 
 type BeatEffectPreviewProps = {
@@ -152,6 +152,7 @@ const COMPOSITE_SHADER = `
   uniform float u_maskFeather;  // radial mask edge softness (0-1)
   uniform float u_aspectRatio;  // canvas width/height
   uniform vec2 u_transform;     // layer position offset (0,0 = no shift)
+  uniform float u_scale;        // layer scale (1.0 = no scale)
   uniform float u_isAdjustment; // 1.0 = adjustment layer (skip Y-flip)
 
   vec3 rgb2hsv(vec3 c) {
@@ -173,9 +174,15 @@ const COMPOSITE_SHADER = `
     vec4 base = texture2D(u_base, v_texCoord);
     // Layer textures are ImageBitmaps (top-down) — flip Y to match FBO (bottom-up) accumulator
     // Adjustment layers read from the accumulator (already FBO space) — no flip needed
-    vec2 layerCoord = u_isAdjustment > 0.5
-      ? vec2(v_texCoord.x - u_transform.x, v_texCoord.y - u_transform.y)
-      : vec2(v_texCoord.x - u_transform.x, 1.0 - v_texCoord.y - u_transform.y);
+    // Apply transform: first position offset, then scale around center
+    vec2 baseCoord = u_isAdjustment > 0.5
+      ? v_texCoord
+      : vec2(v_texCoord.x, 1.0 - v_texCoord.y);
+    // Position shift
+    vec2 shifted = baseCoord - vec2(u_transform.x, u_isAdjustment > 0.5 ? u_transform.y : -u_transform.y);
+    // Scale around the shifted center (0.5 offset by transform)
+    vec2 anchor = vec2(0.5, 0.5);
+    vec2 layerCoord = (shifted - anchor) / u_scale + anchor;
     vec4 lA = texture2D(u_layerA, layerCoord);
     vec4 lB = texture2D(u_layerB, layerCoord);
     vec3 layer = mix(lA.rgb, lB.rgb, u_layerBlend);
@@ -656,6 +663,7 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_aspectRatio'), canvas.width / canvas.height)
       const tfm = layer.transform
       gl.uniform2f(gl.getUniformLocation(ctx.compProgram, 'u_transform'), tfm?.x ?? 0, tfm?.y ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_scale'), tfm?.scale ?? 1.0)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_isAdjustment'), layer.isAdjustment ? 1.0 : 0.0)
 
       gl.drawArrays(gl.TRIANGLES, 0, 6)

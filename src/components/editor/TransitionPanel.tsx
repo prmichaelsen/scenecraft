@@ -1273,7 +1273,7 @@ type TransformAxis = typeof TRANSFORM_AXES[number]
 const TRANSFORM_COLORS: Record<TransformAxis, string> = { X: '#00cccc', Y: '#cc44cc', Z: '#cccc00' }
 const TRANSFORM_LABELS: Record<TransformAxis, string> = { X: 'X Offset', Y: 'Y Offset', Z: 'Scale' }
 const TRANSFORM_DEFAULTS: Record<TransformAxis, number> = { X: 0, Y: 0, Z: 1 }
-const TRANSFORM_RANGES: Record<TransformAxis, { min: number; max: number }> = { X: { min: -1, max: 1 }, Y: { min: -1, max: 1 }, Z: { min: 0, max: 10 } }
+const TRANSFORM_RANGES: Record<TransformAxis, { min: number; max: number; log?: boolean }> = { X: { min: -1, max: 1 }, Y: { min: -1, max: 1 }, Z: { min: 0.1, max: 10, log: true } }
 const TRANSFORM_CURVE_KEYS: Record<TransformAxis, 'transformXCurve' | 'transformYCurve' | 'transformZCurve'> = { X: 'transformXCurve', Y: 'transformYCurve', Z: 'transformZCurve' }
 const TRANSFORM_STYLE_KEYS: Record<TransformAxis, string> = { X: 'transformXCurve', Y: 'transformYCurve', Z: 'transformZCurve' }
 
@@ -1290,6 +1290,44 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // Dynamic ranges that expand when points approach boundaries
+  const [dynamicRanges, setDynamicRanges] = useState<Record<TransformAxis, { min: number; max: number }>>(() => ({
+    X: { ...TRANSFORM_RANGES.X }, Y: { ...TRANSFORM_RANGES.Y }, Z: { ...TRANSFORM_RANGES.Z },
+  }))
+
+  // Expand range if any point is near the boundary (within 15% of range)
+  const expandRangeIfNeeded = useCallback((axis: TransformAxis, value: number) => {
+    setDynamicRanges((prev) => {
+      const r = prev[axis]
+      const base = TRANSFORM_RANGES[axis]
+      const isLogAxis = !!base.log
+      let { min, max } = r
+      const threshold = isLogAxis ? 0.15 : 0.15
+      const span = isLogAxis ? (Math.log(max) - Math.log(min)) : (max - min)
+
+      if (isLogAxis) {
+        const logVal = Math.log(Math.max(0.001, value))
+        const logMin = Math.log(min)
+        const logMax = Math.log(max)
+        if ((logVal - logMin) / span < threshold) {
+          min = Math.max(0.001, Math.exp(logMin - span * 0.5))
+        }
+        if ((logMax - logVal) / span < threshold) {
+          max = Math.exp(logMax + span * 0.5)
+        }
+      } else {
+        if ((value - min) / span < threshold) {
+          min = min - span * 0.5
+        }
+        if ((max - value) / span < threshold) {
+          max = max + span * 0.5
+        }
+      }
+      if (min === r.min && max === r.max) return prev
+      return { ...prev, [axis]: { min, max } }
+    })
+  }, [])
 
   const PAD = 10
   const ASPECT = 2
@@ -1308,15 +1346,33 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
     return () => ro.disconnect()
   }, [])
 
-  const range = TRANSFORM_RANGES[activeAxis]
-  const toCanvas = useCallback((x: number, y: number): [number, number] => [
-    PAD + x * (W - 2 * PAD),
-    H - PAD - ((y - range.min) / (range.max - range.min)) * (H - 2 * PAD),
-  ], [W, H, range])
-  const fromCanvas = useCallback((cx: number, cy: number): [number, number] => [
-    Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
-    Math.max(range.min, Math.min(range.max, range.min + ((H - PAD - cy) / (H - 2 * PAD)) * (range.max - range.min))),
-  ], [W, H, range])
+  const range = dynamicRanges[activeAxis]
+  const isLog = !!TRANSFORM_RANGES[activeAxis].log
+  const logMin = isLog ? Math.log(range.min) : 0
+  const logMax = isLog ? Math.log(range.max) : 0
+  const toCanvas = useCallback((x: number, y: number): [number, number] => {
+    const cx = PAD + x * (W - 2 * PAD)
+    let normalizedY: number
+    if (isLog) {
+      const logY = Math.log(Math.max(range.min, y))
+      normalizedY = (logY - logMin) / (logMax - logMin)
+    } else {
+      normalizedY = (y - range.min) / (range.max - range.min)
+    }
+    const cy = H - PAD - normalizedY * (H - 2 * PAD)
+    return [cx, cy]
+  }, [W, H, range, isLog, logMin, logMax])
+  const fromCanvas = useCallback((cx: number, cy: number): [number, number] => {
+    const x = Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD)))
+    const normalizedY = (H - PAD - cy) / (H - 2 * PAD)
+    let y: number
+    if (isLog) {
+      y = Math.exp(logMin + normalizedY * (logMax - logMin))
+    } else {
+      y = range.min + normalizedY * (range.max - range.min)
+    }
+    return [x, Math.max(range.min, Math.min(range.max, y))]
+  }, [W, H, range, isLog, logMin, logMax])
   const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
     const canvas = canvasRef.current
     if (!canvas) return null
@@ -1342,12 +1398,26 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
     // Grid
     ctx.strokeStyle = '#333'
     ctx.lineWidth = 0.5
+    // Vertical grid lines (progress axis)
     for (let i = 0; i <= 4; i++) {
       const [x] = toCanvas(i / 4, range.min)
-      const fracY = range.min + (i / 4) * (range.max - range.min)
-      const [, y] = toCanvas(0, fracY)
-      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
       ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
+    }
+    // Horizontal grid lines — log-spaced for Z, linear for X/Y
+    const logGridTicks = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 10, 20, 50, 100, 500, 1000]
+    const gridValues = isLog ? logGridTicks.filter((v) => v >= range.min && v <= range.max) : Array.from({ length: 5 }, (_, i) => range.min + (i / 4) * (range.max - range.min))
+    for (const gv of gridValues) {
+      if (gv < range.min || gv > range.max) continue
+      const [, y] = toCanvas(0, gv)
+      ctx.strokeStyle = gv === 1 && isLog ? '#666' : '#333'
+      ctx.lineWidth = gv === 1 && isLog ? 1 : 0.5
+      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
+      if (isLog) {
+        ctx.fillStyle = '#555'
+        ctx.font = '7px monospace'
+        ctx.textAlign = 'right'
+        ctx.fillText(gv >= 1 ? `${gv}x` : `${gv}x`, PAD - 2, y + 3)
+      }
     }
 
     // Axis labels
@@ -1378,12 +1448,19 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
       const pts = [...allPoints[axis]].sort((a, b) => a[0] - b[0]) as CurvePoint[]
       const color = TRANSFORM_COLORS[axis]
       const isActive = axis === activeAxis
-      const axisRange = TRANSFORM_RANGES[axis]
+      const axisRange = dynamicRanges[axis]
 
-      const axisToCanvas = (x: number, y: number): [number, number] => [
-        PAD + x * (W - 2 * PAD),
-        H - PAD - ((y - axisRange.min) / (axisRange.max - axisRange.min)) * (H - 2 * PAD),
-      ]
+      const axisToCanvas = (x: number, y: number): [number, number] => {
+        const cx = PAD + x * (W - 2 * PAD)
+        let normalizedY: number
+        if (TRANSFORM_RANGES[axis].log) {
+          const lMin = Math.log(axisRange.min), lMax = Math.log(axisRange.max)
+          normalizedY = (Math.log(Math.max(axisRange.min, y)) - lMin) / (lMax - lMin)
+        } else {
+          normalizedY = (y - axisRange.min) / (axisRange.max - axisRange.min)
+        }
+        return [cx, H - PAD - normalizedY * (H - 2 * PAD)]
+      }
 
       // Curve line
       const STEPS = 24
@@ -1480,7 +1557,7 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
         ctx.stroke()
       }
     }
-  }, [allPoints, activeAxis, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to, W, H])
+  }, [allPoints, activeAxis, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to, W, H, dynamicRanges, toCanvas])
 
   const save = useCallback(async (axis: TransformAxis, newPoints: CurvePoint[]) => {
     setSaving(true)
@@ -1523,13 +1600,21 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
     const pos = mouseToCanvas(e)
     if (!pos) return
 
-    // Auto-switch: check all axes for hit, switch if needed
-    for (const axis of TRANSFORM_AXES) {
-      const axisRange = TRANSFORM_RANGES[axis]
-      const axisToCanvas = (x: number, y: number): [number, number] => [
-        PAD + x * (W - 2 * PAD),
-        H - PAD - ((y - axisRange.min) / (axisRange.max - axisRange.min)) * (H - 2 * PAD),
-      ]
+    // Auto-switch: check active axis first, then others (so overlapping points prefer active)
+    const axisOrder = [activeAxis, ...TRANSFORM_AXES.filter((a) => a !== activeAxis)]
+    for (const axis of axisOrder) {
+      const axisRange = dynamicRanges[axis]
+      const axisToCanvas = (x: number, y: number): [number, number] => {
+        const cx = PAD + x * (W - 2 * PAD)
+        let normalizedY: number
+        if (TRANSFORM_RANGES[axis].log) {
+          const lMin = Math.log(axisRange.min), lMax = Math.log(axisRange.max)
+          normalizedY = (Math.log(Math.max(axisRange.min, y)) - lMin) / (lMax - lMin)
+        } else {
+          normalizedY = (y - axisRange.min) / (axisRange.max - axisRange.min)
+        }
+        return [cx, H - PAD - normalizedY * (H - 2 * PAD)]
+      }
       const sorted = [...allPoints[axis]].sort((a, b) => a[0] - b[0])
       for (let i = 0; i < sorted.length; i++) {
         const [px, py] = axisToCanvas(sorted[i][0], sorted[i][1])
@@ -1554,6 +1639,7 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
     if (!pos) return
     if (draggingIdx !== null) {
       const [nx, ny] = fromCanvas(pos[0], pos[1])
+      expandRangeIfNeeded(activeAxis, ny)
       setAllPoints((prev) => {
         const sorted = [...prev[activeAxis]].sort((a, b) => a[0] - b[0])
         const minX = sorted[draggingIdx - 1]?.[0] ?? 0
@@ -1574,7 +1660,7 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
       if (Math.hypot(pos[0] - px, pos[1] - py) < 6) { found = i; break }
     }
     setHoveredIdx(found)
-  }, [draggingIdx, allPoints, activeAxis, fromCanvas, toCanvas])
+  }, [draggingIdx, allPoints, activeAxis, fromCanvas, toCanvas, expandRangeIfNeeded])
 
   const handleMouseUp = useCallback(() => {
     if (draggingIdx !== null) { setDraggingIdx(null); save(activeAxis, allPoints[activeAxis]) }

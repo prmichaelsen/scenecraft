@@ -17,6 +17,7 @@ type TransitionTrackProps = {
   renderProgress?: Record<string, number>
   scrollLeft: number
   viewportWidth: number
+  isActiveTrack?: boolean
 }
 
 export function TransitionTrack({
@@ -34,6 +35,7 @@ export function TransitionTrack({
   duration,
   scrollLeft,
   viewportWidth,
+  isActiveTrack,
 }: TransitionTrackProps) {
   const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -164,23 +166,27 @@ export function TransitionTrack({
                 }
               }}
             >
-              {/* Left edge drag handle */}
-              <div
-                className="absolute top-0 left-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
-                onMouseDown={(e) => {
-                  const prevKf = fromIdx > 0 ? sortedKfs[fromIdx - 1] : null
-                  handleEdgeDown(e, tr.from, tr.id, toKf.timeSeconds, fromKf.timeSeconds, prevKf ? prevKf.timeSeconds + 0.1 : 0, toKf.timeSeconds - 0.1)
-                }}
-              />
+              {/* Left edge drag handle — only interactive on active track */}
+              {isActiveTrack !== false && (
+                <div
+                  className="absolute top-0 left-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
+                  onMouseDown={(e) => {
+                    const prevKf = fromIdx > 0 ? sortedKfs[fromIdx - 1] : null
+                    handleEdgeDown(e, tr.from, tr.id, toKf.timeSeconds, fromKf.timeSeconds, prevKf ? prevKf.timeSeconds + 0.1 : 0, toKf.timeSeconds - 0.1)
+                  }}
+                />
+              )}
 
-              {/* Right edge drag handle */}
-              <div
-                className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
-                onMouseDown={(e) => {
-                  const nextKf = toIdx < sortedKfs.length - 1 ? sortedKfs[toIdx + 1] : null
-                  handleEdgeDown(e, tr.to, tr.id, fromKf.timeSeconds, toKf.timeSeconds, fromKf.timeSeconds + 0.1, nextKf ? nextKf.timeSeconds - 0.1 : (duration || Infinity))
-                }}
-              />
+              {/* Right edge drag handle — only interactive on active track */}
+              {isActiveTrack !== false && (
+                <div
+                  className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-orange-500/40 pointer-events-auto z-10"
+                  onMouseDown={(e) => {
+                    const nextKf = toIdx < sortedKfs.length - 1 ? sortedKfs[toIdx + 1] : null
+                    handleEdgeDown(e, tr.to, tr.id, fromKf.timeSeconds, toKf.timeSeconds, fromKf.timeSeconds + 0.1, nextKf ? nextKf.timeSeconds - 0.1 : (duration || Infinity))
+                  }}
+                />
+              )}
 
               {/* Label */}
               {width > 50 && (
