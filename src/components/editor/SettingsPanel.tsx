@@ -23,6 +23,8 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
   const [resH, setResH] = useState(String(data.meta.resolution[1]))
   const [motionPrompt, setMotionPrompt] = useState(data.meta.motionPrompt)
   const [defaultTrPrompt, setDefaultTrPrompt] = useState(data.meta.defaultTransitionPrompt)
+  const [defaultDuration, setDefaultDuration] = useState<number>((data.meta as Record<string, unknown>).default_video_duration as number || 8)
+  const [defaultCount, setDefaultCount] = useState<number>((data.meta as Record<string, unknown>).default_gen_count as number || 4)
 
   useEffect(() => {
     fetchSettings(projectName)
@@ -98,6 +100,49 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                   <option value={24}>24 fps</option>
                   <option value={30}>30 fps</option>
                 </select>
+              </div>
+            </div>
+
+            {/* Generation Defaults */}
+            <div className="px-3 py-3 space-y-3">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">Generation Defaults</div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Default Video Duration</label>
+                <div className="flex gap-0.5">
+                  {([4, 6, 8] as const).map((d) => (
+                    <button
+                      key={d}
+                      onClick={async () => {
+                        setDefaultDuration(d)
+                        await updateMeta({ data: { projectName, fields: { default_video_duration: d } as never } })
+                      }}
+                      disabled={saving}
+                      className={`flex-1 text-[10px] py-1 rounded transition-colors ${defaultDuration === d ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+                    >
+                      {d}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Default Candidate Count</label>
+                <div className="flex gap-0.5">
+                  {([1, 2, 3, 4] as const).map((c) => (
+                    <button
+                      key={c}
+                      onClick={async () => {
+                        setDefaultCount(c)
+                        await updateMeta({ data: { projectName, fields: { default_gen_count: c } as never } })
+                      }}
+                      disabled={saving}
+                      className={`flex-1 text-[10px] py-1 rounded transition-colors ${defaultCount === c ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
