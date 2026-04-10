@@ -112,6 +112,7 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
           onDataChange={() => { onKeyframeDataChange?.(); router.invalidate() }}
           audioDescriptions={params.data.audioDescriptions}
           audioEvents={params.data.audioEvents}
+          initialPromptRoster={params.data.promptRoster}
         />
       </DockPanel>
     )
@@ -126,6 +127,7 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
           projectName={params.data.projectName}
           motionPrompt={params.data.meta.motionPrompt}
           audioDescriptions={params.data.audioDescriptions}
+          initialPromptRoster={params.data.promptRoster}
           keyframes={[]}
           currentTime={0}
           onClose={() => {}}
