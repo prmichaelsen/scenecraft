@@ -17,6 +17,7 @@ import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
 import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
+import { useEditorState } from './EditorStateContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
@@ -338,6 +339,7 @@ const MAX_AUDIO_HEIGHT = 400
 
 export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const router = useRouter()
+  const editorState = useEditorState()
   const [currentTime, setCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
     const stored = localStorage.getItem(`beatlab-playhead-${data.projectName}`)
@@ -396,6 +398,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [scrollLeft, setScrollLeft] = useState(0)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(2000)
+
+  // v2: Sync selection state to EditorStateContext so dockview property panels can read it
+  useEffect(() => {
+    if (!v2) return
+    editorState.setSelectedKeyframe(selectedKeyframe)
+  }, [v2, selectedKeyframe]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!v2) return
+    editorState.setSelectedTransition(selectedTransition)
+  }, [v2, selectedTransition]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restore persisted heights from localStorage after mount (SSR-safe)
   useEffect(() => {

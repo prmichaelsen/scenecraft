@@ -15,6 +15,9 @@ import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
 import { useRouter } from '@tanstack/react-router'
 import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
+import { EditorStateProvider, useEditorState } from './EditorStateContext'
+import { KeyframePanel } from './KeyframePanel'
+import { TransitionPanel } from './TransitionPanel'
 
 // --- Editor Layout Context ---
 
@@ -86,6 +89,59 @@ function BinDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
         activeTransitions={params.data.transitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: true }))}
       />
     </DockPanel>
+  )
+}
+
+function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
+  const { selectedKeyframe, selectedTransition, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
+  const router = useRouter()
+
+  if (selectedKeyframe) {
+    return (
+      <DockPanel>
+        <KeyframePanel
+          key={selectedKeyframe.id}
+          keyframe={selectedKeyframe}
+          projectName={params.data.projectName}
+          onClose={() => {}}
+          onDelete={() => onKeyframeDelete?.()}
+          onDuplicate={() => {}}
+          onMoveLeft={() => {}}
+          onMoveRight={() => {}}
+          onUnlink={() => {}}
+          onDataChange={() => { onKeyframeDataChange?.(); router.invalidate() }}
+          audioDescriptions={params.data.audioDescriptions}
+          audioEvents={params.data.audioEvents}
+        />
+      </DockPanel>
+    )
+  }
+
+  if (selectedTransition) {
+    return (
+      <DockPanel>
+        <TransitionPanel
+          key={selectedTransition.id}
+          transition={selectedTransition}
+          projectName={params.data.projectName}
+          motionPrompt={params.data.meta.motionPrompt}
+          audioDescriptions={params.data.audioDescriptions}
+          keyframes={[]}
+          currentTime={0}
+          onClose={() => {}}
+          onDelete={() => onTransitionDelete?.()}
+          onDuplicateToNext={() => {}}
+          onDuplicateToPrev={() => {}}
+          onDataChange={() => { onTransitionDataChange?.(); router.invalidate() }}
+        />
+      </DockPanel>
+    )
+  }
+
+  return (
+    <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-[#111827]">
+      Select a keyframe or transition
+    </div>
   )
 }
 
@@ -213,6 +269,7 @@ const components = {
   settings: SettingsDockPanel,
   sections: SectionsDockPanel,
   bin: BinDockPanel,
+  properties: PropertiesDockPanel,
   placeholder: PlaceholderPanel,
 } satisfies Record<string, React.FunctionComponent<IDockviewPanelProps<any>>>
 
@@ -276,9 +333,9 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
 
   api.addPanel({
     id: 'properties',
-    component: 'placeholder',
+    component: 'properties',
     title: 'Properties',
-    params: { label: 'Select a keyframe or transition' },
+    params: { data },
     inactive: true,
     position: { referencePanel: 'bin', direction: 'within' },
   })
@@ -386,6 +443,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
   }, [])
 
   return (
+    <EditorStateProvider>
     <EditorLayoutContext.Provider value={{ api: apiRef.current }}>
       <DockviewReact
         components={components}
@@ -395,6 +453,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
         className="h-full"
       />
     </EditorLayoutContext.Provider>
+    </EditorStateProvider>
   )
 })
 
