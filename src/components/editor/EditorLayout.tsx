@@ -112,25 +112,38 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   // +------------------------------+-----------+-----------+
   //         flex                     280px        200px
 
-  // Col 1: Center — the existing Timeline (preview + tracks)
+  // Col 1: Left sidebar (starts collapsed)
+  api.addPanel({
+    id: 'leftSidebar',
+    component: 'placeholder',
+    title: 'Explorer',
+    params: { label: '' },
+    initialWidth: 200,
+  })
+  // Collapse it immediately — group.api.setSize sets width to 0
+  const leftPanel = api.getPanel('leftSidebar')
+  if (leftPanel) leftPanel.api.setSize({ width: 0 })
+
+  // Col 2: Center — the existing Timeline (preview + tracks)
   api.addPanel({
     id: 'timeline',
     component: 'timeline',
     title: 'Timeline',
     params: { data },
+    position: { referencePanel: 'leftSidebar', direction: 'right' },
   })
 
-  // Col 2: Properties top — Settings for now (KF/TR/ColorGrade later)
+  // Col 3: Properties top — Settings for now (KF/TR/ColorGrade later)
   api.addPanel({
     id: 'properties',
     component: 'settings',
     title: 'Properties',
     params: { data },
     position: { referencePanel: 'timeline', direction: 'right' },
-    initialWidth: 280,
+    initialWidth: 400,
   })
 
-  // Col 2 bottom: Bin (active tab) + Logs, Checkpoints, Versions as tabs
+  // Col 3 bottom: Bin (active tab) + Logs, Checkpoints, Versions as tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
@@ -162,17 +175,16 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referencePanel: 'bin', direction: 'within' },
   })
 
-  // Col 3: Right sidebar top — Sections
+  // Col 4: Right sidebar — full height, Sections on top, Chat below (split inside sidebar)
   api.addPanel({
     id: 'sections',
     component: 'sections',
     title: 'Sections',
     params: { data },
-    position: { referencePanel: 'properties', direction: 'right' },
-    initialWidth: 200,
+    position: { referencePanel: 'timeline', direction: 'right' },
+    initialWidth: 240,
   })
 
-  // Col 3 bottom: Chat
   api.addPanel({
     id: 'chat',
     component: 'placeholder',
