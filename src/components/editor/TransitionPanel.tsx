@@ -846,6 +846,7 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
   }, [job?.status, job?.result])
 
   const generating = job?.status === 'in_progress'
+  const jobFailed = job?.status === 'failed'
   const jobStatus = job?.detail || ''
 
   const handleGenerate = useCallback(async () => {
@@ -957,9 +958,9 @@ function CandidatesTab({ transition, projectName }: { transition: Transition; pr
         <button
           onClick={handleGenerate}
           disabled={generating}
-          className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-2 rounded transition-colors"
+          className={`flex-1 text-xs py-2 rounded transition-colors ${jobFailed ? 'bg-red-700 hover:bg-red-600 text-white' : 'bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700 disabled:text-gray-500 text-white'}`}
         >
-          {generating ? (jobStatus || 'Generating with Veo...') : candidates.length > 0 ? 'Generate More' : 'Generate Video'}
+          {generating ? (jobStatus || 'Generating with Veo...') : jobFailed ? `Failed: ${jobStatus}` : candidates.length > 0 ? 'Generate More' : 'Generate Video'}
         </button>
         <button
           onClick={async () => {
