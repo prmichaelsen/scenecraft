@@ -368,6 +368,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
   const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<Set<string>>(new Set())
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
+  const [selectedTransitionIds, setSelectedTransitionIds] = useState<Set<string>>(new Set())
   const [transformMode, setTransformMode] = useState(false)
   const previewContainerRef = useRef<HTMLDivElement>(null)
   const [showBin, setShowBin] = useState(false)
@@ -1042,8 +1043,22 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
   }, [closeAllPanels])
 
-  const handleTransitionClick = useCallback((tr: Transition) => {
+  const handleTransitionClick = useCallback((tr: Transition, shiftKey?: boolean) => {
     setSelectedTrackId(tr.trackId)
+    if (shiftKey) {
+      // Shift+click: toggle in multi-select
+      setSelectedTransitionIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(tr.id)) next.delete(tr.id)
+        else next.add(tr.id)
+        return next
+      })
+      // Keep single selection for panel display
+      setSelectedTransition(tr)
+      return
+    }
+    // Normal click: clear multi-select
+    setSelectedTransitionIds(new Set())
     closeAllPanels()
     setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
   }, [closeAllPanels])
@@ -2045,6 +2060,32 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           </button>
           </>}
 
+          {/* Batch generate when multiple transitions selected */}
+          {selectedTransitionIds.size > 1 && (
+            <button
+              onClick={async () => {
+                const ids = [...selectedTransitionIds]
+                const trs = localTransitions.filter((t) => ids.includes(t.id))
+                const withAction = trs.filter((t) => t.action)
+                if (withAction.length === 0) { alert('None of the selected transitions have action prompts.'); return }
+                if (withAction.length < trs.length && !confirm(`${trs.length - withAction.length} transitions have no action prompt and will be skipped. Continue with ${withAction.length}?`)) return
+                for (const tr of withAction) {
+                  try {
+                    const result = await generateTransitionCandidates({ data: { projectName: data.projectName, transitionId: tr.id, count: 4, duration: tr.durationSeconds > 0 ? Math.round(tr.durationSeconds) : 8 } })
+                    if (result.jobId) {
+                      const { useJobContext: _jc } = await import('@/contexts/JobStateContext')
+                      // Can't use hook here — fire and forget, status tracked via WebSocket
+                    }
+                  } catch (e) { console.error(`Batch generate failed for ${tr.id}:`, e) }
+                }
+              }}
+              className="text-xs bg-orange-600 hover:bg-orange-500 text-white px-2 py-1 rounded transition-colors"
+              title={`Generate videos for ${selectedTransitionIds.size} selected transitions`}
+            >
+              Generate {selectedTransitionIds.size} Videos
+            </button>
+          )}
+
           <div className="text-xs text-gray-600 ml-auto">
             Zoom: {pxPerSec.toFixed(0)}px/s (Ctrl+scroll)
           </div>
@@ -2211,6 +2252,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       keyframes={tKfs}
                       pxPerSec={pxPerSec}
                       selectedId={selectedTransition?.id ?? null}
+                      selectedIds={selectedTransitionIds}
                       duration={effectiveDuration}
                       onTransitionClick={handleTransitionClick}
                       onBoundaryDrag={handleKeyframeDrag}

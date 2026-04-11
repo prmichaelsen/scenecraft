@@ -8,7 +8,8 @@ type TransitionTrackProps = {
   pxPerSec: number
   selectedId: string | null
   duration: number
-  onTransitionClick: (tr: Transition) => void
+  onTransitionClick: (tr: Transition, shiftKey?: boolean) => void
+  selectedIds?: Set<string>
   onBoundaryDrag: (keyframeId: string, newTimeSeconds: number) => void
   onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
   onRemapChange: (transitionId: string, targetDuration: number) => void
@@ -26,6 +27,7 @@ export function TransitionTrack({
   pxPerSec,
   selectedId,
   onTransitionClick,
+  selectedIds,
   onBoundaryDrag,
   onBoundaryDragEnd,
   onRemapChange,
@@ -91,7 +93,7 @@ export function TransitionTrack({
         // Viewport culling
         if (endX < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
 
-        const isSelected = tr.id === selectedId
+        const isSelected = tr.id === selectedId || (selectedIds?.has(tr.id) ?? false)
         const hasCandidates = Object.values(tr.candidates).some((arr) => arr.length > 0)
 
         // Compute speed for display
@@ -146,7 +148,7 @@ export function TransitionTrack({
               onClick={(e) => {
                 if (didDrag.current) { didDrag.current = false; return }
                 e.stopPropagation()
-                onTransitionClick(tr)
+                onTransitionClick(tr, e.shiftKey)
               }}
               onDragOver={(e) => {
                 if (e.dataTransfer.types.includes('application/x-beatlab-pool-path')) {
