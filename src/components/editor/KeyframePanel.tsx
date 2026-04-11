@@ -29,9 +29,10 @@ type KeyframePanelProps = {
   audioDescriptions?: AudioDescription[]
   audioEvents?: AudioEvent[]
   initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[]
+  onHoverPreview?: (url: string | null) => void
 }
 
-export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onUnlink, onDataChange, audioDescriptions, audioEvents, initialPromptRoster }: KeyframePanelProps) {
+export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDuplicate, onMoveLeft, onMoveRight, onUnlink, onDataChange, audioDescriptions, audioEvents, initialPromptRoster, onHoverPreview }: KeyframePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_WIDTH
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -197,7 +198,7 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
           {tab === 'details' ? (
             <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} initialPromptRoster={initialPromptRoster} />
           ) : tab === 'candidates' ? (
-            <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
+            <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} onHoverPreview={onHoverPreview} />
           ) : tab === 'browse' ? (
             <BrowseTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           ) : (
@@ -599,7 +600,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
   )
 }
 
-function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void }) {
+function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void; onHoverPreview?: (url: string | null) => void }) {
   const jobCtx = useJobContext()
   const entityKey = `kf:${kf.id}:candidates`
   const job = useJobState(entityKey)
@@ -907,6 +908,8 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
               <div
                 key={candidatePath}
                 className={`relative rounded overflow-hidden border-2 transition-colors group ${selected ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} ${selecting ? 'opacity-50 pointer-events-none' : ''}`}
+                onMouseEnter={() => onHoverPreview?.(imgUrl)}
+                onMouseLeave={() => onHoverPreview?.(null)}
                 draggable
                 onDragStart={(e) => {
                   e.dataTransfer.setData('application/x-beatlab-pool-path', relativePath)

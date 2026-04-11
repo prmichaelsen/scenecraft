@@ -2510,6 +2510,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           audioDescriptions={aiAudioDescriptions}
           audioEvents={aiAudioEvents}
           initialPromptRoster={data.promptRoster}
+          onHoverPreview={setHoverPreviewUrl}
         />
       ) : selectedTransition ? (
         <TransitionPanel
