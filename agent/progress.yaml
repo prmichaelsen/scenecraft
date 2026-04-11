@@ -134,6 +134,38 @@ milestones:
         estimated_hours: 3
         actual_hours: null
 
+  - id: milestone_5
+    name: WebSocket State Sync
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-5-websocket-state-sync.md
+    tasks_total: 3
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-25
+        name: "Tier 1: Core mutation broadcasts + Map refactor"
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-5-websocket-state-sync/task-25-tier1-core-broadcasts-map-refactor.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-26
+        name: "Tier 2: All mutations + reconnect fallback"
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-5-websocket-state-sync/task-26-tier2-all-mutations-reconnect.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-27
+        name: "Tier 3: Extended entities (markers, effects, tracks)"
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-5-websocket-state-sync/task-27-tier3-extended-entities.md
+        estimated_hours: 4
+        actual_hours: null
+
   - id: milestone_4
     name: AI Assistant Chat
     status: not_started
@@ -290,6 +322,31 @@ tasks:
       actual_hours: null
       started: null
 
+  milestone_5:
+    - id: task-25
+      name: "Tier 1: Core mutation broadcasts + Map refactor"
+      status: not_started
+      milestone_id: milestone_5
+      file: agent/tasks/milestone-5-websocket-state-sync/task-25-tier1-core-broadcasts-map-refactor.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-26
+      name: "Tier 2: All mutations + reconnect fallback"
+      status: not_started
+      milestone_id: milestone_5
+      file: agent/tasks/milestone-5-websocket-state-sync/task-26-tier2-all-mutations-reconnect.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-27
+      name: "Tier 3: Extended entities (markers, effects, tracks)"
+      status: not_started
+      milestone_id: milestone_5
+      file: agent/tasks/milestone-5-websocket-state-sync/task-27-tier3-extended-entities.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
   milestone_4:
     - id: task-15
       name: Backend chat endpoint and DB storage
@@ -390,10 +447,10 @@ tasks:
       started: null
 
 documentation:
-  design_documents: 8
-  milestone_documents: 2
+  design_documents: 9
+  milestone_documents: 3
   pattern_documents: 0
-  task_documents: 24
+  task_documents: 27
 
 progress:
   planning: 80
@@ -417,10 +474,10 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M5: WebSocket State Sync — replace refreshTimeline with WS-pushed deltas (3 tiers)"
   - "M2: Dynamic Panel Layout — install dockview, migrate all panels to 4-column layout"
   - "M3: Contribution Points — backend/frontend placeholders, plugin manifest schema"
   - "M4: AI Assistant Chat — Claude chat panel with tool calling, streaming, MCP integration"
-  - Add editor settings panel
   - Per-section beat source selection
 
 notes: []
