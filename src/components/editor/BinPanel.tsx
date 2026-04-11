@@ -22,13 +22,14 @@ type BinPanelProps = {
   activeKeyframes: ActiveKeyframe[]
   activeTransitions: ActiveTransition[]
   onHoverPreview?: (url: string | null) => void
+  onHoverBinTransition?: (entry: TransitionBinEntry | null) => void
 }
 
 const PANEL_STORAGE_KEY = 'beatlab-side-panel-width'
 const PANEL_DEFAULT = 360
 const PANEL_MIN = 240
 
-export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInsertPoolItem, poolSelection, activeKeyframes, activeTransitions, onHoverPreview }: BinPanelProps) {
+export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInsertPoolItem, poolSelection, activeKeyframes, activeTransitions, onHoverPreview, onHoverBinTransition }: BinPanelProps) {
   const [panelWidth, setPanelWidth] = useState(() => {
     if (typeof window === 'undefined') return PANEL_DEFAULT
     const stored = localStorage.getItem(PANEL_STORAGE_KEY)
@@ -400,13 +401,69 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                 )
               ) : (
                 transitionEntries.length === 0 ? <div className="text-center text-sm text-gray-600 py-4">Bin empty</div> : (
-                  <>
+                  <div className="grid grid-cols-2 gap-1">
                     {sortItems(transitionEntries).map((entry) => (
-                      <div key={entry.id} className="px-2 py-1 bg-red-900/20 rounded text-[10px] text-gray-400 cursor-pointer hover:bg-red-900/30" onClick={() => handleRestoreTransition(entry.id)}>
-                        {entry.id}: {entry.from} → {entry.to} — click to restore
+                      <div
+                        key={entry.id}
+                        className="relative group rounded overflow-hidden border border-red-900/30 hover:border-red-500/50 cursor-pointer transition-colors"
+                        onMouseEnter={() => onHoverBinTransition?.(entry)}
+                        onMouseLeave={() => onHoverBinTransition?.(null)}
+                      >
+                        <video
+                          src={beatlabFileUrl(projectName, `selected_transitions/${entry.id}_slot_0.mp4`)}
+                          className="w-full aspect-video object-cover"
+                          muted
+                          loop
+                          playsInline
+                          preload="metadata"
+                          onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+                          onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
+                          onError={(e) => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }}
+                        />
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] text-gray-300 font-mono">{entry.id}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleRestoreTransition(entry.id) }}
+                                className="text-[8px] text-green-400/70 hover:text-green-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Restore to timeline"
+                              >
+                                restore
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  const { postAddToBench } = await import('@/lib/beatlab-client')
+                                  await postAddToBench(projectName, 'transition', entry.id)
+                                }}
+                                className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Add to bench"
+                              >
+                                bench
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                                  await fetch(url, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ sourcePath: `selected_transitions/${entry.id}_slot_0.mp4`, type: 'transition' }),
+                                  })
+                                }}
+                                className="text-[8px] text-purple-400/60 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Add to pool"
+                              >
+                                pool
+                              </button>
+                            </div>
+                          </div>
+                          <div className="text-[8px] text-gray-500">{entry.from} → {entry.to} ({entry.durationSeconds.toFixed(1)}s)</div>
+                        </div>
                       </div>
                     ))}
-                  </>
+                  </div>
                 )
               )}
             </div>

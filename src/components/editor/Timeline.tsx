@@ -393,6 +393,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
   const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
   const [hoverPreviewUrl, setHoverPreviewUrl] = useState<string | null>(null)
+  const [hoveredBinTransition, setHoveredBinTransition] = useState<import('@/lib/beatlab-client').TransitionBinEntry | null>(null)
   const [audioTrackHeight, setAudioTrackHeight] = useState(DEFAULT_AUDIO_HEIGHT)
   // Viewport state for virtualized rendering
   const [scrollLeft, setScrollLeft] = useState(0)
@@ -2275,6 +2276,28 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             )}
 
             {/* Playhead overlay */}
+            {/* Hover markers for binned transition */}
+            {hoveredBinTransition && (() => {
+              const fromKf = keyframes.find((k) => k.id === hoveredBinTransition.from)
+              const toKf = keyframes.find((k) => k.id === hoveredBinTransition.to)
+              if (!fromKf || !toKf) return null
+              const inX = fromKf.timeSeconds * pxPerSec
+              const outX = toKf.timeSeconds * pxPerSec
+              return (
+                <>
+                  <div className="absolute top-0 bottom-0 pointer-events-none z-40" style={{ left: inX }}>
+                    <div className="w-px h-full bg-red-500/70" />
+                    <div className="absolute top-0 left-1 text-[9px] text-red-400 bg-gray-900/80 px-1 rounded whitespace-nowrap">IN</div>
+                  </div>
+                  <div className="absolute top-0 bottom-0 pointer-events-none z-40" style={{ left: outX }}>
+                    <div className="w-px h-full bg-red-500/70" />
+                    <div className="absolute top-0 left-1 text-[9px] text-red-400 bg-gray-900/80 px-1 rounded whitespace-nowrap">OUT</div>
+                  </div>
+                  <div className="absolute top-0 bottom-0 pointer-events-none z-30 bg-red-500/5" style={{ left: inX, width: outX - inX }} />
+                </>
+              )
+            })()}
+
             <Playhead
               currentTime={currentTime}
               pxPerSec={pxPerSec}
@@ -2379,6 +2402,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           activeKeyframes={localKeyframes.map((kf) => ({ id: kf.id, timestamp: kf.timestamp, section: kf.section, prompt: kf.prompt, hasSelectedImage: kf.hasSelectedImage }))}
           activeTransitions={localTransitions.map((tr) => ({ id: tr.id, from: tr.from, to: tr.to, durationSeconds: tr.durationSeconds, hasSelectedVideo: tr.hasSelectedVideo }))}
           onHoverPreview={setHoverPreviewUrl}
+          onHoverBinTransition={setHoveredBinTransition}
         />
       ) : selectedKeyframe ? (
         <KeyframePanel
