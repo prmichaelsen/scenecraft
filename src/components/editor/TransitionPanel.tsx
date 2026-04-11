@@ -2868,23 +2868,27 @@ function BrowseVideoCard({ path, label, tags, projectName, disabled, onAssign }:
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => browseBlobCache.get(path) ?? null)
   const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [hovered, setHovered] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const url = beatlabFileUrl(projectName, path)
 
   useEffect(() => {
-    if (!hovered || blobUrl || loading) return
+    if (!hovered || blobUrl || loading || failed) return
     setLoading(true)
     fetch(url)
-      .then((res) => res.blob())
+      .then((res) => {
+        if (!res.ok) throw new Error(`${res.status}`)
+        return res.blob()
+      })
       .then((blob) => {
         const bu = URL.createObjectURL(blob)
         browseBlobCache.set(path, bu)
         setBlobUrl(bu)
       })
-      .catch(() => {})
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false))
-  }, [hovered, blobUrl, loading, url, path])
+  }, [hovered, blobUrl, loading, failed, url, path])
 
   useEffect(() => {
     const el = videoRef.current
@@ -2909,7 +2913,7 @@ function BrowseVideoCard({ path, label, tags, projectName, disabled, onAssign }:
         />
       ) : (
         <div className="w-full aspect-video flex items-center justify-center">
-          <span className="text-[9px] text-gray-500 font-mono">{loading ? '...' : label.slice(0, 20)}</span>
+          <span className={`text-[9px] font-mono ${failed ? 'text-red-500' : 'text-gray-500'}`}>{loading ? '...' : failed ? 'Failed to load' : label.slice(0, 20)}</span>
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5">
