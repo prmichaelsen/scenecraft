@@ -1097,6 +1097,18 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
                 onSelect={() => handleSelect(variantNum)}
                 onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, videoPath))}
                 onMouseLeave={() => onHoverPreview?.(null)}
+                onBench={async () => {
+                  const { postAddToBench } = await import('@/lib/beatlab-client')
+                  await postAddToBench(projectName, 'transition', undefined, videoPath)
+                }}
+                onPool={async () => {
+                  const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                  await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sourcePath: videoPath, type: 'transition' }),
+                  })
+                }}
               />
             )
           })}
@@ -1225,9 +1237,10 @@ function ModalVideoCard({ videoPath, projectName }: { videoPath: string; project
 
 const videoBlobCache = new Map<string, string>() // url -> blob URL
 
-function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave }: {
+function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave, onBench, onPool }: {
   videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
   onMouseEnter?: () => void; onMouseLeave?: () => void
+  onBench?: () => void; onPool?: () => void
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [loading, setLoading] = useState(false)
@@ -1300,9 +1313,29 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-gray-300 font-mono">{label}</span>
-          {isSelected && (
-            <span className="text-[9px] bg-orange-500 text-white px-1 rounded">selected</span>
-          )}
+          <div className="flex items-center gap-1">
+            {onPool && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onPool() }}
+                className="text-[8px] text-purple-400/60 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Add to pool"
+              >
+                pool
+              </button>
+            )}
+            {onBench && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onBench() }}
+                className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Add to bench"
+              >
+                bench
+              </button>
+            )}
+            {isSelected && (
+              <span className="text-[9px] bg-orange-500 text-white px-1 rounded">selected</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
