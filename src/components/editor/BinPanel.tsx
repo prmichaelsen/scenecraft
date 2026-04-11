@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { beatlabFileUrl, beatlabThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
+import { beatlabFileUrl, beatlabThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
 import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
 
@@ -28,6 +28,23 @@ type BinPanelProps = {
 const PANEL_STORAGE_KEY = 'beatlab-side-panel-width'
 const PANEL_DEFAULT = 360
 const PANEL_MIN = 240
+
+function BinVideoPreview({ projectName, transitionId }: { projectName: string; transitionId: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[9px] text-gray-600">No video</span></div>
+  }
+  return (
+    <video
+      src={beatlabFileUrl(projectName, `selected_transitions/${transitionId}_slot_0.mp4`)}
+      className="w-full aspect-video object-cover"
+      muted loop playsInline preload="metadata"
+      onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+      onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
+      onError={() => setFailed(true)}
+    />
+  )
+}
 
 export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInsertPoolItem, poolSelection, activeKeyframes, activeTransitions, onHoverPreview, onHoverBinTransition }: BinPanelProps) {
   const [panelWidth, setPanelWidth] = useState(() => {
@@ -72,8 +89,9 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
   const [poolSegments, setPoolSegments] = useState<PoolEntry[]>([])
   const [watchedFolders, setWatchedFolders] = useState<string[]>([])
   const [unselectedCandidates, setUnselectedCandidates] = useState<UnselectedCandidate[]>([])
+  const [videoCandidates, setVideoCandidates] = useState<import('@/lib/beatlab-client').VideoCandidate[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates'>('keyframes')
+  const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates' | 'videos'>('keyframes')
   const [kfSubTab, setKfSubTab] = useState<'active' | 'bin'>('active')
   const [trSubTab, setTrSubTab] = useState<'active' | 'bin'>('active')
   const scrollPositions = useRef<Record<string, number>>(
@@ -84,11 +102,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
   const loadBin = useCallback(async () => {
     setLoading(true)
     try {
-      const [binData, watchData, poolData, candData] = await Promise.all([
+      const [binData, watchData, poolData, candData, vidCandData] = await Promise.all([
         getBin({ data: { projectName } }).catch(() => ({ bin: [], transitionBin: [] })),
         fetchWatchedFolders(projectName).catch(() => ({ watchedFolders: [] })),
         fetchPool(projectName).catch(() => ({ keyframes: [], segments: [] })),
         fetchUnselectedCandidates(projectName).catch(() => []),
+        fetchVideoCandidates(projectName).catch(() => []),
       ])
       setKeyframeEntries(binData.bin || [])
       setTransitionEntries(binData.transitionBin || [])
@@ -96,6 +115,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       setPoolKeyframes(poolData.keyframes || [])
       setPoolSegments(poolData.segments || [])
       setUnselectedCandidates(candData)
+      setVideoCandidates(vidCandData)
 
       // Background preload thumbnails into IndexedDB
       const thumbUrls = [
@@ -265,10 +285,11 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
       {/* Tabs */}
       <div className="flex border-b border-gray-800 shrink-0">
-        {(['keyframes', 'transitions', 'pool', 'candidates'] as const).map((t) => {
+        {(['keyframes', 'transitions', 'pool', 'candidates', 'videos'] as const).map((t) => {
           const candCount = unselectedCandidates.length
-          const label = t === 'keyframes' ? `KFs${allKfCount > 0 ? ` (${allKfCount})` : ''}` : t === 'transitions' ? `TRs${allTrCount > 0 ? ` (${allTrCount})` : ''}` : t === 'pool' ? `Pool${poolCount > 0 ? ` (${poolCount})` : ''}` : `Cands${candCount > 0 ? ` (${candCount})` : ''}`
-          const color = t === 'keyframes' ? 'blue' : t === 'transitions' ? 'orange' : t === 'pool' ? 'green' : 'purple'
+          const vidCount = videoCandidates.length
+          const label = t === 'keyframes' ? `KFs${allKfCount > 0 ? ` (${allKfCount})` : ''}` : t === 'transitions' ? `TRs${allTrCount > 0 ? ` (${allTrCount})` : ''}` : t === 'pool' ? `Pool${poolCount > 0 ? ` (${poolCount})` : ''}` : t === 'candidates' ? `Cands${candCount > 0 ? ` (${candCount})` : ''}` : `Vids${vidCount > 0 ? ` (${vidCount})` : ''}`
+          const color = t === 'keyframes' ? 'blue' : t === 'transitions' ? 'orange' : t === 'pool' ? 'green' : t === 'candidates' ? 'purple' : 'cyan'
           return (
             <button
               key={t}
@@ -409,17 +430,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         onMouseEnter={() => onHoverBinTransition?.(entry)}
                         onMouseLeave={() => onHoverBinTransition?.(null)}
                       >
-                        <video
-                          src={beatlabFileUrl(projectName, `selected_transitions/${entry.id}_slot_0.mp4`)}
-                          className="w-full aspect-video object-cover"
-                          muted
-                          loop
-                          playsInline
-                          preload="metadata"
-                          onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
-                          onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
-                          onError={(e) => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }}
-                        />
+                        <BinVideoPreview projectName={projectName} transitionId={entry.id} />
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
                           <div className="flex items-center justify-between">
                             <span className="text-[9px] text-gray-300 font-mono">{entry.id}</span>
@@ -495,6 +506,65 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="text-[7px] text-gray-300 truncate">{c.keyframeId} v{c.variant}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        ) : tab === 'videos' ? (
+          videoCandidates.length === 0 ? (
+            <div className="p-4 text-center text-sm text-gray-600">No video candidates</div>
+          ) : (
+            <div className="p-2">
+              <div className="grid grid-cols-2 gap-1">
+                {videoCandidates.map((vc) => (
+                  <div
+                    key={`${vc.transitionId}-${vc.slot}-v${vc.variant}`}
+                    className="relative group rounded overflow-hidden cursor-pointer transition-colors border border-transparent hover:border-gray-600"
+                  >
+                    <video
+                      src={beatlabFileUrl(projectName, vc.path)}
+                      className="w-full aspect-video object-cover"
+                      muted
+                      loop
+                      playsInline
+                      preload="metadata"
+                      onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+                      onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] text-gray-300 font-mono">{vc.transitionId} v{vc.variant}</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              const { postAddToBench } = await import('@/lib/beatlab-client')
+                              await postAddToBench(projectName, 'transition', undefined, vc.path)
+                            }}
+                            className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Add to bench"
+                          >
+                            bench
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                              await fetch(url, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ sourcePath: vc.path, type: 'transition' }),
+                              })
+                            }}
+                            className="text-[8px] text-purple-400/60 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Add to pool"
+                          >
+                            pool
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}

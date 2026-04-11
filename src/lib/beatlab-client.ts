@@ -278,6 +278,14 @@ export async function postReorderTracks(project: string, trackIds: string[]) {
 }
 
 export type UnselectedCandidate = { keyframeId: string; variant: number; path: string }
+export type VideoCandidate = { transitionId: string; slot: string; variant: number; path: string; size: number }
+
+export async function fetchVideoCandidates(project: string): Promise<VideoCandidate[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/video-candidates`)
+  if (!res.ok) return []
+  const data = await res.json() as { candidates: VideoCandidate[] }
+  return data.candidates
+}
 
 export async function fetchUnselectedCandidates(project: string): Promise<UnselectedCandidate[]> {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unselected-candidates`)
