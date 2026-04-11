@@ -12,6 +12,8 @@ type SettingsPanelProps = {
   onPreviewQualityChange?: (quality: number) => void
 }
 
+const PLAYBACK_SPEED_KEY = 'beatlab-playback-speed'
+
 export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQualityChange }: SettingsPanelProps) {
   const [settings, setSettings] = useState<ProjectSettings | null>(null)
   const [loading, setLoading] = useState(true)
@@ -28,6 +30,11 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
   const [defaultCount, setDefaultCount] = useState<number>((data.meta as Record<string, unknown>).default_gen_count as number || 4)
   const [roster, setRoster] = useState<PromptRosterEntry[]>(data.promptRoster || [])
   const [defaultPromptId, setDefaultPromptId] = useState<string>((data.meta as Record<string, unknown>).default_prompt_id as string || '')
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => {
+    if (typeof window === 'undefined') return 1
+    const stored = localStorage.getItem(PLAYBACK_SPEED_KEY)
+    return stored ? parseFloat(stored) : 1
+  })
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null)
   const [editingRosterName, setEditingRosterName] = useState('')
   const [editingRosterTemplate, setEditingRosterTemplate] = useState('')
@@ -107,6 +114,27 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                   <option value={24}>24 fps</option>
                   <option value={30}>30 fps</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Playback Speed: {playbackSpeed}x</label>
+                <input
+                  type="range" min={0.1} max={4} step={0.1}
+                  value={playbackSpeed}
+                  onChange={(e) => {
+                    const rate = parseFloat(e.target.value)
+                    setPlaybackSpeed(rate)
+                    localStorage.setItem(PLAYBACK_SPEED_KEY, String(rate))
+                    // Dispatch event so Timeline picks up the change
+                    window.dispatchEvent(new CustomEvent('beatlab-playback-speed', { detail: rate }))
+                  }}
+                  className="w-full h-1.5 accent-gray-500"
+                />
+                <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                  <span>0.1x</span>
+                  <span>1x</span>
+                  <span>4x</span>
+                </div>
               </div>
             </div>
 

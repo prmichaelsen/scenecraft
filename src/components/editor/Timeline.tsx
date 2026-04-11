@@ -360,7 +360,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     return stored ? parseFloat(stored) : 20
   })
   const [isPlaying, setIsPlaying] = useState(false)
-  const [playbackRate, setPlaybackRate] = useState(1)
+  const [playbackRate, setPlaybackRate] = useState(() => {
+    if (typeof window === 'undefined') return 1
+    const stored = localStorage.getItem('beatlab-playback-speed')
+    return stored ? parseFloat(stored) : 1
+  })
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
   const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<Set<string>>(new Set())
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
@@ -419,6 +423,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
     const storedAudio = localStorage.getItem(AUDIO_HEIGHT_KEY)
     if (storedAudio) setAudioTrackHeight(Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, parseInt(storedAudio, 10))))
+  }, [])
+
+  // Sync playback speed from Settings panel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const rate = (e as CustomEvent).detail as number
+      setPlaybackRate(rate)
+      if (audioElRef.current) audioElRef.current.playbackRate = rate
+    }
+    window.addEventListener('beatlab-playback-speed', handler)
+    return () => window.removeEventListener('beatlab-playback-speed', handler)
   }, [])
 
   // Preload stills for base image picker
@@ -1766,12 +1781,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           {/* Playback speed */}
           <div className="flex items-center gap-1">
             <input
-              type="range" min={0.25} max={2} step={0.25}
+              type="range" min={0.1} max={4} step={0.1}
               value={playbackRate}
               onChange={(e) => {
                 const rate = parseFloat(e.target.value)
                 setPlaybackRate(rate)
                 if (audioElRef.current) audioElRef.current.playbackRate = rate
+                localStorage.setItem('beatlab-playback-speed', String(rate))
               }}
               className="w-14 h-1.5 accent-gray-500"
             />
