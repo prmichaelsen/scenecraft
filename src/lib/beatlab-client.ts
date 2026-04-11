@@ -385,6 +385,24 @@ export async function postUndo(project: string) {
   return res.json() as Promise<{ success: boolean; description?: string; message?: string }>
 }
 
+export async function postRedo(project: string) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/redo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  return res.json() as Promise<{ success: boolean; description?: string; message?: string }>
+}
+
+export type UndoHistoryEntry = { id: number; description: string; timestamp: string; undone: boolean }
+
+export async function fetchUndoHistory(project: string, limit: number = 50): Promise<UndoHistoryEntry[]> {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/undo-history?limit=${limit}`)
+  if (!res.ok) return []
+  const data = await res.json() as { history: UndoHistoryEntry[] }
+  return data.history || []
+}
+
 export async function postUnlinkKeyframe(project: string, keyframeId: string, side: 'both' | 'left' | 'right' = 'both') {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unlink-keyframe`, {
     method: 'POST',

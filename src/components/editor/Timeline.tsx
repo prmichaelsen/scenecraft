@@ -1485,11 +1485,23 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         setSelectedEffectIds(new Set(userEffects.map((fx) => fx.id)))
       }
 
-      // Undo
+      // Undo (Ctrl+Z)
       if (matchesHotkey(e, 'undo')) {
         handlePreventDefault(e, 'undo')
         import('@/lib/beatlab-client').then(({ postUndo }) => {
           postUndo(data.projectName).then((result) => {
+            if (result.success) {
+              refreshTimeline()
+            }
+          })
+        })
+      }
+
+      // Redo (Ctrl+Shift+Z / Ctrl+Y)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z' || (e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault()
+        import('@/lib/beatlab-client').then(({ postRedo }) => {
+          postRedo(data.projectName).then((result) => {
             if (result.success) {
               refreshTimeline()
             }
