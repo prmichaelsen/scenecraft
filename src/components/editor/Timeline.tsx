@@ -396,7 +396,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
   const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
-  const [hoverPreviewUrl, setHoverPreviewUrl] = useState<string | null>(null)
+  const [hoverPreviewUrl, setHoverPreviewUrlRaw] = useState<string | null>(null)
+  const hoverClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const setHoverPreviewUrl = useCallback((url: string | null) => {
+    if (hoverClearTimer.current) { clearTimeout(hoverClearTimer.current); hoverClearTimer.current = null }
+    if (url) {
+      setHoverPreviewUrlRaw(url)
+    } else {
+      // Debounce clear to prevent flicker when moving between adjacent cards
+      hoverClearTimer.current = setTimeout(() => setHoverPreviewUrlRaw(null), 100)
+    }
+  }, [])
   const [hoveredBinTransition, setHoveredBinTransition] = useState<import('@/lib/beatlab-client').TransitionBinEntry | null>(null)
   const [audioTrackHeight, setAudioTrackHeight] = useState(DEFAULT_AUDIO_HEIGHT)
   // Viewport state for virtualized rendering
