@@ -455,9 +455,17 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                 <select
                   className="flex-1 bg-gray-800 text-[10px] text-gray-400 border border-gray-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-500"
                   value=""
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const entry = promptRoster.find((p) => p.id === e.target.value)
-                    if (entry) setPromptText(entry.template)
+                    if (entry) {
+                      setPromptText(entry.template)
+                      // Auto-save the inserted prompt immediately
+                      await updateKeyframePrompt({
+                        data: { projectName, keyframeId: kf.id, prompt: entry.template },
+                      })
+                      kf.prompt = entry.template
+                      setEditingPrompt(false)
+                    }
                   }}
                 >
                   <option value="">Insert from roster...</option>
