@@ -616,9 +616,23 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
   const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
 
-  // Preload keyframe images and transition videos near the playhead (±30s window).
+  // Preload keyframe images and transition videos near the playhead.
   // Runs on time changes and data changes — avoids enqueuing hundreds of decodes at once.
-  const PRELOAD_WINDOW = 30
+  const [preloadWindow, setPreloadWindow] = useState(() => {
+    if (typeof window === 'undefined') return 30
+    const stored = localStorage.getItem('beatlab-preload-window')
+    return stored ? parseInt(stored, 10) : 30
+  })
+  // Listen for settings changes
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const val = (e as CustomEvent).detail as number
+      setPreloadWindow(val)
+    }
+    window.addEventListener('beatlab-preload-window', handler)
+    return () => window.removeEventListener('beatlab-preload-window', handler)
+  }, [])
+  const PRELOAD_WINDOW = preloadWindow
   useEffect(() => {
     for (const kf of keyframes) {
       if (!kf.hasSelectedImage) continue

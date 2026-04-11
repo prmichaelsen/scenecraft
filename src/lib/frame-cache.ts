@@ -228,7 +228,17 @@ let totalMemoryBytes = 0
 
 // ImageBitmaps live in GPU/process memory, not JS heap.
 // 32GB allows ~26 transitions at 1920x1080 (~1.2GB each) in memory.
-const MEMORY_LIMIT = 2 * 1024 * 1024 * 1024 // 2GB — keep well under browser tab limit
+let MEMORY_LIMIT = (() => {
+  if (typeof window === 'undefined') return 2 * 1024 * 1024 * 1024
+  const stored = localStorage.getItem('beatlab-cache-memory-gb')
+  return (stored ? parseFloat(stored) : 2) * 1024 * 1024 * 1024
+})()
+
+/** Update the memory limit (in GB). Called from settings. */
+export function setCacheMemoryLimit(gb: number) {
+  MEMORY_LIMIT = gb * 1024 * 1024 * 1024
+  localStorage.setItem('beatlab-cache-memory-gb', String(gb))
+}
 
 function estimateEntryBytes(frames: ImageBitmap[]): number {
   if (frames.length === 0) return 0

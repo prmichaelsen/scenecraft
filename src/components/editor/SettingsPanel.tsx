@@ -35,6 +35,16 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
     const stored = localStorage.getItem(PLAYBACK_SPEED_KEY)
     return stored ? parseFloat(stored) : 1
   })
+  const [preloadWindow, setPreloadWindowState] = useState(() => {
+    if (typeof window === 'undefined') return 30
+    const stored = localStorage.getItem('beatlab-preload-window')
+    return stored ? parseInt(stored, 10) : 30
+  })
+  const [cacheMemoryGb, setCacheMemoryGb] = useState(() => {
+    if (typeof window === 'undefined') return 2
+    const stored = localStorage.getItem('beatlab-cache-memory-gb')
+    return stored ? parseFloat(stored) : 2
+  })
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null)
   const [editingRosterName, setEditingRosterName] = useState('')
   const [editingRosterTemplate, setEditingRosterTemplate] = useState('')
@@ -114,6 +124,45 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                   <option value={24}>24 fps</option>
                   <option value={30}>30 fps</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Preload Window: ±{preloadWindow}s</label>
+                <input
+                  type="range" min={5} max={120} step={5}
+                  value={preloadWindow}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value)
+                    setPreloadWindowState(val)
+                    localStorage.setItem('beatlab-preload-window', String(val))
+                    window.dispatchEvent(new CustomEvent('beatlab-preload-window', { detail: val }))
+                  }}
+                  className="w-full h-1.5 accent-gray-500"
+                />
+                <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                  <span>5s</span>
+                  <span>60s</span>
+                  <span>120s</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Frame Cache: {cacheMemoryGb}GB</label>
+                <input
+                  type="range" min={0.5} max={8} step={0.5}
+                  value={cacheMemoryGb}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value)
+                    setCacheMemoryGb(val)
+                    import('@/lib/frame-cache').then(({ setCacheMemoryLimit }) => setCacheMemoryLimit(val))
+                  }}
+                  className="w-full h-1.5 accent-gray-500"
+                />
+                <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                  <span>0.5GB</span>
+                  <span>4GB</span>
+                  <span>8GB</span>
+                </div>
               </div>
 
               <div>
