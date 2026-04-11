@@ -597,6 +597,7 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
   const job = useJobState(entityKey)
 
   const [candidates, setCandidates] = useState(kf.candidates)
+  const [enhancing, setEnhancing] = useState(false)
 
   useEffect(() => {
     setCandidates(kf.candidates)
@@ -748,11 +749,11 @@ function CandidatesTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime
             onClick={async () => {
               try {
                 setEnhancing(true)
-                const result = await enhanceKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: refinementPrompt, sectionContent: sectionContent || '', nearestEvent: nearestEvent || undefined } })
-                if (result.enhanced) {
-                  setRefinementPrompt(result.enhanced)
+                const result = await enhanceKeyframePrompt({ data: { projectName, prompt: refinementPrompt, sectionContent: '', event: { time: kf.timeSeconds, effect: '', intensity: 0, stem_source: '' } } })
+                if (result.prompt) {
+                  setRefinementPrompt(result.prompt)
                   const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
-                  postUpdateKeyframeStyle(projectName, kf.id, { refinementPrompt: result.enhanced } as never)
+                  postUpdateKeyframeStyle(projectName, kf.id, { refinementPrompt: result.prompt } as never)
                 }
               } catch (e) { alert(`Enhance failed: ${e}`) } finally { setEnhancing(false) }
             }}
