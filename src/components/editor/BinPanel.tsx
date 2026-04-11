@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
+import { VirtuosoGrid } from 'react-virtuoso'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
 import { beatlabFileUrl, beatlabThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
@@ -29,17 +30,18 @@ const PANEL_STORAGE_KEY = 'beatlab-side-panel-width'
 const PANEL_DEFAULT = 360
 const PANEL_MIN = 240
 
-function BinVideoPreview({ projectName, transitionId }: { projectName: string; transitionId: string }) {
+function BinVideoPreview({ projectName, transitionId, videoPath }: { projectName: string; transitionId: string; videoPath?: string }) {
   const [failed, setFailed] = useState(false)
+  const src = beatlabFileUrl(projectName, videoPath || `selected_transitions/${transitionId}_slot_0.mp4`)
   if (failed) {
     return <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[9px] text-gray-600">No video</span></div>
   }
   return (
     <video
-      src={beatlabFileUrl(projectName, `selected_transitions/${transitionId}_slot_0.mp4`)}
+      src={src}
       className="w-full aspect-video object-cover"
-      muted loop playsInline preload="metadata"
-      onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+      muted loop playsInline preload="none"
+      onMouseEnter={(e) => { const v = e.currentTarget as HTMLVideoElement; v.preload = 'metadata'; v.play().catch(() => {}) }}
       onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
       onError={() => setFailed(true)}
     />
@@ -422,10 +424,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                 )
               ) : (
                 transitionEntries.length === 0 ? <div className="text-center text-sm text-gray-600 py-4">Bin empty</div> : (
-                  <div className="grid grid-cols-2 gap-1">
-                    {sortItems(transitionEntries).map((entry) => (
+                  <VirtuosoGrid
+                    data={sortItems(transitionEntries)}
+                    listClassName="grid grid-cols-2 gap-1 p-1"
+                    itemClassName=""
+                    itemContent={(_index, entry) => (
                       <div
-                        key={entry.id}
                         className="relative group rounded overflow-hidden border border-red-900/30 hover:border-red-500/50 cursor-pointer transition-colors"
                         onMouseEnter={() => onHoverBinTransition?.(entry)}
                         onMouseLeave={() => onHoverBinTransition?.(null)}
@@ -473,8 +477,9 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           <div className="text-[8px] text-gray-500">{entry.from} → {entry.to} ({entry.durationSeconds.toFixed(1)}s)</div>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                    style={{ height: '100%' }}
+                  />
                 )
               )}
             </div>
@@ -516,60 +521,52 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
           videoCandidates.length === 0 ? (
             <div className="p-4 text-center text-sm text-gray-600">No video candidates</div>
           ) : (
-            <div className="p-2">
-              <div className="grid grid-cols-2 gap-1">
-                {videoCandidates.map((vc) => (
-                  <div
-                    key={`${vc.transitionId}-${vc.slot}-v${vc.variant}`}
-                    className="relative group rounded overflow-hidden cursor-pointer transition-colors border border-transparent hover:border-gray-600"
-                  >
-                    <video
-                      src={beatlabFileUrl(projectName, vc.path)}
-                      className="w-full aspect-video object-cover"
-                      muted
-                      loop
-                      playsInline
-                      preload="metadata"
-                      onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
-                      onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0 }}
-                    />
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] text-gray-300 font-mono">{vc.transitionId} v{vc.variant}</span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation()
-                              const { postAddToBench } = await import('@/lib/beatlab-client')
-                              await postAddToBench(projectName, 'transition', undefined, vc.path)
-                            }}
-                            className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Add to bench"
-                          >
-                            bench
-                          </button>
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation()
-                              const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
-                              await fetch(url, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ sourcePath: vc.path, type: 'transition' }),
-                              })
-                            }}
-                            className="text-[8px] text-purple-400/60 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Add to pool"
-                          >
-                            pool
-                          </button>
-                        </div>
+            <VirtuosoGrid
+              data={videoCandidates}
+              listClassName="grid grid-cols-2 gap-1 p-1"
+              itemClassName=""
+              itemContent={(_index, vc) => (
+                <div
+                  className="relative group rounded overflow-hidden cursor-pointer transition-colors border border-transparent hover:border-gray-600"
+                >
+                  <BinVideoPreview projectName={projectName} transitionId={vc.transitionId} videoPath={vc.path} />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] text-gray-300 font-mono">{vc.transitionId} v{vc.variant}</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            const { postAddToBench } = await import('@/lib/beatlab-client')
+                            await postAddToBench(projectName, 'transition', undefined, vc.path)
+                          }}
+                          className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Add to bench"
+                        >
+                          bench
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                            await fetch(url, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ sourcePath: vc.path, type: 'transition' }),
+                            })
+                          }}
+                          className="text-[8px] text-purple-400/60 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Add to pool"
+                        >
+                          pool
+                        </button>
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+              )}
+              style={{ height: '100%' }}
+            />
           )
         ) : (
           /* Pool tab */
