@@ -425,6 +425,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     if (storedAudio) setAudioTrackHeight(Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, parseInt(storedAudio, 10))))
   }, [])
 
+  // Prevent browser zoom on Ctrl+scroll (React onWheel is passive, can't preventDefault)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault()
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
+
   // Sync playback speed from Settings panel
   useEffect(() => {
     const handler = (e: Event) => {
