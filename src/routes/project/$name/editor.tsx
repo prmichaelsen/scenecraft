@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Timeline } from '@/components/editor/Timeline'
 import { EditorLayout, WorkspaceMenu, type EditorLayoutHandle } from '@/components/editor/EditorLayout'
-import { useRef } from 'react'
+import { useRef, useEffect } from 'react'
 import { StatusBar } from '@/components/editor/StatusBar'
 import { JobStateProvider } from '@/contexts/JobStateContext'
 import {
@@ -655,6 +655,17 @@ function EditorPage() {
   const data = Route.useLoaderData()
   const { name } = Route.useParams()
   const useV2 = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('layout') === 'v2'
+
+  // Block browser zoom globally in the editor (Ctrl+scroll, pinch-to-zoom, Ctrl+/-)
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '-' || e.key === '+')) e.preventDefault()
+    }
+    document.addEventListener('wheel', onWheel, { passive: false })
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('wheel', onWheel); document.removeEventListener('keydown', onKey) }
+  }, [])
   const layoutRef = useRef<EditorLayoutHandle>(null)
 
   return (
