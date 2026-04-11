@@ -1682,6 +1682,18 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         }
       }
 
+      // Frame stepping: Left / Right
+      if (matchesHotkey(e, 'frameForward')) {
+        handlePreventDefault(e, 'frameForward')
+        const frameDur = 1 / (data.meta.fps || 24)
+        seekFnRef.current?.(currentTime + frameDur)
+      }
+      if (matchesHotkey(e, 'frameBackward')) {
+        handlePreventDefault(e, 'frameBackward')
+        const frameDur = 1 / (data.meta.fps || 24)
+        seekFnRef.current?.(Math.max(0, currentTime - frameDur))
+      }
+
       // Curve pin navigation: [ / ]
       if (matchesHotkey(e, 'nextCurvePin') || matchesHotkey(e, 'prevCurvePin')) {
         if (!selectedTransition) return

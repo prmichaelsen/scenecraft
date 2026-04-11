@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1] - 2026-04-11
+
+### Added
+- Up/Down arrow hotkeys to jump playhead to previous/next keyframe (edit point navigation)
+- Left/Right arrow hotkeys to step playhead one frame forward/backward at project fps
+
+### Changed
+- Keyframe navigation moved from Left/Right arrows to Up/Down arrows to match NLE conventions
+
 ## [0.4.0] - 2026-03-29
 
 ### Added

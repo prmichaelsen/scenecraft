@@ -42,11 +42,21 @@ export const HOTKEYS: Record<string, HotkeyAction> = {
   nextKeyframe: {
     id: 'nextKeyframe',
     label: 'Next Keyframe',
-    binding: { key: 'ArrowRight', preventDefault: true },
+    binding: { key: 'ArrowDown', preventDefault: true },
   },
   prevKeyframe: {
     id: 'prevKeyframe',
     label: 'Previous Keyframe',
+    binding: { key: 'ArrowUp', preventDefault: true },
+  },
+  frameForward: {
+    id: 'frameForward',
+    label: 'Frame Forward',
+    binding: { key: 'ArrowRight', preventDefault: true },
+  },
+  frameBackward: {
+    id: 'frameBackward',
+    label: 'Frame Backward',
     binding: { key: 'ArrowLeft', preventDefault: true },
   },
   delete: {
