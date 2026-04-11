@@ -75,6 +75,7 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
   const [sections, setSections] = useState(initialSections)
   const [expandedId, setExpandedId] = useState<string | null>(scrollToId || null)
   const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState<'sections' | 'notes' | 'todos'>('sections')
 
   useEffect(() => { setSections(initialSections) }, [initialSections])
 
@@ -165,29 +166,124 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-gray-800 shrink-0">
+        {(['sections', 'notes', 'todos'] as const).map((t) => {
+          const label = t === 'sections' ? 'Sections' : t === 'notes' ? 'Notes' : 'Todos'
+          const count = t === 'notes'
+            ? sections.filter((s) => s.notes?.trim()).length
+            : t === 'todos'
+            ? sections.reduce((n, s) => n + (s.notes?.match(/^[\s]*[-*]\s*\[[ ]\]/gm)?.length || 0) + (s.notes?.match(/TODO/gi)?.length || 0), 0)
+            : sections.length
+          return (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 text-[10px] py-1.5 transition-colors ${tab === t ? 'text-gray-200 border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-400'}`}
+            >
+              {label}{count > 0 ? ` (${count})` : ''}
+            </button>
+          )
+        })}
+      </div>
+
       <div className="flex-1 overflow-y-auto">
-        {sections.length === 0 ? (
-          <div className="p-4 text-center text-sm text-gray-600">No narrative sections</div>
-        ) : (
+        {tab === 'sections' ? (
+          sections.length === 0 ? (
+            <div className="p-4 text-center text-sm text-gray-600">No narrative sections</div>
+          ) : (
+            <div className="divide-y divide-gray-800">
+              {sections.map((section, idx) => {
+                const sStart = parseTs(section.start)
+                const sEnd = section.end ? parseTs(section.end) : (idx < sections.length - 1 ? parseTs(sections[idx + 1].start) : Infinity)
+                const sectionMarkers = markers.filter((m) => m.label && m.time >= sStart && m.time < sEnd).sort((a, b) => a.time - b.time)
+                return (
+                  <SectionCard
+                    key={section.id}
+                    section={section}
+                    markers={sectionMarkers}
+                    expanded={expandedId === section.id}
+                    onToggle={() => setExpandedId(expandedId === section.id ? null : section.id)}
+                    onChange={handleFieldChange}
+                    onSeek={() => onSeek(parseTs(section.start))}
+                    onSeekTo={onSeek}
+                    onDelete={() => handleDeleteSection(section.id)}
+                  />
+                )
+              })}
+            </div>
+          )
+        ) : tab === 'notes' ? (
           <div className="divide-y divide-gray-800">
-            {sections.map((section, idx) => {
-              const sStart = parseTs(section.start)
-              const sEnd = section.end ? parseTs(section.end) : (idx < sections.length - 1 ? parseTs(sections[idx + 1].start) : Infinity)
-              const sectionMarkers = markers.filter((m) => m.label && m.time >= sStart && m.time < sEnd).sort((a, b) => a.time - b.time)
-              return (
-                <SectionCard
-                  key={section.id}
-                  section={section}
-                  markers={sectionMarkers}
-                  expanded={expandedId === section.id}
-                  onToggle={() => setExpandedId(expandedId === section.id ? null : section.id)}
-                  onChange={handleFieldChange}
-                  onSeek={() => onSeek(parseTs(section.start))}
-                  onSeekTo={onSeek}
-                  onDelete={() => handleDeleteSection(section.id)}
-                />
-              )
-            })}
+            {sections.filter((s) => s.notes?.trim()).length === 0 ? (
+              <div className="p-4 text-center text-sm text-gray-600">No notes</div>
+            ) : (
+              sections.filter((s) => s.notes?.trim()).map((s) => (
+                <div key={s.id} className="px-3 py-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <button
+                      onClick={() => onSeek(parseTs(s.start))}
+                      className="text-[10px] text-blue-400 hover:text-blue-300 font-medium"
+                    >
+                      {s.label}
+                    </button>
+                    <span className="text-[9px] text-gray-600">{s.start}</span>
+                  </div>
+                  <textarea
+                    value={s.notes}
+                    onChange={(e) => handleFieldChange(s.id, 'notes', e.target.value)}
+                    className="w-full bg-gray-800 text-xs text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-y min-h-[40px] leading-relaxed"
+                  />
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          /* Todos tab */
+          <div className="divide-y divide-gray-800">
+            {(() => {
+              const todos: { sectionId: string; label: string; start: string; line: string; lineIdx: number }[] = []
+              for (const s of sections) {
+                if (!s.notes) continue
+                s.notes.split('\n').forEach((line, i) => {
+                  const trimmed = line.trim()
+                  if (/^[-*]\s*\[[ ]\]/.test(trimmed) || /TODO/i.test(trimmed)) {
+                    todos.push({ sectionId: s.id, label: s.label, start: s.start, line: trimmed, lineIdx: i })
+                  }
+                })
+              }
+              if (todos.length === 0) {
+                return <div className="p-4 text-center text-sm text-gray-600">No todos</div>
+              }
+              return todos.map((todo) => (
+                <div key={`${todo.sectionId}-${todo.lineIdx}`} className="px-3 py-2 flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 accent-blue-500"
+                    onChange={() => {
+                      // Toggle checkbox: replace [ ] with [x] or remove TODO
+                      const section = sections.find((s) => s.id === todo.sectionId)
+                      if (!section) return
+                      const lines = section.notes.split('\n')
+                      const line = lines[todo.lineIdx]
+                      if (/\[ \]/.test(line)) {
+                        lines[todo.lineIdx] = line.replace('[ ]', '[x]')
+                      }
+                      handleFieldChange(todo.sectionId, 'notes', lines.join('\n'))
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-gray-300">{todo.line.replace(/^[-*]\s*\[[ ]\]\s*/, '').replace(/TODO:?\s*/i, '')}</div>
+                    <button
+                      onClick={() => onSeek(parseTs(todo.start))}
+                      className="text-[9px] text-blue-400/70 hover:text-blue-300"
+                    >
+                      {todo.label} @ {todo.start}
+                    </button>
+                  </div>
+                </div>
+              ))
+            })()}
           </div>
         )}
       </div>
