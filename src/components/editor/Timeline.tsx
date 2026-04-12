@@ -682,7 +682,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Throttle preload enqueues — expensive decode work, not needed every frame
   // Sort by proximity so nearest clips load first and aren't evicted by far ones
   const lastPreloadTime = useRef(0)
+  const preloadReady = useRef(false)
+  useEffect(() => { const t = setTimeout(() => { preloadReady.current = true }, 2000); return () => clearTimeout(t) }, [])
   useEffect(() => {
+    if (!preloadReady.current) return
     if (Math.abs(currentTime - lastPreloadTime.current) < 0.3) return
     lastPreloadTime.current = currentTime
 
