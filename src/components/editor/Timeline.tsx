@@ -675,7 +675,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Sort by proximity so nearest clips load first and aren't evicted by far ones
   const lastPreloadTime = useRef(0)
   useEffect(() => {
-    if (Math.abs(currentTime - lastPreloadTime.current) < 1.0) return
+    if (Math.abs(currentTime - lastPreloadTime.current) < 0.3) return
     lastPreloadTime.current = currentTime
 
     const kfWork: { dist: number; run: () => void }[] = []
@@ -684,7 +684,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const dist = Math.abs(kf.timeSeconds - currentTime)
       if (dist > PRELOAD_WINDOW) continue
       const key = `kf:${kf.id}`
-      kfWork.push({ dist, run: () => preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`) })
+      if (!isInMemory(key)) {
+        kfWork.push({ dist, run: () => preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`) })
+      }
     }
 
     const trWork: { dist: number; run: () => void }[] = []
