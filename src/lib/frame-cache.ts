@@ -291,9 +291,15 @@ function cacheSet(key: string, entry: CacheEntry) {
   if (existing) { totalMemoryBytes -= existing.bytes; existing.frames.forEach((f) => f.close()) }
   memoryCache.set(key, entry)
   totalMemoryBytes += entry.bytes
-  // Evict farthest entries from playhead until under memory limit
-  while (totalMemoryBytes > MEMORY_LIMIT && memoryCache.size > 1) {
+  // Evict farthest entries from playhead when at 80% of memory limit
+  // (GPU texture memory is ~2x the estimated RGBA bytes)
+  const evictionThreshold = MEMORY_LIMIT * 0.8
+  let evictAttempts = 0
+  while (totalMemoryBytes > evictionThreshold && memoryCache.size > 1 && evictAttempts < 50) {
+    const before = totalMemoryBytes
     evictFarthest(key)
+    if (totalMemoryBytes >= before) break // nothing evictable (all protected)
+    evictAttempts++
   }
 }
 
