@@ -401,6 +401,37 @@ export function TransitionPanel({
                   onDataChange={onDataChange}
                   maxY={2}
                 />
+                <AnimCurveEditor
+                  label="Brightness" defaultY={0} color="#e0e0e0" yLabel="Brightness"
+                  transition={tr}
+                  projectName={projectName}
+                  keyframes={keyframes}
+                  currentTime={currentTime}
+                  curveKey="brightnessCurve"
+                  styleKey="brightnessCurve"
+                  onDataChange={onDataChange}
+                />
+                <AnimCurveEditor
+                  label="Contrast" defaultY={1} color="#a0a0ff" yLabel="Contrast"
+                  transition={tr}
+                  projectName={projectName}
+                  keyframes={keyframes}
+                  currentTime={currentTime}
+                  curveKey="contrastCurve"
+                  styleKey="contrastCurve"
+                  onDataChange={onDataChange}
+                  maxY={3}
+                />
+                <AnimCurveEditor
+                  label="Exposure" defaultY={0} color="#ffcc44" yLabel="Stops"
+                  transition={tr}
+                  projectName={projectName}
+                  keyframes={keyframes}
+                  currentTime={currentTime}
+                  curveKey="exposureCurve"
+                  styleKey="exposureCurve"
+                  onDataChange={onDataChange}
+                />
               </div>
 
               {/* Motion prompt (global) */}

@@ -16,6 +16,9 @@ export type TrackLayer = {
   saturation: number
   hueShift: number
   invert: number
+  brightness: number
+  contrast: number
+  exposure: number
   blendMode: BlendMode
   chromaKey?: { color: [number, number, number]; threshold: number; feather: number }
   isAdjustment?: boolean
@@ -143,6 +146,9 @@ const COMPOSITE_SHADER = `
   uniform float u_saturation;   // 1=normal, 0=grayscale, >1=oversaturated
   uniform float u_hueShift;    // 0=no shift, 1=full 360° rotation
   uniform float u_invert;      // 0=no invert, 1=full invert
+  uniform float u_brightness;  // offset added to RGB (-1 to 1, 0=no change)
+  uniform float u_contrast;    // scale around midpoint (0=flat gray, 1=normal, 2=double)
+  uniform float u_exposure;    // stops of exposure (-3 to 3, 0=no change)
   uniform int u_blendMode;     // 0=normal,1=multiply,2=screen,3=overlay,4=difference,5=add,6=chroma-key,7=soft-light
   uniform vec3 u_keyColor;     // chroma key target color
   uniform float u_keyThreshold;// how close to key color = transparent (0-1)
@@ -202,6 +208,11 @@ const COMPOSITE_SHADER = `
     }
 
     if (u_invert > 0.001) { layer = mix(layer, vec3(1.0) - layer, u_invert); }
+
+    // Brightness (offset), Contrast (scale around 0.5), Exposure (2^stops)
+    if (abs(u_brightness) > 0.001) { layer += u_brightness; }
+    if (abs(u_contrast - 1.0) > 0.001) { layer = (layer - 0.5) * u_contrast + 0.5; }
+    if (abs(u_exposure) > 0.001) { layer *= pow(2.0, u_exposure); }
 
     // Radial mask — applied to layer before blending so masked areas are transparent
     float maskAlpha = 1.0;
@@ -649,6 +660,9 @@ export const BeatEffectPreview = forwardRef<BeatEffectPreviewHandle, BeatEffectP
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_saturation'), layer.saturation ?? 1)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_hueShift'), layer.hueShift ?? 0)
       gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_invert'), layer.invert ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_brightness'), layer.brightness ?? 0)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_contrast'), layer.contrast ?? 1)
+      gl.uniform1f(gl.getUniformLocation(ctx.compProgram, 'u_exposure'), layer.exposure ?? 0)
       gl.uniform1i(gl.getUniformLocation(ctx.compProgram, 'u_blendMode'), BLEND_MODE_MAP[layer.blendMode] ?? 0)
 
       const ck = layer.chromaKey

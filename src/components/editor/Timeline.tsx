@@ -851,7 +851,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
       })
       if (inHiddenTr) {
-        return { frameA: null, frameB: null, blendFactor: 0, opacity: 0, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA: null, frameB: null, blendFactor: 0, opacity: 0, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       const activeTr = tTrs.filter((tr) => {
         const from = tKfMap.get(tr.from)
@@ -888,6 +888,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const trHueShift = activeTr.hueShiftCurve ? evaluateCurve(activeTr.hueShiftCurve, linearProgress) : 0
         const trInvertCurve = activeTr.invertCurve ? evaluateCurve(activeTr.invertCurve, linearProgress) : 0
         trInvert = Math.min(1, trInvert + trInvertCurve)
+        const trBrightness = activeTr.brightnessCurve ? evaluateCurve(activeTr.brightnessCurve, linearProgress) : 0
+        const trContrast = activeTr.contrastCurve ? evaluateCurve(activeTr.contrastCurve, linearProgress) : 1
+        const trExposure = activeTr.exposureCurve ? evaluateCurve(activeTr.exposureCurve, linearProgress) : 0
 
         const mask = activeTr.maskRadius != null ? {
           centerX: activeTr.maskCenterX ?? 0.5,
@@ -909,7 +912,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         } : undefined
 
         if (activeTr.isAdjustment) {
-          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true, mask, transform } as import('./BeatEffectPreview').TrackLayer
+          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true, mask, transform } as import('./BeatEffectPreview').TrackLayer
         }
 
         const progress = activeTr.remap?.method === 'curve'
@@ -927,7 +930,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           frameA = getFrameAtProgress(kfKey, 0)
         }
         const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey, mask, transform } as import('./BeatEffectPreview').TrackLayer
+        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey, mask, transform } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
         const kfKey = `kf:${curKf.id}`
@@ -937,9 +940,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         }
         const kfOpacity = curKf.opacity != null ? curKf.opacity : track.baseOpacity
         const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
-        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
-      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
+      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
     return layers
   })()}, [data.tracks, trackKeyframes, trackTransitions, currentTime, kfMap])
@@ -1615,7 +1618,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
+  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedTransition, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
 
   // Preview divider drag
   const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
@@ -1745,7 +1748,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const span = toKf.timeSeconds - fromKf.timeSeconds
         const curProgress = (currentTimeRef.current - fromKf.timeSeconds) / span
         // Collect all pin times from all curves
-        const curveKeys = ['opacityCurve', 'redCurve', 'greenCurve', 'blueCurve', 'blackCurve', 'saturationCurve', 'hueShiftCurve', 'invertCurve', 'transformXCurve', 'transformYCurve', 'transformZCurve'] as const
+        const curveKeys = ['opacityCurve', 'redCurve', 'greenCurve', 'blueCurve', 'blackCurve', 'saturationCurve', 'hueShiftCurve', 'invertCurve', 'brightnessCurve', 'contrastCurve', 'exposureCurve', 'transformXCurve', 'transformYCurve', 'transformZCurve'] as const
         const pinTimes = new Set<number>()
         for (const key of curveKeys) {
           const curve = (tr as Record<string, unknown>)[key] as [number, number][] | null

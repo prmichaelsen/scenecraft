@@ -112,6 +112,9 @@ export type Transition = {
   hueShiftCurve: [number, number][] | null
   saturationCurve: [number, number][] | null
   invertCurve: [number, number][] | null
+  brightnessCurve: [number, number][] | null
+  contrastCurve: [number, number][] | null
+  exposureCurve: [number, number][] | null
   chromaKey: { color: [number, number, number]; threshold: number; feather: number } | null
   isAdjustment: boolean
   maskCenterX: number | null
@@ -261,6 +264,9 @@ const getEditorData = createServerFn({ method: 'GET' })
           hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
           saturationCurve: Array.isArray(tr.saturationCurve) ? tr.saturationCurve as [number, number][] : null,
           invertCurve: Array.isArray(tr.invertCurve) ? tr.invertCurve as [number, number][] : null,
+          brightnessCurve: Array.isArray(tr.brightnessCurve) ? tr.brightnessCurve as [number, number][] : null,
+          contrastCurve: Array.isArray(tr.contrastCurve) ? tr.contrastCurve as [number, number][] : null,
+          exposureCurve: Array.isArray(tr.exposureCurve) ? tr.exposureCurve as [number, number][] : null,
           chromaKey: tr.chromaKey && typeof tr.chromaKey === 'object' ? tr.chromaKey as { color: [number, number, number]; threshold: number; feather: number } : null,
           isAdjustment: !!tr.isAdjustment,
           maskCenterX: tr.maskCenterX != null ? tr.maskCenterX as number : null,
@@ -372,6 +378,9 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           hueShiftCurve: Array.isArray(tr.hueShiftCurve) ? tr.hueShiftCurve as [number, number][] : null,
           saturationCurve: Array.isArray(tr.saturationCurve) ? tr.saturationCurve as [number, number][] : null,
           invertCurve: Array.isArray(tr.invertCurve) ? tr.invertCurve as [number, number][] : null,
+          brightnessCurve: Array.isArray(tr.brightnessCurve) ? tr.brightnessCurve as [number, number][] : null,
+          contrastCurve: Array.isArray(tr.contrastCurve) ? tr.contrastCurve as [number, number][] : null,
+          exposureCurve: Array.isArray(tr.exposureCurve) ? tr.exposureCurve as [number, number][] : null,
           chromaKey: tr.chromaKey && typeof tr.chromaKey === 'object' ? tr.chromaKey as { color: [number, number, number]; threshold: number; feather: number } : null,
           isAdjustment: !!tr.isAdjustment,
           maskCenterX: tr.maskCenterX != null ? tr.maskCenterX as number : null,
