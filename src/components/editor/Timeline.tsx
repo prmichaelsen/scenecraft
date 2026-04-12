@@ -20,7 +20,7 @@ import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { useEditorState } from './EditorStateContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
-import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, invalidateEntry } from '@/lib/frame-cache'
+import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, setEvictionProtectWindow, invalidateEntry } from '@/lib/frame-cache'
 import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
@@ -652,6 +652,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     return () => window.removeEventListener('beatlab-preload-window', handler)
   }, [])
   const PRELOAD_WINDOW = preloadWindow
+  // Sync eviction protection to match the configured preload window
+  useEffect(() => { setEvictionProtectWindow(preloadWindow) }, [preloadWindow])
   // Always keep timestamps fresh so eviction knows what's near the playhead
   useEffect(() => {
     for (const kf of keyframes) {
@@ -670,28 +672,37 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [keyframes, localTransitions, kfMap])
 
   // Throttle preload enqueues — expensive decode work, not needed every frame
+  // Sort by proximity so nearest clips load first and aren't evicted by far ones
   const lastPreloadTime = useRef(0)
   useEffect(() => {
     if (Math.abs(currentTime - lastPreloadTime.current) < 1.0) return
     lastPreloadTime.current = currentTime
 
+    const kfWork: { dist: number; run: () => void }[] = []
     for (const kf of keyframes) {
       if (!kf.hasSelectedImage) continue
-      if (Math.abs(kf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
+      const dist = Math.abs(kf.timeSeconds - currentTime)
+      if (dist > PRELOAD_WINDOW) continue
       const key = `kf:${kf.id}`
-      preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`)
+      kfWork.push({ dist, run: () => preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`) })
     }
 
+    const trWork: { dist: number; run: () => void }[] = []
     for (const tr of localTransitions) {
       if (!tr.hasSelectedVideo) continue
       const fromKf = kfMap.get(tr.from)
-      if (!fromKf || Math.abs(fromKf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
+      if (!fromKf) continue
+      const dist = Math.abs(fromKf.timeSeconds - currentTime)
+      if (dist > PRELOAD_WINDOW) continue
       const selectedVariant = tr.selected ?? 'none'
       const key = `tr:${tr.id}:v${selectedVariant}`
       if (!isInMemory(key)) {
-        preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
+        trWork.push({ dist, run: () => preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`)) })
       }
     }
+
+    // Process nearest first — ensures close clips load before far ones trigger eviction
+    for (const w of [...kfWork, ...trWork].sort((a, b) => a.dist - b.dist)) w.run()
   }, [currentTime, localTransitions, localKeyframes, data.projectName, canvasWidth, canvasHeight])
 
   // Update playhead position for proximity-based cache eviction

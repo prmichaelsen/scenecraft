@@ -263,6 +263,12 @@ export function setPlayheadPosition(time: number) {
   currentPlayhead = time
 }
 
+let evictionProtectSeconds = 30 // never evict entries within the preload window
+
+export function setEvictionProtectWindow(seconds: number) {
+  evictionProtectSeconds = seconds
+}
+
 function evictFarthest(protectKey?: string) {
   let farthestKey: string | null = null
   let farthestDist = -1
@@ -270,6 +276,8 @@ function evictFarthest(protectKey?: string) {
     if (key === protectKey) continue
     const t = keyTimestamps.get(key) ?? 0
     const dist = Math.abs(t - currentPlayhead)
+    // Never evict entries close to the playhead — they're about to play
+    if (dist <= evictionProtectSeconds) continue
     if (dist > farthestDist) {
       farthestDist = dist
       farthestKey = key
