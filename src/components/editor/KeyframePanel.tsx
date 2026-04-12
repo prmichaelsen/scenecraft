@@ -787,10 +787,10 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
           onClick={async () => {
             try {
               const { fetchDirectoryListing } = await import('@/lib/beatlab-client')
-              const files = await fetchDirectoryListing(projectName, `keyframe_candidates/${kf.id}`)
+              const files = await fetchDirectoryListing(projectName, `keyframe_candidates/candidates/section_${kf.id}`)
               const newCandidates = files
                 .filter((f: { name: string; isDirectory: boolean }) => !f.isDirectory && (f.name.endsWith('.png') || f.name.endsWith('.jpg')))
-                .map((f: { name: string }) => `keyframe_candidates/${kf.id}/${f.name}`)
+                .map((f: { name: string }) => `keyframe_candidates/candidates/section_${kf.id}/${f.name}`)
                 .sort()
               if (newCandidates.length > 0) {
                 setCandidates(newCandidates)
