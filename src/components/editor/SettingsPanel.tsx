@@ -167,6 +167,25 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
               </div>
 
               <div>
+                <label className="text-xs text-gray-400 block mb-1">Max Concurrent Preloads: {maxPreloads}</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range" min={1} max={20} step={1}
+                    value={maxPreloads}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value)
+                      setMaxPreloads(v)
+                      import('@/lib/frame-cache').then(({ setMaxConcurrentPreloads }) => setMaxConcurrentPreloads(v))
+                    }}
+                    onPointerUp={async () => {
+                      await updateMeta({ data: { projectName, fields: { max_concurrent_preloads: maxPreloads } as never } })
+                    }}
+                    className="w-full h-1.5 accent-gray-500"
+                  />
+                </div>
+              </div>
+
+              <div>
                 <label className="text-xs text-gray-400 block mb-1">Playback Speed: {playbackSpeed}x</label>
                 <input
                   type="range" min={0.1} max={4} step={0.1}
@@ -227,25 +246,6 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                       {c}
                     </button>
                   ))}
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Max Concurrent Preloads</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range" min={1} max={20} step={1}
-                    value={maxPreloads}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value)
-                      setMaxPreloads(v)
-                      import('@/lib/frame-cache').then(({ setMaxConcurrentPreloads }) => setMaxConcurrentPreloads(v))
-                    }}
-                    onPointerUp={async () => {
-                      await updateMeta({ data: { projectName, fields: { max_concurrent_preloads: maxPreloads } as never } })
-                    }}
-                    className="flex-1 h-1.5 accent-gray-500"
-                  />
-                  <span className="text-[10px] text-gray-500 w-6 text-right">{maxPreloads}</span>
                 </div>
               </div>
             </div>
