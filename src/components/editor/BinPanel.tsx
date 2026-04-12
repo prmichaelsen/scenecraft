@@ -509,8 +509,33 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                       loading="lazy"
                       draggable={false}
                     />
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between">
                       <div className="text-[7px] text-gray-300 truncate">{c.keyframeId} v{c.variant}</div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            const { postSelectKeyframes } = await import('@/lib/beatlab-client')
+                            await postSelectKeyframes(projectName, { [c.keyframeId]: c.variant })
+                            onRestore?.()
+                          }}
+                          className="text-[7px] text-blue-400 hover:text-blue-300"
+                          title="Set as selected still for this keyframe"
+                        >
+                          Still
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            const { postAddToBench } = await import('@/lib/beatlab-client')
+                            await postAddToBench(projectName, 'keyframe', c.keyframeId, c.path)
+                          }}
+                          className="text-[7px] text-green-400 hover:text-green-300"
+                          title="Add to bench"
+                        >
+                          Bench
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
