@@ -686,7 +686,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   useEffect(() => { const t = setTimeout(() => { preloadReady.current = true }, 2000); return () => clearTimeout(t) }, [])
   useEffect(() => {
     if (!preloadReady.current) return
-    if (Math.abs(currentTime - lastPreloadTime.current) < 0.3) return
+    if (Math.abs(currentTime - lastPreloadTime.current) < 1.0) return
     lastPreloadTime.current = currentTime
 
     const kfWork: { dist: number; run: () => void }[] = []
