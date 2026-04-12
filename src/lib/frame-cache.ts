@@ -530,24 +530,25 @@ async function decodeAndCache(key: string, videoUrl: string, resolvedDbKey: stri
  * Preload a keyframe image into the cache (single frame).
  * Checks IndexedDB first, falls back to fetching from server.
  */
-export async function preloadKeyframeImage(key: string, imageUrl: string): Promise<void> {
+export function preloadKeyframeImage(key: string, imageUrl: string): void {
   if (memoryCache.has(key) || loadingKeys.has(key)) return
   loadingKeys.add(key)
 
   const resolvedDbKey = dbKey(key)
 
-  let bitmap: ImageBitmap | null = null
-  try {
-    // Try IndexedDB first
-    const cached = await getFromDb(resolvedDbKey)
-    if (cached && cached.length > 0) {
-      persistedKeys.add(key)
-      bitmap = await createImageBitmap(cached[0])
-      cacheSet(key, { frames: [bitmap], fps: 1, duration: Infinity, bytes: estimateEntryBytes([bitmap]) })
-      bitmap = null
+  // Try IndexedDB first (fast), then queue the network fetch (slow)
+  restoreFromDb(key, resolvedDbKey, cacheGeneration).then((restored) => {
+    if (restored) {
+      loadingKeys.delete(key)
       return
     }
+    enqueuePreload(() => _fetchKeyframeImage(key, imageUrl, resolvedDbKey))
+  })
+}
 
+async function _fetchKeyframeImage(key: string, imageUrl: string, resolvedDbKey: string): Promise<void> {
+  let bitmap: ImageBitmap | null = null
+  try {
     // Fetch from server
     const img = new Image()
     img.crossOrigin = 'anonymous'
