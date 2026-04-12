@@ -138,6 +138,9 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                     localStorage.setItem('beatlab-preload-window', String(val))
                     window.dispatchEvent(new CustomEvent('beatlab-preload-window', { detail: val }))
                   }}
+                  onPointerUp={async () => {
+                    await updateMeta({ data: { projectName, fields: { preload_window: preloadWindow } as never } })
+                  }}
                   className="w-full h-1.5 accent-gray-500"
                 />
                 <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
@@ -156,6 +159,9 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                     const val = parseFloat(e.target.value)
                     setCacheMemoryGb(val)
                     import('@/lib/frame-cache').then(({ setCacheMemoryLimit }) => setCacheMemoryLimit(val))
+                  }}
+                  onPointerUp={async () => {
+                    await updateMeta({ data: { projectName, fields: { cache_memory_gb: cacheMemoryGb } as never } })
                   }}
                   className="w-full h-1.5 accent-gray-500"
                 />

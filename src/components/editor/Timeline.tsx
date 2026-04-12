@@ -638,11 +638,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Preload keyframe images and transition videos near the playhead.
   // Runs on time changes and data changes — avoids enqueuing hundreds of decodes at once.
   const [preloadWindow, setPreloadWindow] = useState(() => {
+    const metaVal = (data.meta as Record<string, unknown>).preload_window as number
+    if (metaVal) return metaVal
     if (typeof window === 'undefined') return 30
     const stored = localStorage.getItem('beatlab-preload-window')
     return stored ? parseInt(stored, 10) : 30
   })
-  // Listen for settings changes
+  // Listen for settings changes (from SettingsPanel)
   useEffect(() => {
     const handler = (e: Event) => {
       const val = (e as CustomEvent).detail as number
