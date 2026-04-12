@@ -495,6 +495,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; active: boolean } | null>(null)
   const [dragSelectRect, setDragSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const seekFnRef = useRef<((time: number) => void) | null>(null)
+  const currentTimeRef = useRef(currentTime)
   const playPauseFnRef = useRef<(() => void) | null>(null)
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
@@ -1648,6 +1649,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
   }, [])
 
+  currentTimeRef.current = currentTime
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1666,7 +1669,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (matchesHotkey(e, 'nextKeyframe')) {
         handlePreventDefault(e, 'nextKeyframe')
         const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
-        const next = sorted.find((kf) => kf.timeSeconds > currentTime + 0.1)
+        const next = sorted.find((kf) => kf.timeSeconds > currentTimeRef.current + 0.1)
         if (next) {
           seekFnRef.current?.(next.timeSeconds)
           setSelectedKeyframe(next)
@@ -1675,7 +1678,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (matchesHotkey(e, 'prevKeyframe')) {
         handlePreventDefault(e, 'prevKeyframe')
         const sorted = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
-        const prev = [...sorted].reverse().find((kf) => kf.timeSeconds < currentTime - 0.1)
+        const prev = [...sorted].reverse().find((kf) => kf.timeSeconds < currentTimeRef.current - 0.1)
         if (prev) {
           seekFnRef.current?.(prev.timeSeconds)
           setSelectedKeyframe(prev)
@@ -1686,12 +1689,12 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (matchesHotkey(e, 'frameForward')) {
         handlePreventDefault(e, 'frameForward')
         const frameDur = 1 / (data.meta.fps || 24)
-        seekFnRef.current?.(currentTime + frameDur)
+        seekFnRef.current?.(currentTimeRef.current + frameDur)
       }
       if (matchesHotkey(e, 'frameBackward')) {
         handlePreventDefault(e, 'frameBackward')
         const frameDur = 1 / (data.meta.fps || 24)
-        seekFnRef.current?.(Math.max(0, currentTime - frameDur))
+        seekFnRef.current?.(Math.max(0, currentTimeRef.current - frameDur))
       }
 
       // Curve pin navigation: [ / ]
@@ -1702,7 +1705,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const toKf = keyframes.find((k) => k.id === tr.to)
         if (!fromKf || !toKf || toKf.timeSeconds <= fromKf.timeSeconds) return
         const span = toKf.timeSeconds - fromKf.timeSeconds
-        const curProgress = (currentTime - fromKf.timeSeconds) / span
+        const curProgress = (currentTimeRef.current - fromKf.timeSeconds) / span
         // Collect all pin times from all curves
         const curveKeys = ['opacityCurve', 'redCurve', 'greenCurve', 'blueCurve', 'blackCurve', 'saturationCurve', 'hueShiftCurve', 'invertCurve', 'transformXCurve', 'transformYCurve', 'transformZCurve'] as const
         const pinTimes = new Set<number>()
@@ -1723,7 +1726,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [keyframes, currentTime, handlePlayPause, selectedTransition])
+  }, [keyframes, handlePlayPause, selectedTransition])
 
 
   return (
@@ -1855,6 +1858,34 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             />
             <span className="text-[10px] text-gray-500 w-7">{playbackRate}x</span>
           </div>
+
+          {/* Undo / Redo */}
+          <button
+            onClick={() => {
+              import('@/lib/beatlab-client').then(({ postUndo }) => {
+                postUndo(data.projectName).then((result) => {
+                  if (result.success) refreshTimeline()
+                })
+              })
+            }}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
+            title="Undo (Ctrl+Z)"
+          >
+            ↩
+          </button>
+          <button
+            onClick={() => {
+              import('@/lib/beatlab-client').then(({ postRedo }) => {
+                postRedo(data.projectName).then((result) => {
+                  if (result.success) refreshTimeline()
+                })
+              })
+            }}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            ↪
+          </button>
 
           {/* Jump to playhead */}
           <button
