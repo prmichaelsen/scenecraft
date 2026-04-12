@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, memo } from 'react'
 import type { UserEffect, EffectType } from '@/lib/beatlab-client'
 
 const EFFECT_COLORS: Record<EffectType, string> = {
@@ -31,7 +31,7 @@ type EffectsTrackProps = {
   viewportWidth: number
 }
 
-export function EffectsTrack({
+export const EffectsTrack = memo(function EffectsTrack({
   effects,
   pxPerSec,
   selectedEffectId,
@@ -150,4 +150,4 @@ export function EffectsTrack({
       })}
     </div>
   )
-}
+})

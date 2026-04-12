@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import type { AudioDescription, AudioEvent } from '@/lib/beatlab-client'
 
 type AudioDescriptionTrackProps = {
@@ -35,7 +35,7 @@ function stemColor(stem: string): string {
   return STEM_COLORS[stem] || 'bg-gray-400'
 }
 
-export function AudioDescriptionTrack({
+export const AudioDescriptionTrack = memo(function AudioDescriptionTrack({
   descriptions,
   audioEvents,
   pxPerSec,
@@ -125,4 +125,4 @@ export function AudioDescriptionTrack({
       )}
     </div>
   )
-}
+})

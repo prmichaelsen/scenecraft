@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, type MutableRefObject } from 'react'
+import { useRef, useEffect, useCallback, memo, type MutableRefObject } from 'react'
 
 type PlayheadProps = {
   currentTime: number
@@ -9,7 +9,7 @@ type PlayheadProps = {
   scrollTop?: number
 }
 
-export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef, scrollTop = 0 }: PlayheadProps) {
+export const Playhead = memo(function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef, scrollTop = 0 }: PlayheadProps) {
   const x = currentTime * pxPerSec
   const isDragging = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -86,4 +86,4 @@ export function Playhead({ currentTime, pxPerSec, onSeek, duration, audioElRef, 
       </div>
     </div>
   )
-}
+})

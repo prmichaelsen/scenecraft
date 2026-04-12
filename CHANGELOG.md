@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.2] - 2026-04-12
+
+### Fixed
+- Playback performance: remove currentTime from useEffect/useCallback deps across Timeline, use refs instead
+- Memoize expensive inline computations (currentKeyframe, activeTransition, crossfadeData, trackLayers, adjacency maps)
+- Wrap 11 child components in React.memo to skip re-renders when props unchanged during playback
+- Split preload effect: timestamps always fresh for correct eviction, decode enqueues throttled to 1s
+- Throttle preload scan to prevent 60x/sec keyframe+transition iteration
+
 ## [0.8.1] - 2026-04-11
 
 ### Added

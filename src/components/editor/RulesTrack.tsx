@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { AudioRule } from '@/lib/beatlab-client'
 
 const EFFECT_COLORS: Record<string, string> = {
@@ -48,7 +49,7 @@ type RulesTrackProps = {
   onSectionClick: (section: RuleSection) => void
 }
 
-export function RulesTrack({ rules, pxPerSec, scrollLeft, viewportWidth, selectedSectionKey, onSectionClick }: RulesTrackProps) {
+export const RulesTrack = memo(function RulesTrack({ rules, pxPerSec, scrollLeft, viewportWidth, selectedSectionKey, onSectionClick }: RulesTrackProps) {
   const sections = groupRulesBySections(rules)
   const BUFFER_PX = 300
 
@@ -89,4 +90,4 @@ export function RulesTrack({ rules, pxPerSec, scrollLeft, viewportWidth, selecte
       })}
     </div>
   )
-}
+})

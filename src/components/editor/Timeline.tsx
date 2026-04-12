@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
@@ -38,7 +38,7 @@ import { KeyframeSuggestPanel } from './KeyframeSuggestPanel'
 
 
 
-function TrackHeader({ track, isActive, scrollLeft, onSelect, onUpdate, onOpenSettings, onMoveUp, onMoveDown }: {
+const TrackHeader = memo(function TrackHeader({ track, isActive, scrollLeft, onSelect, onUpdate, onOpenSettings, onMoveUp, onMoveDown }: {
   track: Track
   isActive: boolean
   scrollLeft: number
@@ -79,9 +79,9 @@ function TrackHeader({ track, isActive, scrollLeft, onSelect, onUpdate, onOpenSe
       </div>
     </div>
   )
-}
+})
 
-function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate, sectionMarkers, onSectionMarkerClick }: {
+const MarkerTrack = memo(function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRemove, onUpdate, sectionMarkers, onSectionMarkerClick }: {
   markers: { id: string; time: number; label: string; type?: string }[]
   pxPerSec: number
   scrollLeft: number
@@ -205,7 +205,7 @@ function MarkerTrack({ markers, pxPerSec, scrollLeft, viewportWidth, onAdd, onRe
       })}
     </div>
   )
-}
+})
 
 function fmtTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -608,25 +608,32 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const totalWidth = effectiveDuration * pxPerSec
 
   // Find the current keyframe — prefer one with a selected image (for the preview src)
-  const currentKeyframe = [...keyframes]
-    .filter((kf) => kf.timeSeconds <= currentTime)
-    .sort((a, b) => b.timeSeconds - a.timeSeconds)
-    .find((kf) => kf.hasSelectedImage)
-    || [...keyframes].reverse().find((kf) => kf.timeSeconds <= currentTime)
+  const currentKeyframe = useMemo(() => {
+    return [...keyframes]
+      .filter((kf) => kf.timeSeconds <= currentTime)
+      .sort((a, b) => b.timeSeconds - a.timeSeconds)
+      .find((kf) => kf.hasSelectedImage)
+      || [...keyframes].reverse().find((kf) => kf.timeSeconds <= currentTime)
+  }, [keyframes, currentTime])
 
   // Find active transition at current time (if any with selected video)
-  const kfMap = new Map(keyframes.map((kf) => [kf.id, kf]))
-  const activeTransition = localTransitions.filter((tr) => {
-    if (tr.hidden) return false
-    if (tr.trackId !== selectedTrackId) return false
-    const fromKf = kfMap.get(tr.from)
-    const toKf = kfMap.get(tr.to)
-    if (!fromKf || !toKf) return false
-    if (!tr.hasSelectedVideo) return false
-    return currentTime >= fromKf.timeSeconds && currentTime < toKf.timeSeconds
-  }).at(-1) ?? null
-  const activeTransitionFrom = activeTransition ? kfMap.get(activeTransition.from) : null
-  const activeTransitionTo = activeTransition ? kfMap.get(activeTransition.to) : null
+  const kfMap = useMemo(() => new Map(keyframes.map((kf) => [kf.id, kf])), [keyframes])
+  const { activeTransition, activeTransitionFrom, activeTransitionTo } = useMemo(() => {
+    const tr = localTransitions.filter((tr) => {
+      if (tr.hidden) return false
+      if (tr.trackId !== selectedTrackId) return false
+      const fromKf = kfMap.get(tr.from)
+      const toKf = kfMap.get(tr.to)
+      if (!fromKf || !toKf) return false
+      if (!tr.hasSelectedVideo) return false
+      return currentTime >= fromKf.timeSeconds && currentTime < toKf.timeSeconds
+    }).at(-1) ?? null
+    return {
+      activeTransition: tr,
+      activeTransitionFrom: tr ? kfMap.get(tr.from) ?? null : null,
+      activeTransitionTo: tr ? kfMap.get(tr.to) ?? null : null,
+    }
+  }, [localTransitions, kfMap, selectedTrackId, currentTime])
 
   // Preload keyframe images and transition videos near the playhead.
   // Runs on time changes and data changes — avoids enqueuing hundreds of decodes at once.
@@ -645,12 +652,33 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     return () => window.removeEventListener('beatlab-preload-window', handler)
   }, [])
   const PRELOAD_WINDOW = preloadWindow
+  // Always keep timestamps fresh so eviction knows what's near the playhead
   useEffect(() => {
+    for (const kf of keyframes) {
+      if (!kf.hasSelectedImage) continue
+      const key = `kf:${kf.id}`
+      setKeyTimestamp(key, kf.timeSeconds)
+    }
+    for (const tr of localTransitions) {
+      if (!tr.hasSelectedVideo) continue
+      const fromKf = kfMap.get(tr.from)
+      if (!fromKf) continue
+      const selectedVariant = tr.selected ?? 'none'
+      const key = `tr:${tr.id}:v${selectedVariant}`
+      setKeyTimestamp(key, fromKf.timeSeconds)
+    }
+  }, [keyframes, localTransitions, kfMap])
+
+  // Throttle preload enqueues — expensive decode work, not needed every frame
+  const lastPreloadTime = useRef(0)
+  useEffect(() => {
+    if (Math.abs(currentTime - lastPreloadTime.current) < 1.0) return
+    lastPreloadTime.current = currentTime
+
     for (const kf of keyframes) {
       if (!kf.hasSelectedImage) continue
       if (Math.abs(kf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
       const key = `kf:${kf.id}`
-      setKeyTimestamp(key, kf.timeSeconds)
       preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`)
     }
 
@@ -660,7 +688,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (!fromKf || Math.abs(fromKf.timeSeconds - currentTime) > PRELOAD_WINDOW) continue
       const selectedVariant = tr.selected ?? 'none'
       const key = `tr:${tr.id}:v${selectedVariant}`
-      setKeyTimestamp(key, fromKf.timeSeconds)
       if (!isInMemory(key)) {
         preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
       }
@@ -709,22 +736,22 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [localTransitions, keyframes, scrollLeft, viewportWidth, pxPerSec])
 
   // Build adjacency lookup: which transition comes before/after each transition?
-  const sortedTransitions = [...localTransitions]
-    .filter((tr) => tr.hasSelectedVideo && kfMap.has(tr.from) && kfMap.has(tr.to))
-    .sort((a, b) => kfMap.get(a.from)!.timeSeconds - kfMap.get(b.from)!.timeSeconds)
-
-  // Map: keyframeId -> transition that ends at it (tr.to === kfId)
-  const trEndingAt = new Map<string, Transition>()
-  // Map: keyframeId -> transition that starts at it (tr.from === kfId)
-  const trStartingAt = new Map<string, Transition>()
-  for (const tr of sortedTransitions) {
-    trEndingAt.set(tr.to, tr)
-    trStartingAt.set(tr.from, tr)
-  }
+  const { trEndingAt, trStartingAt } = useMemo(() => {
+    const sorted = [...localTransitions]
+      .filter((tr) => tr.hasSelectedVideo && kfMap.has(tr.from) && kfMap.has(tr.to))
+      .sort((a, b) => kfMap.get(a.from)!.timeSeconds - kfMap.get(b.from)!.timeSeconds)
+    const ending = new Map<string, Transition>()
+    const starting = new Map<string, Transition>()
+    for (const tr of sorted) {
+      ending.set(tr.to, tr)
+      starting.set(tr.from, tr)
+    }
+    return { trEndingAt: ending, trStartingAt: starting }
+  }, [localTransitions, kfMap])
 
   // Get crossfade frame pair for smooth transitions at all boundaries
   const CROSSFADE_FRAMES = 4 // 4 frames each side = 8 frame overlap at 24fps (~333ms)
-  const crossfadeData = (() => {
+  const crossfadeData = useMemo(() => {return (() => {
     if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) {
       // No transition — check if we're in a gap or at a keyframe hold
       if (currentKeyframe) {
@@ -786,10 +813,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
 
     return { frameA, frameB: null, blendFactor: 0 }
-  })()
+  })()}, [activeTransition, activeTransitionFrom, activeTransitionTo, currentKeyframe, currentTime, keyframes, localTransitions, trEndingAt, trStartingAt])
 
   // Compute per-track layers for multi-track compositing
-  const trackLayers: import('./BeatEffectPreview').TrackLayer[] = (() => {
+  const trackLayers: import('./BeatEffectPreview').TrackLayer[] = useMemo(() => {return (() => {
     // Always build layers — compositor handles 1 or N tracks uniformly
     // Compositor: first layer with content becomes base, subsequent layers paint ON TOP.
     // Track 1 (zOrder 0) = base, Track 2 (zOrder 1) = overlaid on top. Ascending order.
@@ -904,7 +931,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
     })
     return layers
-  })()
+  })()}, [data.tracks, trackKeyframes, trackTransitions, currentTime, kfMap])
 
   // Check if the active transition's frames are still loading
   const isTransitionLoading = (() => {
@@ -921,10 +948,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const el = scrollRef.current
       if (el) {
         // Zoom around the playhead: keep playhead at the same viewport position
-        const playheadX = currentTime * pxPerSec
+        const playheadX = currentTimeRef.current * pxPerSec
         const viewportOffset = playheadX - el.scrollLeft
         const newPxPerSec = Math.max(0.1, pxPerSec * factor)
-        const newPlayheadX = currentTime * newPxPerSec
+        const newPlayheadX = currentTimeRef.current * newPxPerSec
         el.scrollLeft = newPlayheadX - viewportOffset
         setPxPerSec(newPxPerSec)
         localStorage.setItem('beatlab-zoom', String(newPxPerSec))
@@ -936,7 +963,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         })
       }
     }
-  }, [currentTime, pxPerSec])
+  }, [pxPerSec])
 
   const handleTrackClick = useCallback(
     (e: React.MouseEvent) => {
@@ -1327,7 +1354,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
   const handleAddKeyframe = useCallback(async () => {
     try {
-      const timestamp = secondsToTimestamp(currentTime)
+      const timestamp = secondsToTimestamp(currentTimeRef.current)
       await addKeyframe({
         data: {
           projectName: data.projectName,
@@ -1341,7 +1368,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     } catch (e) {
       console.error('Failed to add keyframe:', e)
     }
-  }, [currentTime, data.projectName, selectedTrackId, refreshTimeline])
+  }, [data.projectName, selectedTrackId, refreshTimeline])
 
   const handleDeleteKeyframe = useCallback(async (id: string) => {
     try {
@@ -1508,7 +1535,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         } else if (kfClipboard.current.length > 0) {
           e.preventDefault()
           import('@/lib/beatlab-client').then(({ postPasteGroup }) => {
-            postPasteGroup(data.projectName, kfClipboard.current, secondsToTimestamp(currentTime), selectedTrackId)
+            postPasteGroup(data.projectName, kfClipboard.current, secondsToTimestamp(currentTimeRef.current), selectedTrackId)
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste group failed:', err); alert(`Paste failed: ${err.message}`) })
           })
@@ -1518,8 +1545,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             const id = `sup_${String(nextSupId.current++).padStart(3, '0')}`
             return {
               id,
-              from: currentTime + src.from,
-              to: currentTime + src.to,
+              from: currentTimeRef.current + src.from,
+              to: currentTimeRef.current + src.to,
               ...(src.effectTypes ? { effectTypes: [...src.effectTypes] } : {}),
               ...(src.layerEffectTypes ? { layerEffectTypes: [...src.layerEffectTypes] } : {}),
             }
@@ -1535,7 +1562,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           const pasted = effectClipboard.current.map((src) => {
             const id = `fx_${String(nextFxId.current++).padStart(3, '0')}`
             newIds.add(id)
-            return { ...src, id, time: currentTime + src.time }
+            return { ...src, id, time: currentTimeRef.current + src.time }
           })
           const updated = [...userEffects, ...pasted].sort((a, b) => a.time - b.time)
           setUserEffects(updated)
@@ -1577,7 +1604,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, currentTime, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
+  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
 
   // Preview divider drag
   const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
@@ -2764,7 +2791,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   )
 }
 
-function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec: number; onClick?: (e: React.MouseEvent) => void }) {
+const TimeRuler = memo(function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec: number; onClick?: (e: React.MouseEvent) => void }) {
   const marks: { time: number; label: string }[] = []
 
   let interval = 60
@@ -2791,7 +2818,7 @@ function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec
       ))}
     </div>
   )
-}
+})
 
 const STEM_COLORS: Record<string, string> = {
   kick: '239, 68, 68',     // red
@@ -2805,7 +2832,7 @@ const STEM_COLORS: Record<string, string> = {
   other: '107, 114, 128',  // gray
 }
 
-function BeatMarkers({ beats, audioEvents, pxPerSec }: { beats: Beat[]; audioEvents?: AudioEvent[]; pxPerSec: number }) {
+const BeatMarkers = memo(function BeatMarkers({ beats, audioEvents, pxPerSec }: { beats: Beat[]; audioEvents?: AudioEvent[]; pxPerSec: number }) {
   // Prefer audio intelligence events over raw beats
   if (audioEvents && audioEvents.length > 0) {
     const step = pxPerSec < 10 ? 4 : pxPerSec < 20 ? 2 : 1
@@ -2849,7 +2876,7 @@ function BeatMarkers({ beats, audioEvents, pxPerSec }: { beats: Beat[]; audioEve
       })}
     </div>
   )
-}
+})
 
 const SECTION_COLORS: Record<string, string> = {
   verse: 'rgba(59, 130, 246, 0.08)',
@@ -2864,7 +2891,7 @@ const SECTION_COLORS: Record<string, string> = {
   mid_energy: 'rgba(168, 85, 247, 0.06)',
 }
 
-function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: number }) {
+const SectionBands = memo(function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: number }) {
   if (sections.length === 0) return null
 
   return (
@@ -2889,7 +2916,7 @@ function SectionBands({ sections, pxPerSec }: { sections: Section[]; pxPerSec: n
       })}
     </div>
   )
-}
+})
 
 const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
@@ -3472,7 +3499,7 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`
 }
 
-function TimeDisplay({ currentTime, duration, onSeek }: { currentTime: number; duration: number; onSeek: (time: number) => void }) {
+const TimeDisplay = memo(function TimeDisplay({ currentTime, duration, onSeek }: { currentTime: number; duration: number; onSeek: (time: number) => void }) {
   const [editing, setEditing] = useState(false)
   const [inputValue, setInputValue] = useState('')
 
@@ -3520,4 +3547,4 @@ function TimeDisplay({ currentTime, duration, onSeek }: { currentTime: number; d
       {formatTime(currentTime)} / {formatTime(duration)}
     </div>
   )
-}
+})

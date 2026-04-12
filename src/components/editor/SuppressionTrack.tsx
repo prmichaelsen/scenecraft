@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, memo } from 'react'
 import type { BeatSuppression, EffectType } from '@/lib/beatlab-client'
 
 const EFFECT_DOT_COLORS: Record<EffectType, string> = {
@@ -22,7 +22,7 @@ type SuppressionTrackProps = {
   viewportWidth: number
 }
 
-export function SuppressionTrack({
+export const SuppressionTrack = memo(function SuppressionTrack({
   suppressions,
   pxPerSec,
   onAddSuppression,
@@ -151,4 +151,4 @@ export function SuppressionTrack({
       })}
     </div>
   )
-}
+})

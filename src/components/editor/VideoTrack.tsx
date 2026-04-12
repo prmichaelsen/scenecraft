@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback, type RefObject } from 'react'
+import { useRef, useState, useEffect, useCallback, memo, type RefObject } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import { beatlabFileUrl } from '@/lib/beatlab-client'
 
@@ -31,7 +31,7 @@ type DragState = {
   didMove: boolean
 }
 
-export function VideoTrack({
+export const VideoTrack = memo(function VideoTrack({
   keyframes,
   pxPerSec,
   projectName,
@@ -244,7 +244,7 @@ export function VideoTrack({
       })}
     </div>
   )
-}
+})
 
 function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60)

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, memo } from 'react'
 import type { KeyframeWithTime } from './Timeline'
 import type { Transition } from '@/routes/project/$name/editor'
 
@@ -21,7 +21,7 @@ type TransitionTrackProps = {
   isActiveTrack?: boolean
 }
 
-export function TransitionTrack({
+export const TransitionTrack = memo(function TransitionTrack({
   transitions,
   keyframes,
   pxPerSec,
@@ -211,4 +211,4 @@ export function TransitionTrack({
       })}
     </div>
   )
-}
+})
