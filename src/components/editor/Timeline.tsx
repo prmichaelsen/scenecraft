@@ -20,7 +20,7 @@ import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { useEditorState } from './EditorStateContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
-import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, setEvictionProtectWindow, invalidateEntry } from '@/lib/frame-cache'
+import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, setEvictionProtectWindow, setMaxConcurrentPreloads, invalidateEntry } from '@/lib/frame-cache'
 import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
@@ -654,6 +654,12 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const PRELOAD_WINDOW = preloadWindow
   // Sync eviction protection to match the configured preload window
   useEffect(() => { setEvictionProtectWindow(preloadWindow) }, [preloadWindow])
+
+  // Apply max concurrent preloads from project meta
+  useEffect(() => {
+    const v = (data.meta as Record<string, unknown>).max_concurrent_preloads as number
+    if (v) setMaxConcurrentPreloads(v)
+  }, [data.meta])
   // Always keep timestamps fresh so eviction knows what's near the playhead
   useEffect(() => {
     for (const kf of keyframes) {

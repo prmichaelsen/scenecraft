@@ -28,6 +28,7 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
   const [defaultTrPrompt, setDefaultTrPrompt] = useState(data.meta.defaultTransitionPrompt)
   const [defaultDuration, setDefaultDuration] = useState<number>((data.meta as Record<string, unknown>).default_video_duration as number || 8)
   const [defaultCount, setDefaultCount] = useState<number>((data.meta as Record<string, unknown>).default_gen_count as number || 4)
+  const [maxPreloads, setMaxPreloads] = useState<number>((data.meta as Record<string, unknown>).max_concurrent_preloads as number || 6)
   const [roster, setRoster] = useState<PromptRosterEntry[]>(data.promptRoster || [])
   const [defaultPromptId, setDefaultPromptId] = useState<string>((data.meta as Record<string, unknown>).default_prompt_id as string || '')
   const [playbackSpeed, setPlaybackSpeed] = useState(() => {
@@ -226,6 +227,25 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                       {c}
                     </button>
                   ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Max Concurrent Preloads</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range" min={1} max={20} step={1}
+                    value={maxPreloads}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value)
+                      setMaxPreloads(v)
+                      import('@/lib/frame-cache').then(({ setMaxConcurrentPreloads }) => setMaxConcurrentPreloads(v))
+                    }}
+                    onPointerUp={async () => {
+                      await updateMeta({ data: { projectName, fields: { max_concurrent_preloads: maxPreloads } as never } })
+                    }}
+                    className="flex-1 h-1.5 accent-gray-500"
+                  />
+                  <span className="text-[10px] text-gray-500 w-6 text-right">{maxPreloads}</span>
                 </div>
               </div>
             </div>

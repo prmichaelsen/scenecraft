@@ -312,7 +312,12 @@ export function getMemoryUsage(): { usedBytes: number; limitBytes: number; pct: 
 
 // ── Concurrency-limited preload queue ────────────────────────────
 
-const MAX_CONCURRENT_PRELOADS = 6
+let MAX_CONCURRENT_PRELOADS = 6
+
+export function setMaxConcurrentPreloads(n: number) {
+  MAX_CONCURRENT_PRELOADS = Math.max(1, Math.min(20, n))
+  drainQueue()
+}
 let activePreloads = 0
 const preloadQueue: Array<() => Promise<void>> = []
 const DEFERRED_RETRY_MS = 5000
