@@ -1518,7 +1518,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           effectClipboard.current = []
         } else if (selectedKeyframe) {
           e.preventDefault()
-          kfClipboard.current = [selectedKeyframe.id]
+          // Auto-include neighbor keyframes connected via transitions (if they have images)
+          const kfId = selectedKeyframe.id
+          const neighborIds = new Set([kfId])
+          for (const tr of localTransitions) {
+            if (tr.from === kfId || tr.to === kfId) {
+              const otherId = tr.from === kfId ? tr.to : tr.from
+              const otherKf = keyframes.find((k) => k.id === otherId)
+              if (otherKf?.hasSelectedImage) neighborIds.add(otherId)
+            }
+          }
+          kfClipboard.current = [...neighborIds]
           trClipboard.current = null
           supClipboard.current = []
           effectClipboard.current = []
