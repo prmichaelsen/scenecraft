@@ -189,9 +189,10 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
 
   const toggleCollapse = () => {
     if (collapsed) {
-      // Expand: restore header position and saved dimensions
+      // Expand: restore header position, constraints, and saved dimensions
       const saved = collapsedState.get(group.id)
       collapsedState.delete(group.id)
+      group.api.setConstraints({ minimumWidth: 100 })
       group.api.setHeaderPosition('top')
       // Delay size restore to let header position change settle
       requestAnimationFrame(() => {
@@ -203,8 +204,9 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
       })
       setCollapsed(false)
     } else {
-      // Collapse: save current size, vertical headers, shrink
+      // Collapse: save current size, lower minimum width, vertical headers, shrink
       collapsedState.set(group.id, { width: group.api.width, height: group.api.height })
+      group.api.setConstraints({ minimumWidth: COLLAPSED_SIZE })
       group.api.setHeaderPosition('left')
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {

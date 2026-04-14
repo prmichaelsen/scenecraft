@@ -2514,7 +2514,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             <Playhead
               currentTime={currentTime}
               pxPerSec={pxPerSec}
-              duration={duration}
+              duration={effectiveDuration}
               onSeek={(time) => seekFnRef.current?.(time)}
               audioElRef={audioElRef}
               scrollTop={scrollTop}
