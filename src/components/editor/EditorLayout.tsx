@@ -225,7 +225,7 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
         className="flex items-center justify-center w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-[rgba(255,255,255,0.1)] rounded"
         title={collapsed ? 'Expand panel' : 'Collapse panel'}
       >
-        <ArrowRightFromLine size={14} className={collapsed ? '' : 'rotate-180'} />
+        <ArrowRightFromLine size={14} className={collapsed ? 'rotate-180' : ''} />
       </button>
       {!collapsed && (
         <button
