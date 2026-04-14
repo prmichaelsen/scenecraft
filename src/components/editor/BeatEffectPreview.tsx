@@ -1,8 +1,8 @@
 import { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
 import type { Beat } from '@/routes/project/$name/editor'
-import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
+import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/scenecraft-client'
 
-import type { BlendMode } from '@/lib/beatlab-client'
+import type { BlendMode } from '@/lib/scenecraft-client'
 
 export type TrackLayer = {
   frameA: ImageBitmap | null

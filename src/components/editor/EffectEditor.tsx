@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { UserEffect, EffectType } from '@/lib/beatlab-client'
+import type { UserEffect, EffectType } from '@/lib/scenecraft-client'
 
 const EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
 
@@ -27,7 +27,7 @@ export function EffectEditor({ effect, onUpdate, onDelete, onClose }: EffectEdit
     onUpdate({ ...effect, type, intensity, duration, time })
   }, [effect, type, intensity, duration, time, onUpdate])
 
-  const STORAGE_KEY = 'beatlab-side-panel-width'
+  const STORAGE_KEY = 'scenecraft-side-panel-width'
   const MIN_WIDTH = 240
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return 360

@@ -1,6 +1,6 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { fetchProjects, postCreateProject } from '@/lib/beatlab-client'
+import { fetchProjects, postCreateProject } from '@/lib/scenecraft-client'
 import { useState } from 'react'
 
 const getProjects = createServerFn({ method: 'GET' }).handler(async () => {
@@ -35,8 +35,8 @@ function HomePage() {
     <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold mb-1">Beatlab Synthesizer</h1>
-          <p className="text-gray-400 text-sm">Browse and play project media files</p>
+          <h1 className="text-2xl font-bold mb-1">SceneCraft</h1>
+          <p className="text-gray-400 text-sm">AI powered video editing</p>
         </div>
         <button
           onClick={handleCreateProject}

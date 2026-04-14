@@ -13,7 +13,7 @@ type AudioTrackProps = {
 }
 
 // IndexedDB cache for waveform peaks
-const DB_NAME = 'beatlab-waveform-cache'
+const DB_NAME = 'scenecraft-waveform-cache'
 const STORE_NAME = 'peaks'
 
 function openCacheDb(): Promise<IDBDatabase> {

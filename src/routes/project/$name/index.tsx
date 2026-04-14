@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useState, useCallback, useRef } from 'react'
-import { beatlabFileUrl, beatlabThumbnailUrl, fetchDirectoryListing, type FileEntry } from '@/lib/beatlab-client'
+import { scenecraftFileUrl, scenecraftThumbnailUrl, fetchDirectoryListing, type FileEntry } from '@/lib/scenecraft-client'
 
 const getProjectFiles = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string; path?: string }) => input)
@@ -296,7 +296,7 @@ function VideoTile({ file, project, selected, onSelect }: { file: FileEntry; pro
     >
       {/* Poster image — always loaded, lightweight */}
       <img
-        src={beatlabThumbnailUrl(project, file.path)}
+        src={scenecraftThumbnailUrl(project, file.path)}
         alt={file.name}
         className={`w-full aspect-video object-cover ${hovering ? 'hidden' : ''}`}
         loading="lazy"
@@ -305,7 +305,7 @@ function VideoTile({ file, project, selected, onSelect }: { file: FileEntry; pro
       {hovering && (
         <video
           ref={videoRef}
-          src={beatlabFileUrl(project, file.path)}
+          src={scenecraftFileUrl(project, file.path)}
           className="w-full aspect-video object-cover"
           muted
           playsInline
@@ -321,7 +321,7 @@ function VideoTile({ file, project, selected, onSelect }: { file: FileEntry; pro
 }
 
 function FilePreview({ project, file }: { project: string; file: FileEntry }) {
-  const url = beatlabFileUrl(project, file.path)
+  const url = scenecraftFileUrl(project, file.path)
   const type = fileType(file.name)
 
   if (type === 'image') {

@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import type { AudioRule } from '@/lib/beatlab-client'
+import type { AudioRule } from '@/lib/scenecraft-client'
 
 const EFFECT_COLORS: Record<string, string> = {
   zoom_pulse: 'bg-blue-500/60',

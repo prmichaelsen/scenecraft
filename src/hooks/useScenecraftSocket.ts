@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-const WS_URL = (import.meta.env.VITE_BEATLAB_WS_URL || 'ws://localhost:8889')
+const WS_URL = (import.meta.env.VITE_SCENECRAFT_WS_URL || 'ws://localhost:8889')
 const PING_INTERVAL = 30_000
 const RECONNECT_BASE = 2_000
 const RECONNECT_MAX = 30_000
@@ -174,7 +174,7 @@ if (typeof window !== 'undefined') {
 
 // ── React hook (thin wrapper) ───────────────────────────────────────
 
-export function useBeatlabSocket() {
+export function useScenecraftSocket() {
   const isConnected = useSyncExternalStore(
     (cb) => { connectedSubscribers.add(cb); return () => { connectedSubscribers.delete(cb) } },
     () => connected,

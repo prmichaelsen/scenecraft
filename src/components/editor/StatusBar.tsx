@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
+import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 import { getActivePreloads, getMemoryUsage } from '@/lib/frame-cache'
 import { useJobContext } from '@/contexts/JobStateContext'
 
@@ -26,7 +26,7 @@ function parsePreloadKey(key: string): string {
 }
 
 export function StatusBar() {
-  const socket = useBeatlabSocket()
+  const socket = useScenecraftSocket()
   const jobCtx = useJobContext()
   const [showPanel, setShowPanel] = useState(false)
   const [items, setItems] = useState<QueueItem[]>([])

@@ -121,7 +121,7 @@ export function VersionHistoryPanel({ projectName, onClose, onRestore }: Version
   }, [branch, projectName, loadHistory])
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('beatlab-side-panel-width') || '360', 10) }}>
+    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('scenecraft-side-panel-width') || '360', 10) }}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
         <div className="text-sm font-medium">Version History</div>

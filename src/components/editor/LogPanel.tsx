@@ -1,8 +1,8 @@
 import { useCallback } from 'react'
 import { Virtuoso } from 'react-virtuoso'
-import { useServerLogs } from '@/hooks/useBeatlabSocket'
+import { useServerLogs } from '@/hooks/useScenecraftSocket'
 
-const STORAGE_KEY = 'beatlab-side-panel-width'
+const STORAGE_KEY = 'scenecraft-side-panel-width'
 
 export function LogPanel({ onClose }: { onClose: () => void }) {
   const logs = useServerLogs()

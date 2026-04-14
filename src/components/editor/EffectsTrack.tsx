@@ -1,5 +1,5 @@
 import { useCallback, useRef, memo } from 'react'
-import type { UserEffect, EffectType } from '@/lib/beatlab-client'
+import type { UserEffect, EffectType } from '@/lib/scenecraft-client'
 
 const EFFECT_COLORS: Record<EffectType, string> = {
   pulse: 'bg-yellow-500',

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { fetchSettings, postUpdateSettings, type ProjectSettings } from '@/lib/settings-client'
 import { updateMeta } from '@/routes/project/$name/editor'
 import type { EditorData } from '@/routes/project/$name/editor'
-import { fetchPromptRoster, postAddPromptRoster, postUpdatePromptRoster, postRemovePromptRoster, type PromptRosterEntry } from '@/lib/beatlab-client'
+import { fetchPromptRoster, postAddPromptRoster, postUpdatePromptRoster, postRemovePromptRoster, type PromptRosterEntry } from '@/lib/scenecraft-client'
 
 type SettingsPanelProps = {
   data: EditorData
@@ -12,7 +12,7 @@ type SettingsPanelProps = {
   onPreviewQualityChange?: (quality: number) => void
 }
 
-const PLAYBACK_SPEED_KEY = 'beatlab-playback-speed'
+const PLAYBACK_SPEED_KEY = 'scenecraft-playback-speed'
 
 export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQualityChange }: SettingsPanelProps) {
   const [settings, setSettings] = useState<ProjectSettings | null>(null)
@@ -38,12 +38,12 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
   })
   const [preloadWindow, setPreloadWindowState] = useState(() => {
     if (typeof window === 'undefined') return 30
-    const stored = localStorage.getItem('beatlab-preload-window')
+    const stored = localStorage.getItem('scenecraft-preload-window')
     return stored ? parseInt(stored, 10) : 30
   })
   const [cacheMemoryGb, setCacheMemoryGb] = useState(() => {
     if (typeof window === 'undefined') return 2
-    const stored = localStorage.getItem('beatlab-cache-memory-gb')
+    const stored = localStorage.getItem('scenecraft-cache-memory-gb')
     return stored ? parseFloat(stored) : 2
   })
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null)
@@ -89,7 +89,7 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
   }, [projectName, title, fps, resW, resH, motionPrompt, defaultTrPrompt, onSave])
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('beatlab-side-panel-width') || '360', 10) }}>
+    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem('scenecraft-side-panel-width') || '360', 10) }}>
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
         <div className="text-sm font-medium">Settings</div>
         <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">
@@ -135,8 +135,8 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                   onChange={(e) => {
                     const val = parseInt(e.target.value)
                     setPreloadWindowState(val)
-                    localStorage.setItem('beatlab-preload-window', String(val))
-                    window.dispatchEvent(new CustomEvent('beatlab-preload-window', { detail: val }))
+                    localStorage.setItem('scenecraft-preload-window', String(val))
+                    window.dispatchEvent(new CustomEvent('scenecraft-preload-window', { detail: val }))
                   }}
                   onPointerUp={async () => {
                     await updateMeta({ data: { projectName, fields: { preload_window: preloadWindow } as never } })
@@ -201,7 +201,7 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                     setPlaybackSpeed(rate)
                     localStorage.setItem(PLAYBACK_SPEED_KEY, String(rate))
                     // Dispatch event so Timeline picks up the change
-                    window.dispatchEvent(new CustomEvent('beatlab-playback-speed', { detail: rate }))
+                    window.dispatchEvent(new CustomEvent('scenecraft-playback-speed', { detail: rate }))
                   }}
                   className="w-full h-1.5 accent-gray-500"
                 />

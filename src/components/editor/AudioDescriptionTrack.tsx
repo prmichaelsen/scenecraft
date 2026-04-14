@@ -1,5 +1,5 @@
 import { useState, memo } from 'react'
-import type { AudioDescription, AudioEvent } from '@/lib/beatlab-client'
+import type { AudioDescription, AudioEvent } from '@/lib/scenecraft-client'
 
 type AudioDescriptionTrackProps = {
   descriptions: AudioDescription[]

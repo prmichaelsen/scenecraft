@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback, memo, type RefObject } from 'react'
 import type { KeyframeWithTime } from './Timeline'
-import { beatlabFileUrl } from '@/lib/beatlab-client'
+import { scenecraftFileUrl } from '@/lib/scenecraft-client'
 
 type VideoTrackProps = {
   keyframes: KeyframeWithTime[]
@@ -162,7 +162,7 @@ export const VideoTrack = memo(function VideoTrack({
               onKeyframeClick(kf, e.shiftKey)
             }}
             onDragOver={(e) => {
-              if (e.dataTransfer.types.includes('application/x-beatlab-pool-path') || e.dataTransfer.types.includes('application/x-beatlab-staging-path')) {
+              if (e.dataTransfer.types.includes('application/x-scenecraft-pool-path') || e.dataTransfer.types.includes('application/x-scenecraft-staging-path')) {
                 e.preventDefault()
                 e.dataTransfer.dropEffect = 'copy'
                 setDropTarget(kf.id)
@@ -172,7 +172,7 @@ export const VideoTrack = memo(function VideoTrack({
             onDrop={(e) => {
               e.preventDefault()
               setDropTarget(null)
-              const poolPath = e.dataTransfer.getData('application/x-beatlab-pool-path')
+              const poolPath = e.dataTransfer.getData('application/x-scenecraft-pool-path')
               if (poolPath) {
                 const isImage = /\.(png|jpg|jpeg|webp)$/i.test(poolPath)
                 if (isImage && onDropImage) {
@@ -182,8 +182,8 @@ export const VideoTrack = memo(function VideoTrack({
                 }
                 return
               }
-              const stagingId = e.dataTransfer.getData('application/x-beatlab-staging-id')
-              const variant = e.dataTransfer.getData('application/x-beatlab-variant')
+              const stagingId = e.dataTransfer.getData('application/x-scenecraft-staging-id')
+              const variant = e.dataTransfer.getData('application/x-scenecraft-variant')
               if (stagingId && variant && onDropStagedImage) {
                 onDropStagedImage(kf.id, stagingId, parseInt(variant, 10))
               }
@@ -201,7 +201,7 @@ export const VideoTrack = memo(function VideoTrack({
             {/* Thumbnail — skip when region is too narrow to see it */}
             {kf.hasSelectedImage && width > 20 ? (
               <img
-                src={`${beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
+                src={`${scenecraftFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
                 alt={kf.id}
                 className={`absolute top-1 left-3 h-[calc(100%-8px)] aspect-video object-cover rounded-sm transition-opacity cursor-grab active:cursor-grabbing ${isSelected ? 'opacity-100 ring-1 ring-blue-500' : 'opacity-70 group-hover:opacity-100'}`}
                 loading="lazy"

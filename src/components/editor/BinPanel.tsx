@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { VirtuosoGrid } from 'react-virtuoso'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { beatlabFileUrl, beatlabThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/beatlab-client'
-import type { BinEntry, TransitionBinEntry } from '@/lib/beatlab-client'
-import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
+import { scenecraftFileUrl, scenecraftThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/scenecraft-client'
+import type { BinEntry, TransitionBinEntry } from '@/lib/scenecraft-client'
+import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 
 export type PoolSelection = {
   type: 'keyframe' | 'segment'
@@ -26,13 +26,13 @@ type BinPanelProps = {
   onHoverBinTransition?: (entry: TransitionBinEntry | null) => void
 }
 
-const PANEL_STORAGE_KEY = 'beatlab-side-panel-width'
+const PANEL_STORAGE_KEY = 'scenecraft-side-panel-width'
 const PANEL_DEFAULT = 360
 const PANEL_MIN = 240
 
 function BinVideoPreview({ projectName, transitionId, videoPath }: { projectName: string; transitionId: string; videoPath?: string }) {
   const [failed, setFailed] = useState(false)
-  const src = beatlabFileUrl(projectName, videoPath || `selected_transitions/${transitionId}_slot_0.mp4`)
+  const src = scenecraftFileUrl(projectName, videoPath || `selected_transitions/${transitionId}_slot_0.mp4`)
   if (failed) {
     return <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[9px] text-gray-600">No video</span></div>
   }
@@ -84,20 +84,20 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
   useEffect(() => { localStorage.setItem(PANEL_STORAGE_KEY, String(panelWidth)) }, [panelWidth])
 
-  const socket = useBeatlabSocket()
+  const socket = useScenecraftSocket()
   const [keyframeEntries, setKeyframeEntries] = useState<BinEntry[]>([])
   const [transitionEntries, setTransitionEntries] = useState<TransitionBinEntry[]>([])
   const [poolKeyframes, setPoolKeyframes] = useState<PoolEntry[]>([])
   const [poolSegments, setPoolSegments] = useState<PoolEntry[]>([])
   const [watchedFolders, setWatchedFolders] = useState<string[]>([])
   const [unselectedCandidates, setUnselectedCandidates] = useState<UnselectedCandidate[]>([])
-  const [videoCandidates, setVideoCandidates] = useState<import('@/lib/beatlab-client').VideoCandidate[]>([])
+  const [videoCandidates, setVideoCandidates] = useState<import('@/lib/scenecraft-client').VideoCandidate[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates' | 'videos'>('keyframes')
   const [kfSubTab, setKfSubTab] = useState<'active' | 'bin'>('active')
   const [trSubTab, setTrSubTab] = useState<'active' | 'bin'>('active')
   const scrollPositions = useRef<Record<string, number>>(
-    typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem('beatlab-bin-scroll') || '{}') } catch { return {} } })() : {}
+    typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem('scenecraft-bin-scroll') || '{}') } catch { return {} } })() : {}
   )
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -121,8 +121,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
       // Background preload thumbnails into IndexedDB
       const thumbUrls = [
-        ...(poolData.keyframes || []).map((e: PoolEntry) => beatlabFileUrl(projectName, e.path)),
-        ...(candData || []).map((c: UnselectedCandidate) => beatlabFileUrl(projectName, c.path)),
+        ...(poolData.keyframes || []).map((e: PoolEntry) => scenecraftFileUrl(projectName, e.path)),
+        ...(candData || []).map((c: UnselectedCandidate) => scenecraftFileUrl(projectName, c.path)),
       ]
       preloadThumbs(thumbUrls)
     } finally {
@@ -299,7 +299,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                 // Save current scroll position before switching
                 if (scrollContainerRef.current) {
                   scrollPositions.current[tab] = scrollContainerRef.current.scrollTop
-                  localStorage.setItem('beatlab-bin-scroll', JSON.stringify(scrollPositions.current))
+                  localStorage.setItem('scenecraft-bin-scroll', JSON.stringify(scrollPositions.current))
                 }
                 setTab(t)
                 // Restore scroll position after render
@@ -340,14 +340,14 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
                         draggable={kf.hasSelectedImage}
                         onDragStart={(e) => {
-                          e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${kf.id}.png`)
+                          e.dataTransfer.setData('application/x-scenecraft-pool-path', `selected_keyframes/${kf.id}.png`)
                           e.dataTransfer.effectAllowed = 'copy'
                         }}
-                        onMouseEnter={() => kf.hasSelectedImage && onHoverPreview?.(beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png?v=${kf.selected ?? 0}`))}
+                        onMouseEnter={() => kf.hasSelectedImage && onHoverPreview?.(scenecraftFileUrl(projectName, `selected_keyframes/${kf.id}.png?v=${kf.selected ?? 0}`))}
                         onMouseLeave={() => onHoverPreview?.(null)}
                       >
                         {kf.hasSelectedImage ? (
-                          <img src={beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)} alt={kf.id} className="w-full aspect-video object-cover pointer-events-none" draggable={false} loading="lazy" />
+                          <img src={scenecraftFileUrl(projectName, `selected_keyframes/${kf.id}.png`)} alt={kf.id} className="w-full aspect-video object-cover pointer-events-none" draggable={false} loading="lazy" />
                         ) : (
                           <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[8px] text-gray-600">{kf.id}</span></div>
                         )}
@@ -367,16 +367,16 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         className="relative group rounded overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
                         draggable
                         onDragStart={(e) => {
-                          e.dataTransfer.setData('application/x-beatlab-bin-kf', entry.id)
-                          if (entry.hasSelectedImage) e.dataTransfer.setData('application/x-beatlab-pool-path', `selected_keyframes/${entry.id}.png`)
+                          e.dataTransfer.setData('application/x-scenecraft-bin-kf', entry.id)
+                          if (entry.hasSelectedImage) e.dataTransfer.setData('application/x-scenecraft-pool-path', `selected_keyframes/${entry.id}.png`)
                           e.dataTransfer.effectAllowed = 'copy'
                         }}
                         onClick={() => handleRestoreKeyframe(entry.id)}
-                        onMouseEnter={() => entry.hasSelectedImage && onHoverPreview?.(beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`))}
+                        onMouseEnter={() => entry.hasSelectedImage && onHoverPreview?.(scenecraftFileUrl(projectName, `selected_keyframes/${entry.id}.png`))}
                         onMouseLeave={() => onHoverPreview?.(null)}
                       >
                         {entry.hasSelectedImage ? (
-                          <img src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)} alt={entry.id} className="w-full aspect-video object-cover pointer-events-none" draggable={false} loading="lazy" />
+                          <img src={scenecraftFileUrl(projectName, `selected_keyframes/${entry.id}.png`)} alt={entry.id} className="w-full aspect-video object-cover pointer-events-none" draggable={false} loading="lazy" />
                         ) : (
                           <div className="w-full aspect-video bg-gray-800 flex items-center justify-center"><span className="text-[8px] text-gray-600">{entry.id}</span></div>
                         )}
@@ -449,7 +449,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation()
-                                  const { postAddToBench } = await import('@/lib/beatlab-client')
+                                  const { postAddToBench } = await import('@/lib/scenecraft-client')
                                   await postAddToBench(projectName, 'transition', entry.id)
                                 }}
                                 className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -460,7 +460,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation()
-                                  const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                                  const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                                   await fetch(url, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
@@ -496,14 +496,14 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     className="relative group rounded overflow-hidden cursor-grab active:cursor-grabbing"
                     draggable
                     onDragStart={(e) => {
-                      e.dataTransfer.setData('application/x-beatlab-pool-path', c.path)
+                      e.dataTransfer.setData('application/x-scenecraft-pool-path', c.path)
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
-                    onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, c.path))}
+                    onMouseEnter={() => onHoverPreview?.(scenecraftFileUrl(projectName, c.path))}
                     onMouseLeave={() => onHoverPreview?.(null)}
                   >
                     <img
-                      src={beatlabFileUrl(projectName, c.path)}
+                      src={scenecraftFileUrl(projectName, c.path)}
                       alt={`${c.keyframeId} v${c.variant}`}
                       className="w-full aspect-video object-cover pointer-events-none"
                       loading="lazy"
@@ -515,7 +515,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         <button
                           onClick={async (e) => {
                             e.stopPropagation()
-                            const { postSelectKeyframes } = await import('@/lib/beatlab-client')
+                            const { postSelectKeyframes } = await import('@/lib/scenecraft-client')
                             await postSelectKeyframes(projectName, { [c.keyframeId]: c.variant })
                             onRestore?.()
                           }}
@@ -527,7 +527,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         <button
                           onClick={async (e) => {
                             e.stopPropagation()
-                            const { postAddToBench } = await import('@/lib/beatlab-client')
+                            const { postAddToBench } = await import('@/lib/scenecraft-client')
                             await postAddToBench(projectName, 'keyframe', c.keyframeId, c.path)
                           }}
                           className="text-[7px] text-green-400 hover:text-green-300"
@@ -562,7 +562,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         <button
                           onClick={async (e) => {
                             e.stopPropagation()
-                            const { postAddToBench } = await import('@/lib/beatlab-client')
+                            const { postAddToBench } = await import('@/lib/scenecraft-client')
                             await postAddToBench(projectName, 'transition', undefined, vc.path)
                           }}
                           className="text-[8px] text-cyan-400/60 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -573,7 +573,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         <button
                           onClick={async (e) => {
                             e.stopPropagation()
-                            const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                            const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                             await fetch(url, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
@@ -636,14 +636,14 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
                           draggable
                           onDragStart={(e) => {
-                            e.dataTransfer.setData('application/x-beatlab-pool-path', entry.path)
+                            e.dataTransfer.setData('application/x-scenecraft-pool-path', entry.path)
                             e.dataTransfer.effectAllowed = 'copy'
                           }}
-                          onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, entry.path))}
+                          onMouseEnter={() => onHoverPreview?.(scenecraftFileUrl(projectName, entry.path))}
                           onMouseLeave={() => onHoverPreview?.(null)}
                         >
                           <img
-                            src={beatlabFileUrl(projectName, entry.path)}
+                            src={scenecraftFileUrl(projectName, entry.path)}
                             alt={entry.name}
                             className="w-full aspect-video object-cover"
                             loading="lazy"
@@ -696,7 +696,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
 // Thumbnail cache: memory + IndexedDB, background preloading
 const thumbMemCache = new Map<string, string>() // url → objectURL
-const THUMB_DB = 'beatlab-thumb-cache'
+const THUMB_DB = 'scenecraft-thumb-cache'
 const THUMB_STORE = 'thumbs'
 
 function openThumbDb(): Promise<IDBDatabase> {
@@ -755,7 +755,7 @@ function useCachedThumb(url: string | null): string {
 
 // Pool blob cache: in-memory + IndexedDB persistence
 const poolBlobCache = new Map<string, string>()
-const POOL_DB_NAME = 'beatlab-pool-cache'
+const POOL_DB_NAME = 'scenecraft-pool-cache'
 const POOL_STORE = 'blobs'
 
 function openPoolDb(): Promise<IDBDatabase> {
@@ -890,7 +890,7 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags,
   const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const url = beatlabFileUrl(projectName, entry.path)
+  const url = scenecraftFileUrl(projectName, entry.path)
 
   // Lazy-load blob on first hover (checks IndexedDB before network)
   useEffect(() => {
@@ -915,7 +915,7 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags,
       className={`relative rounded overflow-hidden bg-gray-800 group cursor-pointer border-2 transition-colors ${isSelected ? 'border-orange-500' : 'border-transparent hover:border-gray-600'}`}
       draggable={!!draggable}
       onDragStart={draggable ? (e) => {
-        e.dataTransfer.setData('application/x-beatlab-pool-path', entry.path)
+        e.dataTransfer.setData('application/x-scenecraft-pool-path', entry.path)
         e.dataTransfer.effectAllowed = 'copy'
         // Position drag preview bottom-right of cursor
         const preview = e.currentTarget.cloneNode(true) as HTMLElement

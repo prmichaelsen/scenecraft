@@ -2,13 +2,13 @@ import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
-import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/beatlab-client'
+import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/scenecraft-client'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData, restoreKeyframe } from '@/routes/project/$name/editor'
-import { useBeatlabSocket } from '@/hooks/useBeatlabSocket'
-import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/beatlab-client'
+import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
+import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
-import { beatlabFileUrl } from '@/lib/beatlab-client'
+import { scenecraftFileUrl } from '@/lib/scenecraft-client'
 import { VideoTrack } from './VideoTrack'
 import { TransitionTrack } from './TransitionTrack'
 import { Playhead } from './Playhead'
@@ -322,17 +322,17 @@ function parseTimestamp(ts: string | number): number {
 
 export type KeyframeWithTime = Keyframe & { timeSeconds: number }
 
-const VIDEO_HEIGHT_KEY = 'beatlab-video-track-height'
+const VIDEO_HEIGHT_KEY = 'scenecraft-video-track-height'
 const DEFAULT_VIDEO_HEIGHT = 96
 const MIN_VIDEO_HEIGHT = 48
 const MAX_VIDEO_HEIGHT = 400
 
-const PREVIEW_HEIGHT_KEY = 'beatlab-preview-height'
+const PREVIEW_HEIGHT_KEY = 'scenecraft-preview-height'
 const DEFAULT_PREVIEW_HEIGHT = 180
 const MIN_PREVIEW_HEIGHT = 80
 const MAX_PREVIEW_HEIGHT = 500
 
-const AUDIO_HEIGHT_KEY = 'beatlab-audio-track-height'
+const AUDIO_HEIGHT_KEY = 'scenecraft-audio-track-height'
 const DEFAULT_AUDIO_HEIGHT = 0 // 0 means flex-1 (fill remaining space)
 const MIN_AUDIO_HEIGHT = 60
 const MAX_AUDIO_HEIGHT = 400
@@ -342,13 +342,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const editorState = useEditorState()
   const [currentTime, setCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
-    const stored = localStorage.getItem(`beatlab-playhead-${data.projectName}`)
+    const stored = localStorage.getItem(`scenecraft-playhead-${data.projectName}`)
     return stored ? parseFloat(stored) : 0
   })
   // Persist playhead position to localStorage (debounced)
   useEffect(() => {
     const handle = setTimeout(() => {
-      localStorage.setItem(`beatlab-playhead-${data.projectName}`, String(currentTime))
+      localStorage.setItem(`scenecraft-playhead-${data.projectName}`, String(currentTime))
     }, 500)
     return () => clearTimeout(handle)
   }, [currentTime, data.projectName])
@@ -356,13 +356,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [duration, setDuration] = useState(0)
   const [pxPerSec, setPxPerSec] = useState(() => {
     if (typeof window === 'undefined') return 20
-    const stored = localStorage.getItem('beatlab-zoom')
+    const stored = localStorage.getItem('scenecraft-zoom')
     return stored ? parseFloat(stored) : 20
   })
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackRate, setPlaybackRate] = useState(() => {
     if (typeof window === 'undefined') return 1
-    const stored = localStorage.getItem('beatlab-playback-speed')
+    const stored = localStorage.getItem('scenecraft-playback-speed')
     return stored ? parseFloat(stored) : 1
   })
   const [selectedKeyframe, setSelectedKeyframe] = useState<KeyframeWithTime | null>(null)
@@ -380,7 +380,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [showLogs, setShowLogs] = useState(false)
   const [showCheckpoints, setShowCheckpoints] = useState(false)
   const [showDownloadPreview, setShowDownloadPreview] = useState(false)
-  const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/beatlab-client').AudioDescription | null>(null)
+  const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/scenecraft-client').AudioDescription | null>(null)
   const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
@@ -408,7 +408,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       hoverClearTimer.current = setTimeout(() => setHoverPreviewUrlRaw(null), 100)
     }
   }, [])
-  const [hoveredBinTransition, setHoveredBinTransition] = useState<import('@/lib/beatlab-client').TransitionBinEntry | null>(null)
+  const [hoveredBinTransition, setHoveredBinTransition] = useState<import('@/lib/scenecraft-client').TransitionBinEntry | null>(null)
   const [audioTrackHeight, setAudioTrackHeight] = useState(DEFAULT_AUDIO_HEIGHT)
   // Viewport state for virtualized rendering
   const [scrollLeft, setScrollLeft] = useState(0)
@@ -454,15 +454,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       setPlaybackRate(rate)
       if (audioElRef.current) audioElRef.current.playbackRate = rate
     }
-    window.addEventListener('beatlab-playback-speed', handler)
-    return () => window.removeEventListener('beatlab-playback-speed', handler)
+    window.addEventListener('scenecraft-playback-speed', handler)
+    return () => window.removeEventListener('scenecraft-playback-speed', handler)
   }, [])
 
   // Preload stills for base image picker
   useEffect(() => { preloadStills(data.projectName) }, [data.projectName])
 
   // Listen for timeline validation warnings via WebSocket
-  const { subscribeAll } = useBeatlabSocket()
+  const { subscribeAll } = useScenecraftSocket()
   useEffect(() => {
     return subscribeAll((msg) => {
       if (msg.type === 'timeline_warning') {
@@ -641,7 +641,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const metaVal = (data.meta as Record<string, unknown>).preload_window as number
     if (metaVal) return metaVal
     if (typeof window === 'undefined') return 30
-    const stored = localStorage.getItem('beatlab-preload-window')
+    const stored = localStorage.getItem('scenecraft-preload-window')
     return stored ? parseInt(stored, 10) : 30
   })
   // Listen for settings changes (from SettingsPanel)
@@ -650,8 +650,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const val = (e as CustomEvent).detail as number
       setPreloadWindow(val)
     }
-    window.addEventListener('beatlab-preload-window', handler)
-    return () => window.removeEventListener('beatlab-preload-window', handler)
+    window.addEventListener('scenecraft-preload-window', handler)
+    return () => window.removeEventListener('scenecraft-preload-window', handler)
   }, [])
   const PRELOAD_WINDOW = preloadWindow
   // Sync eviction protection to match the configured preload window
@@ -696,7 +696,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (dist > PRELOAD_WINDOW) continue
       const key = `kf:${kf.id}`
       if (!isInMemory(key)) {
-        kfWork.push({ dist, run: () => preloadKeyframeImage(key, beatlabFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`) })
+        kfWork.push({ dist, run: () => preloadKeyframeImage(key, scenecraftFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`) })
       }
     }
 
@@ -710,7 +710,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const selectedVariant = tr.selected ?? 'none'
       const key = `tr:${tr.id}:v${selectedVariant}`
       if (!isInMemory(key)) {
-        trWork.push({ dist, run: () => preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`)) })
+        trWork.push({ dist, run: () => preloadTransition(key, scenecraftFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`)) })
       }
     }
 
@@ -925,7 +925,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         } : undefined
 
         if (activeTr.isAdjustment) {
-          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: 'normal' as import('@/lib/beatlab-client').BlendMode, isAdjustment: true, mask, transform } as import('./BeatEffectPreview').TrackLayer
+          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: 'normal' as import('@/lib/scenecraft-client').BlendMode, isAdjustment: true, mask, transform } as import('./BeatEffectPreview').TrackLayer
         }
 
         const progress = activeTr.remap?.method === 'curve'
@@ -942,7 +942,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           const kfKey = `kf:${from.id}`
           frameA = getFrameAtProgress(kfKey, 0)
         }
-        const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
+        const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/scenecraft-client').BlendMode
         return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey, mask, transform } as import('./BeatEffectPreview').TrackLayer
       }
       if (curKf) {
@@ -952,7 +952,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           console.warn(`[layer] ${track.id} curKf=${curKf.id} hasImage=true but frame=null (not loaded yet?)`)
         }
         const kfOpacity = curKf.opacity != null ? curKf.opacity : track.baseOpacity
-        const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/beatlab-client').BlendMode
+        const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/scenecraft-client').BlendMode
         return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
       }
       return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
@@ -981,11 +981,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const newPlayheadX = currentTimeRef.current * newPxPerSec
         el.scrollLeft = newPlayheadX - viewportOffset
         setPxPerSec(newPxPerSec)
-        localStorage.setItem('beatlab-zoom', String(newPxPerSec))
+        localStorage.setItem('scenecraft-zoom', String(newPxPerSec))
       } else {
         setPxPerSec((prev) => {
           const next = Math.max(0.1, prev * factor)
-          localStorage.setItem('beatlab-zoom', String(next))
+          localStorage.setItem('scenecraft-zoom', String(next))
           return next
         })
       }
@@ -1423,16 +1423,16 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const key = `tr:${tr.id}:v${selectedVariant}`
     setRenderProgress((prev) => ({ ...prev, [tr.id]: 0 }))
     await invalidateEntry(key)
-    preloadTransition(key, beatlabFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
+    preloadTransition(key, scenecraftFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
   }, [data.projectName])
 
   const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string, sourceTransitionId?: string) => {
     try {
       if (sourceTransitionId && sourceTransitionId !== transitionId) {
-        const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+        const { postDuplicateTransitionVideo } = await import('@/lib/scenecraft-client')
         await postDuplicateTransitionVideo(data.projectName, sourceTransitionId, transitionId)
       } else {
-        const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+        const { postAssignPoolVideo } = await import('@/lib/scenecraft-client')
         await postAssignPoolVideo(data.projectName, transitionId, poolPath)
       }
       // Invalidate old cached frames so new video is decoded
@@ -1448,7 +1448,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [data.projectName, localTransitions, refreshTimeline])
 
   const handleDropImageOnKeyframe = useCallback(async (keyframeId: string, imagePath: string) => {
-    const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
+    const { postAssignKeyframeImage } = await import('@/lib/scenecraft-client')
     await postAssignKeyframeImage(data.projectName, keyframeId, imagePath)
     invalidateEntry(`kf:${keyframeId}`)
     refreshTimeline()
@@ -1462,7 +1462,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     // Video drop → assign to transition starting from this keyframe
     const tr = localTransitions.find((t) => t.from === keyframeId)
     if (tr) {
-      const { postAssignPoolVideo } = await import('@/lib/beatlab-client')
+      const { postAssignPoolVideo } = await import('@/lib/scenecraft-client')
       await postAssignPoolVideo(data.projectName, tr.id, poolPath)
       refreshTimeline()
     }
@@ -1564,14 +1564,14 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (matchesHotkey(e, 'paste')) {
         if (trClipboard.current && selectedTransition && trClipboard.current !== selectedTransition.id) {
           e.preventDefault()
-          import('@/lib/beatlab-client').then(({ postCopyTransitionStyle }) => {
+          import('@/lib/scenecraft-client').then(({ postCopyTransitionStyle }) => {
             postCopyTransitionStyle(data.projectName, trClipboard.current!, selectedTransition.id)
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste transition style failed:', err); alert(`Paste style failed: ${err.message}`) })
           })
         } else if (kfClipboard.current.length > 0) {
           e.preventDefault()
-          import('@/lib/beatlab-client').then(({ postPasteGroup }) => {
+          import('@/lib/scenecraft-client').then(({ postPasteGroup }) => {
             postPasteGroup(data.projectName, kfClipboard.current, secondsToTimestamp(currentTimeRef.current), selectedTrackId)
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste group failed:', err); alert(`Paste failed: ${err.message}`) })
@@ -1618,7 +1618,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       // Undo (Ctrl+Z)
       if (matchesHotkey(e, 'undo')) {
         handlePreventDefault(e, 'undo')
-        import('@/lib/beatlab-client').then(({ postUndo }) => {
+        import('@/lib/scenecraft-client').then(({ postUndo }) => {
           postUndo(data.projectName).then((result) => {
             if (result.success) {
               refreshTimeline()
@@ -1630,7 +1630,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       // Redo (Ctrl+Shift+Z / Ctrl+Y)
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z' || (e.ctrlKey || e.metaKey) && e.key === 'y') {
         e.preventDefault()
-        import('@/lib/beatlab-client').then(({ postRedo }) => {
+        import('@/lib/scenecraft-client').then(({ postRedo }) => {
           postRedo(data.projectName).then((result) => {
             if (result.success) {
               refreshTimeline()
@@ -1814,7 +1814,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               <BeatEffectPreview
                 ref={previewRef}
                 src={currentKeyframe?.hasSelectedImage
-                  ? beatlabFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`) + `?v=${currentKeyframe.selected ?? 0}`
+                  ? scenecraftFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`) + `?v=${currentKeyframe.selected ?? 0}`
                   : ''}
                 beats={data.beats}
                 audioEvents={filteredAudioEvents}
@@ -1868,18 +1868,18 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 // Update in-memory for immediate preview
                 ;(selectedTransition as Record<string, unknown>)[curveKey] = pts
                 // Debounced persist
-                import('@/lib/beatlab-client').then(({ postUpdateTransitionStyle }) => {
+                import('@/lib/scenecraft-client').then(({ postUpdateTransitionStyle }) => {
                   postUpdateTransitionStyle(data.projectName, trId, { [styleKey]: pts } as never)
                 })
               }}
               onAnchorUpdate={async (trId, anchorX, anchorY) => {
                 if (selectedTransition) { selectedTransition.anchorX = anchorX; selectedTransition.anchorY = anchorY }
-                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                 await postUpdateTransitionStyle(data.projectName, trId, { anchorX, anchorY } as never)
               }}
               onMaskCenterUpdate={async (trId, cx, cy) => {
                 if (selectedTransition) { selectedTransition.maskCenterX = cx; selectedTransition.maskCenterY = cy }
-                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                 await postUpdateTransitionStyle(data.projectName, trId, { maskCenterX: cx, maskCenterY: cy } as never)
               }}
             />
@@ -1916,7 +1916,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 const rate = parseFloat(e.target.value)
                 setPlaybackRate(rate)
                 if (audioElRef.current) audioElRef.current.playbackRate = rate
-                localStorage.setItem('beatlab-playback-speed', String(rate))
+                localStorage.setItem('scenecraft-playback-speed', String(rate))
               }}
               className="w-14 h-1.5 accent-gray-500"
             />
@@ -1926,7 +1926,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           {/* Undo / Redo */}
           <button
             onClick={() => {
-              import('@/lib/beatlab-client').then(({ postUndo }) => {
+              import('@/lib/scenecraft-client').then(({ postUndo }) => {
                 postUndo(data.projectName).then((result) => {
                   if (result.success) refreshTimeline()
                 })
@@ -1939,7 +1939,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           </button>
           <button
             onClick={() => {
-              import('@/lib/beatlab-client').then(({ postRedo }) => {
+              import('@/lib/scenecraft-client').then(({ postRedo }) => {
                 postRedo(data.projectName).then((result) => {
                   if (result.success) refreshTimeline()
                 })
@@ -2001,7 +2001,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             <button
               onClick={async () => {
                 try {
-                  const { postSplitTransition } = await import('@/lib/beatlab-client')
+                  const { postSplitTransition } = await import('@/lib/scenecraft-client')
                   await postSplitTransition(data.projectName, activeTransition.id, currentTime)
                   refreshTimeline()
                 } catch (e) {
@@ -2092,7 +2092,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           <button
             onClick={async () => {
               try {
-                const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
+                const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
                 const res = await fetch(url, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -2309,13 +2309,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                     onMouseDown={(e) => handleDragSelectDown(e)}
                     onClick={(e) => { if (dragSelectRef.current?.active || dragSelectRect) return; setSelectedTrackId(track.id); handleTrackClick(e) }}
                     onDragOver={(e) => {
-                      if (e.dataTransfer.types.includes('application/x-beatlab-bin-kf')) {
+                      if (e.dataTransfer.types.includes('application/x-scenecraft-bin-kf')) {
                         e.preventDefault()
                         e.dataTransfer.dropEffect = 'copy'
                       }
                     }}
                     onDrop={async (e) => {
-                      const binKfId = e.dataTransfer.getData('application/x-beatlab-bin-kf')
+                      const binKfId = e.dataTransfer.getData('application/x-scenecraft-bin-kf')
                       if (!binKfId) return
                       e.preventDefault()
                       const rect = e.currentTarget.getBoundingClientRect()
@@ -2396,7 +2396,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               <BeatMarkers beats={data.beats} audioEvents={aiAudioEvents} pxPerSec={pxPerSec} />
               {data.audioFile && (
                 <AudioTrack
-                  audioUrl={beatlabFileUrl(data.projectName, data.audioFile)}
+                  audioUrl={scenecraftFileUrl(data.projectName, data.audioFile)}
                   pxPerSec={pxPerSec}
                   onTimeUpdate={setCurrentTime}
                   onDurationChange={setDuration}
@@ -2591,7 +2591,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 if (!currentKeyframe) { alert('No keyframe under playhead'); return }
                 const isImage = /\.(png|jpe?g|webp)$/i.test(selection.entry.path)
                 if (isImage) {
-                  const { postAssignKeyframeImage } = await import('@/lib/beatlab-client')
+                  const { postAssignKeyframeImage } = await import('@/lib/scenecraft-client')
                   await postAssignKeyframeImage(data.projectName, currentKeyframe.id, selection.entry.path)
                   invalidateEntry(`kf:${currentKeyframe.id}`)
                 }
@@ -2599,7 +2599,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 refreshTimeline()
                 return
               }
-              const { postInsertPoolItem } = await import('@/lib/beatlab-client')
+              const { postInsertPoolItem } = await import('@/lib/scenecraft-client')
               let insertTime = currentTime
               if (mode === 'after-current-kf' && currentKeyframe) {
                 insertTime = currentKeyframe.timeSeconds + 0.01
@@ -2656,7 +2656,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             } catch (e) { console.error('Move right failed:', e) }
           }}
           onUnlink={async (side) => {
-            const { postUnlinkKeyframe } = await import('@/lib/beatlab-client')
+            const { postUnlinkKeyframe } = await import('@/lib/scenecraft-client')
             await postUnlinkKeyframe(data.projectName, selectedKeyframe.id, side)
             refreshTimeline()
           }}
@@ -2706,7 +2706,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             const idx = sorted.findIndex((t) => t.id === selectedTransition.id)
             const next = idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null
             if (!next) { alert('No next transition'); return }
-            const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+            const { postDuplicateTransitionVideo } = await import('@/lib/scenecraft-client')
             await postDuplicateTransitionVideo(data.projectName, selectedTransition.id, next.id)
             refreshTimeline()
           }}
@@ -2719,7 +2719,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             const idx = sorted.findIndex((t) => t.id === selectedTransition.id)
             const prev = idx > 0 ? sorted[idx - 1] : null
             if (!prev) { alert('No previous transition'); return }
-            const { postDuplicateTransitionVideo } = await import('@/lib/beatlab-client')
+            const { postDuplicateTransitionVideo } = await import('@/lib/scenecraft-client')
             await postDuplicateTransitionVideo(data.projectName, selectedTransition.id, prev.id)
             refreshTimeline()
           }}
@@ -2955,24 +2955,24 @@ const SectionBands = memo(function SectionBands({ sections, pxPerSec }: { sectio
   )
 })
 
-const DESC_PANEL_WIDTH_KEY = 'beatlab-desc-panel-width'
+const DESC_PANEL_WIDTH_KEY = 'scenecraft-desc-panel-width'
 const DESC_PANEL_DEFAULT_WIDTH = 360
 const DESC_PANEL_MIN_WIDTH = 240
 
-const ALL_SUPPRESSION_TYPES: import('@/lib/beatlab-client').EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
+const ALL_SUPPRESSION_TYPES: import('@/lib/scenecraft-client').EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
 const SUPPRESSION_COLORS: Record<string, string> = {
   pulse: 'bg-yellow-500', zoom: 'bg-blue-500', shake: 'bg-red-500', glow: 'bg-purple-500', flash: 'bg-white', echo: 'bg-teal-500',
 }
 
 function SuppressionEditorPanel({ suppression, onUpdate, onUpdateSuppression, onResize, onDelete, onClose }: {
-  suppression: import('@/lib/beatlab-client').BeatSuppression
-  onUpdate: (effectTypes: import('@/lib/beatlab-client').EffectType[] | undefined) => void
-  onUpdateSuppression: (updates: Partial<import('@/lib/beatlab-client').BeatSuppression>) => void
+  suppression: import('@/lib/scenecraft-client').BeatSuppression
+  onUpdate: (effectTypes: import('@/lib/scenecraft-client').EffectType[] | undefined) => void
+  onUpdateSuppression: (updates: Partial<import('@/lib/scenecraft-client').BeatSuppression>) => void
   onResize: (from: number, to: number) => void
   onDelete: () => void
   onClose: () => void
 }) {
-  const STORAGE_KEY = 'beatlab-side-panel-width'
+  const STORAGE_KEY = 'scenecraft-side-panel-width'
   const MIN_WIDTH = 240
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return 360
@@ -3120,8 +3120,8 @@ function TrackSettingsPanel({ track, onClose, onUpdate }: {
   onClose: () => void
   onUpdate: (updates: Partial<Track>) => void
 }) {
-  const STORAGE_KEY = 'beatlab-side-panel-width'
-  const BLEND_MODES: import('@/lib/beatlab-client').BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
+  const STORAGE_KEY = 'scenecraft-side-panel-width'
+  const BLEND_MODES: import('@/lib/scenecraft-client').BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
 
   const [blendMode, setBlendMode] = useState(track.blendMode)
   const [opacity, setOpacity] = useState(track.baseOpacity)
@@ -3145,7 +3145,7 @@ function TrackSettingsPanel({ track, onClose, onUpdate }: {
           <select
             value={blendMode}
             onChange={(e) => {
-              const v = e.target.value as import('@/lib/beatlab-client').BlendMode
+              const v = e.target.value as import('@/lib/scenecraft-client').BlendMode
               setBlendMode(v)
               onUpdate({ blendMode: v })
             }}
@@ -3257,7 +3257,7 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChang
   projectName: string
   onClose: () => void
   onUpdate: () => void
-  onRulesChange?: (rules: import('@/lib/beatlab-client').AudioRule[]) => void
+  onRulesChange?: (rules: import('@/lib/scenecraft-client').AudioRule[]) => void
 }) {
   const [rules, setRules] = useState(section.rules.map((r) => ({ ...r })))
   const [saving, setSaving] = useState(false)
@@ -3274,8 +3274,8 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChang
     setSaving(true)
     try {
       // Fetch all rules, replace this section's rules, save + reapply
-      const allRes = await window.fetch(`${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/audio-intelligence`)
-      const allData = await allRes.json() as { rules: import('@/lib/beatlab-client').AudioRule[] }
+      const allRes = await window.fetch(`${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/audio-intelligence`)
+      const allData = await allRes.json() as { rules: import('@/lib/scenecraft-client').AudioRule[] }
       const allRules = allData.rules || []
 
       const sectionStart = section.start
@@ -3290,7 +3290,7 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChang
       // Save rules AND regenerate events in one call
       const sectionRuleSummary = rules.map((r) => `${r.stem}/${r.band}→${r.effect}${(r as Record<string,unknown>)._disabled ? ' [OFF]' : ''}`).join(', ')
       console.log(`[RuleEditor] Sending ${updated.length} rules (${otherRules.length} other + ${rules.length} section): ${sectionRuleSummary}`)
-      const { postReapplyRules } = await import('@/lib/beatlab-client')
+      const { postReapplyRules } = await import('@/lib/scenecraft-client')
       const result = await postReapplyRules(projectName, updated, section.start, section.end)
       console.log(`[RuleEditor] Saved ${updated.length} rules, regenerated ${result.eventCount} events`)
       onUpdate()
@@ -3398,7 +3398,7 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChang
 }
 
 function AudioDescriptionPanel({ section, audioEvents, projectName, onClose, onKeyframeInserted }: {
-  section: import('@/lib/beatlab-client').AudioDescription
+  section: import('@/lib/scenecraft-client').AudioDescription
   audioEvents: AudioEvent[]
   projectName: string
   onClose: () => void

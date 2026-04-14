@@ -6,7 +6,7 @@ import {
   postImportTimeline,
   type TimelineInfo,
 } from '@/lib/timeline-client'
-import { fetchBrowse, type BrowseEntry } from '@/lib/beatlab-client'
+import { fetchBrowse, type BrowseEntry } from '@/lib/scenecraft-client'
 
 type TimelineSwitcherProps = {
   projectName: string
@@ -212,7 +212,7 @@ function TimelineImportBrowser({
     <div className="space-y-1">
       {/* Breadcrumbs */}
       <div className="flex items-center gap-0.5 text-[10px] flex-wrap">
-        <button onClick={() => loadDir('')} className="text-green-400 hover:text-green-300">.beatlab_work</button>
+        <button onClick={() => loadDir('')} className="text-green-400 hover:text-green-300">.scenecraft_work</button>
         {breadcrumbs.map((part, i) => {
           const pathUpTo = breadcrumbs.slice(0, i + 1).join('/')
           const isLast = i === breadcrumbs.length - 1

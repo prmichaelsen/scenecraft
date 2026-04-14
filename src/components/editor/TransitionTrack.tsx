@@ -151,7 +151,7 @@ export const TransitionTrack = memo(function TransitionTrack({
                 onTransitionClick(tr, e.shiftKey)
               }}
               onDragOver={(e) => {
-                if (e.dataTransfer.types.includes('application/x-beatlab-pool-path')) {
+                if (e.dataTransfer.types.includes('application/x-scenecraft-pool-path')) {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'copy'
                   setDropTarget(tr.id)
@@ -161,8 +161,8 @@ export const TransitionTrack = memo(function TransitionTrack({
               onDrop={(e) => {
                 e.preventDefault()
                 setDropTarget(null)
-                const poolPath = e.dataTransfer.getData('application/x-beatlab-pool-path')
-                const sourceTrId = e.dataTransfer.getData('application/x-beatlab-source-tr')
+                const poolPath = e.dataTransfer.getData('application/x-scenecraft-pool-path')
+                const sourceTrId = e.dataTransfer.getData('application/x-scenecraft-source-tr')
                 if (poolPath && onDropVideo) {
                   onDropVideo(tr.id, poolPath, sourceTrId || undefined)
                 }

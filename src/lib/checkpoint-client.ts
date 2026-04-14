@@ -1,4 +1,4 @@
-const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'
+const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'
 
 export type Checkpoint = {
   filename: string
@@ -8,13 +8,13 @@ export type Checkpoint = {
 }
 
 export async function fetchCheckpoints(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoints`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoints`)
   if (!res.ok) throw new Error(`Failed to fetch checkpoints: ${res.status}`)
   return res.json() as Promise<{ checkpoints: Checkpoint[]; active: string }>
 }
 
 export async function createCheckpoint(project: string, name?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name || undefined }),
@@ -24,7 +24,7 @@ export async function createCheckpoint(project: string, name?: string) {
 }
 
 export async function restoreCheckpoint(project: string, filename: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint/restore`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint/restore`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename }),
@@ -34,7 +34,7 @@ export async function restoreCheckpoint(project: string, filename: string) {
 }
 
 export async function deleteCheckpoint(project: string, filename: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint/delete`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/checkpoint/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename }),

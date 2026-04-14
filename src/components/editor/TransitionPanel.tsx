@@ -2,13 +2,13 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import type { Transition } from '@/routes/project/$name/editor'
 import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
-import { beatlabFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdateTransitionRemap, type PoolEntry, type TransitionBinEntry } from '@/lib/beatlab-client'
+import { scenecraftFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdateTransitionRemap, type PoolEntry, type TransitionBinEntry } from '@/lib/scenecraft-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
 import { evaluateCurve, getEasing, EASING_LABELS, EASING_COUNT, type CurvePoint } from '@/lib/remap-curve'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
-const STORAGE_KEY = 'beatlab-side-panel-width'
+const STORAGE_KEY = 'scenecraft-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
@@ -35,7 +35,7 @@ type TransitionPanelProps = {
   onDuplicateToPrev: () => void
   onDataChange: () => void
   onHoverPreview?: (url: string | null) => void
-  initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[]
+  initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[]
 }
 
 export function TransitionPanel({
@@ -136,7 +136,7 @@ export function TransitionPanel({
             <button
               onClick={async () => {
                 try {
-                  const { postAddToBench } = await import('@/lib/beatlab-client')
+                  const { postAddToBench } = await import('@/lib/scenecraft-client')
                   await postAddToBench(projectName, 'transition', tr.id)
                 } catch (e) { console.error('Bench failed:', e) }
               }}
@@ -159,7 +159,7 @@ export function TransitionPanel({
               onClick={async () => {
                 const next = !tr.hidden
                 tr.hidden = next
-                const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                 await postUpdateTransitionStyle(projectName, tr.id, { hidden: next } as never)
                 onDataChange()
               }}
@@ -212,7 +212,7 @@ export function TransitionPanel({
                   <button
                     onClick={async () => {
                       if (!_styleClipboardTrId || _styleClipboardTrId === tr.id) return
-                      const { postCopyTransitionStyle } = await import('@/lib/beatlab-client')
+                      const { postCopyTransitionStyle } = await import('@/lib/scenecraft-client')
                       await postCopyTransitionStyle(projectName, _styleClipboardTrId, tr.id)
                       onDataChange()
                     }}
@@ -226,7 +226,7 @@ export function TransitionPanel({
                   onClick={async () => {
                     const next = !tr.isAdjustment
                     tr.isAdjustment = next
-                    const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                    const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                     await postUpdateTransitionStyle(projectName, tr.id, { isAdjustment: next } as never)
                     onDataChange()
                   }}
@@ -247,12 +247,12 @@ export function TransitionPanel({
                         onClick={async () => {
                           if (hasMask) {
                             tr.maskRadius = null; tr.maskCenterX = null; tr.maskCenterY = null; tr.maskFeather = null
-                            const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                            const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                             await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: null, maskCenterX: null, maskCenterY: null, maskFeather: null })
                             onDataChange()
                           } else {
                             tr.maskRadius = 0.5; tr.maskCenterX = 0.5; tr.maskCenterY = 0.5; tr.maskFeather = 0.3
-                            const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                            const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                             await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: 0.5, maskCenterX: 0.5, maskCenterY: 0.5, maskFeather: 0.3 })
                             onDataChange()
                           }
@@ -264,28 +264,28 @@ export function TransitionPanel({
                           <div className="flex items-center gap-2">
                             <span className="text-[9px] text-gray-500 w-12">Center X</span>
                             <input type="range" min={0} max={1} step={0.01} value={tr.maskCenterX ?? 0.5}
-                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskCenterX = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskCenterX: v }); onDataChange() }}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskCenterX = v; const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskCenterX: v }); onDataChange() }}
                               className="flex-1 h-1.5 accent-cyan-500" />
                             <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskCenterX ?? 0.5) * 100).toFixed(0)}%</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[9px] text-gray-500 w-12">Center Y</span>
                             <input type="range" min={0} max={1} step={0.01} value={tr.maskCenterY ?? 0.5}
-                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskCenterY = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskCenterY: v }); onDataChange() }}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskCenterY = v; const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskCenterY: v }); onDataChange() }}
                               className="flex-1 h-1.5 accent-cyan-500" />
                             <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskCenterY ?? 0.5) * 100).toFixed(0)}%</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[9px] text-gray-500 w-12">Radius</span>
                             <input type="range" min={0.01} max={1} step={0.01} value={tr.maskRadius ?? 0.5}
-                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskRadius = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: v }); onDataChange() }}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskRadius = v; const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskRadius: v }); onDataChange() }}
                               className="flex-1 h-1.5 accent-cyan-500" />
                             <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskRadius ?? 0.5) * 100).toFixed(0)}%</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[9px] text-gray-500 w-12">Feather</span>
                             <input type="range" min={0} max={1} step={0.01} value={tr.maskFeather ?? 0.3}
-                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskFeather = v; const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskFeather: v }); onDataChange() }}
+                              onChange={async (e) => { const v = parseFloat(e.target.value); tr.maskFeather = v; const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client'); await postUpdateTransitionStyle(projectName, tr.id, { maskFeather: v }); onDataChange() }}
                               className="flex-1 h-1.5 accent-cyan-500" />
                             <span className="text-[9px] text-gray-400 w-8 text-right">{((tr.maskFeather ?? 0.3) * 100).toFixed(0)}%</span>
                           </div>
@@ -303,7 +303,7 @@ export function TransitionPanel({
                     onChange={async (e) => {
                       const val = e.target.value
                       tr.blendMode = val
-                      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+                      const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
                       await postUpdateTransitionStyle(projectName, tr.id, { blendMode: val })
                       onDataChange()
                     }}
@@ -463,7 +463,7 @@ export function TransitionPanel({
   )
 }
 
-function ActionPromptEditor({ transition, projectName, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[] }) {
+function ActionPromptEditor({ transition, projectName, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:action`
   const job = useJobState(entityKey)
@@ -472,7 +472,7 @@ function ActionPromptEditor({ transition, projectName, sectionDescription, initi
   const [useGlobal, setUseGlobal] = useState(transition.useGlobalPrompt)
   const [useSectionDesc, setUseSectionDesc] = useState(transition.includeSectionDesc ?? !!sectionDescription)
   const [saving, setSaving] = useState(false)
-  const [promptRoster, setPromptRoster] = useState<import('@/lib/beatlab-client').PromptRosterEntry[]>(initialPromptRoster || [])
+  const [promptRoster, setPromptRoster] = useState<import('@/lib/scenecraft-client').PromptRosterEntry[]>(initialPromptRoster || [])
 
   useEffect(() => {
     setAction(transition.action)
@@ -601,7 +601,7 @@ function ActionPromptEditor({ transition, projectName, sectionDescription, initi
             const name = prompt('Name for this prompt template:')
             if (!name) return
             const category = prompt('Category (e.g., general, camera, style):', 'general') || 'general'
-            const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+            const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
             await postAddPromptRoster(projectName, name, action, category)
             setPromptRoster(await fetchPromptRoster(projectName))
           }}
@@ -633,7 +633,7 @@ function ActionPromptEditor({ transition, projectName, sectionDescription, initi
               const name = window.prompt('Save prompt as:', action.slice(0, 40))
               if (!name) return
               const category = window.prompt('Category:', 'general') || 'general'
-              const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+              const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
               await postAddPromptRoster(projectName, name, action, category)
               setPromptRoster(await fetchPromptRoster(projectName))
             }}
@@ -693,7 +693,7 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
   useEffect(() => { setEffects(transition.effects || []) }, [transition.id, transition.effects])
 
   const handleAdd = useCallback(async (type: string) => {
-    const { postAddTransitionEffect } = await import('@/lib/beatlab-client')
+    const { postAddTransitionEffect } = await import('@/lib/scenecraft-client')
     const defaults: Record<string, Record<string, number>> = {
       strobe: { flashMs: 60, blackMs: 60 },
       invert: { amount: 1 },
@@ -706,12 +706,12 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
     setEffects((prev) => prev.map((e) => e.id === id ? { ...e, ...updates } : e))
   }, [])
   const handleUpdatePersist = useCallback(async (id: string, updates: { params?: Record<string, number>; enabled?: boolean }) => {
-    const { postUpdateTransitionEffect } = await import('@/lib/beatlab-client')
+    const { postUpdateTransitionEffect } = await import('@/lib/scenecraft-client')
     await postUpdateTransitionEffect(projectName, id, updates)
   }, [projectName])
 
   const handleDelete = useCallback(async (id: string) => {
-    const { postDeleteTransitionEffect } = await import('@/lib/beatlab-client')
+    const { postDeleteTransitionEffect } = await import('@/lib/scenecraft-client')
     await postDeleteTransitionEffect(projectName, id)
     setEffects((prev) => prev.filter((e) => e.id !== id))
   }, [projectName])
@@ -885,7 +885,7 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[] }) {
+function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:video`
   const job = useJobState(entityKey)
@@ -911,7 +911,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
 
   // Load defaults from project meta
   useEffect(() => {
-    import('@/lib/beatlab-client').then(({ fetchMeta }) => {
+    import('@/lib/scenecraft-client').then(({ fetchMeta }) => {
       fetchMeta(projectName).then((meta) => {
         if (meta.default_video_duration) setGenerationDuration(meta.default_video_duration)
         if (meta.default_gen_count) setGenerationCount(meta.default_gen_count)
@@ -1063,7 +1063,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
         <button
           onClick={async () => {
             try {
-              const { fetchDirectoryListing } = await import('@/lib/beatlab-client')
+              const { fetchDirectoryListing } = await import('@/lib/scenecraft-client')
               const files = await fetchDirectoryListing(projectName, `transition_candidates/${transition.id}/slot_0`)
               const newCandidates = files
                 .filter((f: { name: string; isDirectory: boolean }) => !f.isDirectory && f.name.endsWith('.mp4'))
@@ -1126,14 +1126,14 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
                 isSelected={isSelected}
                 disabled={selecting}
                 onSelect={() => handleSelect(variantNum)}
-                onMouseEnter={() => onHoverPreview?.(beatlabFileUrl(projectName, videoPath))}
+                onMouseEnter={() => onHoverPreview?.(scenecraftFileUrl(projectName, videoPath))}
                 onMouseLeave={() => onHoverPreview?.(null)}
                 onBench={async () => {
-                  const { postAddToBench } = await import('@/lib/beatlab-client')
+                  const { postAddToBench } = await import('@/lib/scenecraft-client')
                   await postAddToBench(projectName, 'transition', undefined, videoPath)
                 }}
                 onPool={async () => {
-                  const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                  const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                   await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1207,7 +1207,7 @@ export function CandidateModal({ title, groups, selectedMap, disabled, projectNa
                       <ModalVideoCard videoPath={filePath} projectName={projectName} />
                     ) : (
                       <img
-                        src={beatlabFileUrl(projectName, filePath)}
+                        src={scenecraftFileUrl(projectName, filePath)}
                         alt={label}
                         className="w-full aspect-video object-cover"
                       />
@@ -1234,7 +1234,7 @@ export function CandidateModal({ title, groups, selectedMap, disabled, projectNa
 function ModalVideoCard({ videoPath, projectName }: { videoPath: string; projectName: string }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [hovered, setHovered] = useState(false)
-  const url = beatlabFileUrl(projectName, videoPath)
+  const url = scenecraftFileUrl(projectName, videoPath)
 
   useEffect(() => {
     if (videoBlobCache.has(videoPath)) { setBlobUrl(videoBlobCache.get(videoPath)!); return }
@@ -1276,7 +1276,7 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
-  const url = beatlabFileUrl(projectName, videoPath)
+  const url = scenecraftFileUrl(projectName, videoPath)
 
   // Download video once into a blob URL on first mount
   useEffect(() => {
@@ -1306,7 +1306,7 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       onMouseLeave={() => { setHovered(false); onMouseLeave?.() }}
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData('application/x-beatlab-pool-path', videoPath)
+        e.dataTransfer.setData('application/x-scenecraft-pool-path', videoPath)
         e.dataTransfer.effectAllowed = 'copy'
         const preview = e.currentTarget.cloneNode(true) as HTMLElement
         preview.style.width = '120px'
@@ -1384,7 +1384,7 @@ function ChromaKeyEditor({ transition, projectName, onDataChange }: { transition
   const save = useCallback(async (c: [number, number, number], t: number, f: number) => {
     const val = { color: c, threshold: t, feather: f }
     transition.chromaKey = val
-    const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+    const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
     await postUpdateTransitionStyle(projectName, transition.id, { chromaKey: val })
     onDataChange()
   }, [projectName, transition, onDataChange])
@@ -1736,7 +1736,7 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
     const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
     const cleaned: CurvePoint[] = sorted.map((p) => p[2] ? [p[0], p[1], p[2]] : [p[0], p[1]])
     try {
-      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+      const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
       const defaultVal = TRANSFORM_DEFAULTS[axis]
       const isDefault = cleaned.length === 2 && cleaned[0][1] === defaultVal && cleaned[1][1] === defaultVal && !cleaned[0][2] && !cleaned[1][2]
       await postUpdateTransitionStyle(projectName, transition.id, { [TRANSFORM_STYLE_KEYS[axis]]: isDefault ? null : cleaned } as Record<string, unknown> as never)
@@ -2180,7 +2180,7 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
       if (customSave) {
         await customSave(cleaned)
       } else {
-        const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+        const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
         const isDefault = cleaned.length === 2 && cleaned[0][1] === defaultY && cleaned[1][1] === defaultY && !cleaned[0][2] && !cleaned[1][2]
         await postUpdateTransitionStyle(projectName, transition.id, { [styleKey!]: isDefault ? null : cleaned } as Record<string, unknown> as never)
         ;(transition as Record<string, unknown>)[curveKey!] = isDefault ? null : cleaned
@@ -2550,7 +2550,7 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
     setSaving(true)
     const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
     try {
-      const { postUpdateTransitionStyle } = await import('@/lib/beatlab-client')
+      const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
       const isDefault = sorted.length === 2 && sorted[0][1] === 1 && sorted[1][1] === 1
       await postUpdateTransitionStyle(projectName, transition.id, { opacityCurve: isDefault ? null : sorted })
       transition.opacityCurve = isDefault ? null : sorted
@@ -2683,12 +2683,12 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
 const browseBlobCache = new Map<string, string>()
 
 function BenchTab({ transition, projectName, onAssigned, onSeek }: { transition: Transition; projectName: string; onAssigned: () => void; onSeek: () => void }) {
-  const [items, setItems] = useState<import('@/lib/beatlab-client').BenchItem[]>([])
+  const [items, setItems] = useState<import('@/lib/scenecraft-client').BenchItem[]>([])
   const [loading, setLoading] = useState(true)
   const [assigning, setAssigning] = useState(false)
 
   useEffect(() => {
-    import('@/lib/beatlab-client').then(({ fetchBench }) =>
+    import('@/lib/scenecraft-client').then(({ fetchBench }) =>
       fetchBench(projectName).then(setItems)
     ).finally(() => setLoading(false))
   }, [projectName])
@@ -2711,7 +2711,7 @@ function BenchTab({ transition, projectName, onAssigned, onSeek }: { transition:
 
   const handleRemove = useCallback(async (benchId: string) => {
     try {
-      const { postRemoveFromBench } = await import('@/lib/beatlab-client')
+      const { postRemoveFromBench } = await import('@/lib/scenecraft-client')
       await postRemoveFromBench(projectName, benchId)
       setItems((prev) => prev.filter((i) => i.id !== benchId))
     } catch (e) {
@@ -2902,7 +2902,7 @@ function BrowseVideoCard({ path, label, tags, projectName, disabled, onAssign }:
   const [failed, setFailed] = useState(false)
   const [hovered, setHovered] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const url = beatlabFileUrl(projectName, path)
+  const url = scenecraftFileUrl(projectName, path)
 
   useEffect(() => {
     if (!hovered || blobUrl || loading || failed) return

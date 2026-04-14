@@ -36,7 +36,7 @@ import {
   type AudioDescription,
   fetchDescriptions,
   fetchPromptRoster,
-} from '@/lib/beatlab-client'
+} from '@/lib/scenecraft-client'
 import {
   fetchNarrative,
   fetchTimelines,
@@ -161,9 +161,9 @@ export type EditorData = {
   beatSuppressions: BeatSuppression[]
   previewQuality: number
   audioDescriptions: AudioDescription[]
-  tracks: import('@/lib/beatlab-client').Track[]
+  tracks: import('@/lib/scenecraft-client').Track[]
   audioOnsets: Record<string, Record<string, { time: number; strength: number }[]>>
-  promptRoster: import('@/lib/beatlab-client').PromptRosterEntry[]
+  promptRoster: import('@/lib/scenecraft-client').PromptRosterEntry[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
@@ -178,10 +178,10 @@ const getEditorData = createServerFn({ method: 'GET' })
       fetchTimelines(data.name).catch(() => null),
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
       fetchDescriptions(data.name).catch(() => [] as AudioDescription[]),
-      fetchPromptRoster(data.name).catch(() => [] as import('@/lib/beatlab-client').PromptRosterEntry[]),
+      fetchPromptRoster(data.name).catch(() => [] as import('@/lib/scenecraft-client').PromptRosterEntry[]),
     ])
     // AI data placeholder — loaded separately on client to avoid refetching 5MB on every invalidate
-    const aiData = { activeFile: null as string | null, events: [] as AudioEvent[], sections: [] as { start_time: number; end_time: number; type: string; label: string; description: string }[], rules: [] as import('@/lib/beatlab-client').AudioRule[], ruleCount: 0, onsets: {} as Record<string, Record<string, { time: number; strength: number }[]>> }
+    const aiData = { activeFile: null as string | null, events: [] as AudioEvent[], sections: [] as { start_time: number; end_time: number; type: string; label: string; description: string }[], rules: [] as import('@/lib/scenecraft-client').AudioRule[], ruleCount: 0, onsets: {} as Record<string, Record<string, { time: number; strength: number }[]>> }
 
     return {
       meta: {
@@ -305,7 +305,7 @@ const getEditorData = createServerFn({ method: 'GET' })
         baseOpacity: (t.baseOpacity as number) ?? 1.0,
         enabled: t.enabled !== false,
         opacityKeyframes: (t.opacityKeyframes as { id: string; time: number; opacity: number }[]) || [],
-        chromaKey: t.chromaKey as import('@/lib/beatlab-client').ChromaKeyConfig | undefined,
+        chromaKey: t.chromaKey as import('@/lib/scenecraft-client').ChromaKeyConfig | undefined,
         hidden: !!t.hidden,
       })),
       promptRoster: promptRosterData,
@@ -452,7 +452,7 @@ export const duplicateKeyframe = createServerFn({ method: 'POST' })
 export const batchDeleteKeyframes = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeIds: string[] }) => input)
   .handler(async ({ data }) => {
-    const { postBatchDeleteKeyframes } = await import('@/lib/beatlab-client')
+    const { postBatchDeleteKeyframes } = await import('@/lib/scenecraft-client')
     return postBatchDeleteKeyframes(data.projectName, data.keyframeIds)
   })
 
@@ -485,7 +485,7 @@ export const updateKeyframePrompt = createServerFn({ method: 'POST' })
 export const setBaseImage = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; stillName: string }) => input)
   .handler(async ({ data }) => {
-    const { postSetBaseImage } = await import('@/lib/beatlab-client')
+    const { postSetBaseImage } = await import('@/lib/scenecraft-client')
     return postSetBaseImage(data.projectName, data.keyframeId, data.stillName)
   })
 
@@ -504,7 +504,7 @@ export const suggestKeyframePrompts = createServerFn({ method: 'POST' })
     baseStillName: string
   }) => input)
   .handler(async ({ data }) => {
-    const { postSuggestKeyframePrompts } = await import('@/lib/beatlab-client')
+    const { postSuggestKeyframePrompts } = await import('@/lib/scenecraft-client')
     return postSuggestKeyframePrompts(data.projectName, {
       sectionLabel: data.sectionLabel,
       sectionContent: data.sectionContent,
@@ -521,7 +521,7 @@ export const enhanceKeyframePrompt = createServerFn({ method: 'POST' })
     event: { time: number; effect: string; intensity: number; stem_source: string; rationale?: string }
   }) => input)
   .handler(async ({ data }) => {
-    const { postEnhanceKeyframePrompt } = await import('@/lib/beatlab-client')
+    const { postEnhanceKeyframePrompt } = await import('@/lib/scenecraft-client')
     return postEnhanceKeyframePrompt(data.projectName, {
       prompt: data.prompt,
       sectionContent: data.sectionContent,
@@ -532,28 +532,28 @@ export const enhanceKeyframePrompt = createServerFn({ method: 'POST' })
 export const promoteStagedCandidate = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; stagingId: string; variant: number }) => input)
   .handler(async ({ data }) => {
-    const { postPromoteStagedCandidate } = await import('@/lib/beatlab-client')
+    const { postPromoteStagedCandidate } = await import('@/lib/scenecraft-client')
     return postPromoteStagedCandidate(data.projectName, data.keyframeId, data.stagingId, data.variant)
   })
 
 export const generateStagedCandidate = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; prompt: string; stillName: string; stagingId: string; count?: number }) => input)
   .handler(async ({ data }) => {
-    const { postGenerateStagedCandidate } = await import('@/lib/beatlab-client')
+    const { postGenerateStagedCandidate } = await import('@/lib/scenecraft-client')
     return postGenerateStagedCandidate(data.projectName, data.prompt, data.stillName, data.stagingId, data.count)
   })
 
 export const generateKeyframeVariations = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
   .handler(async ({ data }) => {
-    const { postGenerateKeyframeVariations } = await import('@/lib/beatlab-client')
+    const { postGenerateKeyframeVariations } = await import('@/lib/scenecraft-client')
     return postGenerateKeyframeVariations(data.projectName, data.keyframeId, data.count)
   })
 
 export const escalateKeyframe = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; keyframeId: string; count?: number }) => input)
   .handler(async ({ data }) => {
-    const { postEscalateKeyframe } = await import('@/lib/beatlab-client')
+    const { postEscalateKeyframe } = await import('@/lib/scenecraft-client')
     return postEscalateKeyframe(data.projectName, data.keyframeId, data.count)
   })
 
@@ -572,7 +572,7 @@ export const generateTransitionAction = createServerFn({ method: 'POST' })
 export const enhanceTransitionAction = createServerFn({ method: 'POST' })
   .inputValidator((input: { projectName: string; transitionId: string; action: string; sectionContext?: string }) => input)
   .handler(async ({ data }) => {
-    const { postEnhanceTransitionAction } = await import('@/lib/beatlab-client')
+    const { postEnhanceTransitionAction } = await import('@/lib/scenecraft-client')
     return postEnhanceTransitionAction(data.projectName, data.transitionId, data.action, data.sectionContext)
   })
 

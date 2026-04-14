@@ -3,12 +3,12 @@ import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
 import { updateKeyframePrompt, generateKeyframeCandidates, generateKeyframeVariations, escalateKeyframe, selectKeyframes, setBaseImage, suggestKeyframePrompts, enhanceKeyframePrompt } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
-import { beatlabFileUrl, fetchDirectoryListing, fetchPool, fetchBin, type FileEntry, type AudioEvent, type AudioDescription, type PoolEntry, type BinEntry } from '@/lib/beatlab-client'
+import { scenecraftFileUrl, fetchDirectoryListing, fetchPool, fetchBin, type FileEntry, type AudioEvent, type AudioDescription, type PoolEntry, type BinEntry } from '@/lib/scenecraft-client'
 import { invalidateEntry, preloadKeyframeImage } from '@/lib/frame-cache'
 import { CandidateModal } from './TransitionPanel'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
-const STORAGE_KEY = 'beatlab-side-panel-width'
+const STORAGE_KEY = 'scenecraft-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 
@@ -28,7 +28,7 @@ type KeyframePanelProps = {
   onDataChange: () => void
   audioDescriptions?: AudioDescription[]
   audioEvents?: AudioEvent[]
-  initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[]
+  initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[]
   onHoverPreview?: (url: string | null) => void
 }
 
@@ -210,10 +210,10 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
   )
 }
 
-function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataChange, initialPromptRoster }: { kf: KeyframeWithTime; projectName: string; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; onDataChange: () => void; initialPromptRoster?: import('@/lib/beatlab-client').PromptRosterEntry[] }) {
+function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataChange, initialPromptRoster }: { kf: KeyframeWithTime; projectName: string; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; onDataChange: () => void; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
   const [editingPrompt, setEditingPrompt] = useState(false)
   const [promptText, setPromptText] = useState(kf.prompt)
-  const [promptRoster, setPromptRoster] = useState<import('@/lib/beatlab-client').PromptRosterEntry[]>(initialPromptRoster || [])
+  const [promptRoster, setPromptRoster] = useState<import('@/lib/scenecraft-client').PromptRosterEntry[]>(initialPromptRoster || [])
   const [saving, setSaving] = useState(false)
   const [hasImage, setHasImage] = useState(kf.hasSelectedImage)
   const [generating, setGenerating] = useState(false)
@@ -322,7 +322,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
       {hasImage && (
         <div className="p-3">
           <img
-            src={`${beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
+            src={`${scenecraftFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}?v=${kf.selected ?? 0}`}
             alt={kf.id}
             className="w-full rounded"
           />
@@ -347,7 +347,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
               onBlur={async () => {
                 if (labelText !== (kf.label || '')) {
                   kf.label = labelText
-                  const { postUpdateKeyframeLabel } = await import('@/lib/beatlab-client')
+                  const { postUpdateKeyframeLabel } = await import('@/lib/scenecraft-client')
                   await postUpdateKeyframeLabel(projectName, kf.id, labelText, kf.labelColor || '')
                   onDataChange()
                 }
@@ -364,7 +364,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
               value={kf.labelColor || '#9ca3af'}
               onChange={async (e) => {
                 kf.labelColor = e.target.value
-                const { postUpdateKeyframeLabel } = await import('@/lib/beatlab-client')
+                const { postUpdateKeyframeLabel } = await import('@/lib/scenecraft-client')
                 postUpdateKeyframeLabel(projectName, kf.id, kf.label || '', e.target.value).catch(() => {})
                 onDataChange()
               }}
@@ -382,7 +382,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
               onChange={async (e) => {
                 const val = e.target.value
                 kf.blendMode = val
-                const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+                const { postUpdateKeyframeStyle } = await import('@/lib/scenecraft-client')
                 await postUpdateKeyframeStyle(projectName, kf.id, { blendMode: val })
                 onDataChange()
               }}
@@ -409,7 +409,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
               onChange={async (e) => {
                 const v = e.target.value === '' ? null : parseFloat(e.target.value)
                 kf.opacity = v
-                const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+                const { postUpdateKeyframeStyle } = await import('@/lib/scenecraft-client')
                 await postUpdateKeyframeStyle(projectName, kf.id, { opacity: v })
                 onDataChange()
               }}
@@ -487,7 +487,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                     const name = prompt('Name for this prompt template:')
                     if (!name) return
                     const category = prompt('Category (e.g., general, style, composition):', 'general') || 'general'
-                    const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+                    const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
                     await postAddPromptRoster(projectName, name, promptText, category)
                     setPromptRoster(await fetchPromptRoster(projectName))
                   }}
@@ -525,7 +525,7 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
                       const name = window.prompt('Save prompt as:', promptText.slice(0, 40))
                       if (!name) return
                       const category = window.prompt('Category:', 'general') || 'general'
-                      const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/beatlab-client')
+                      const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
                       await postAddPromptRoster(projectName, name, promptText, category)
                       setPromptRoster(await fetchPromptRoster(projectName))
                     }}
@@ -614,7 +614,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
 
   // Refresh candidates from disk on mount (catches async generation results)
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/keyframes`)
+    fetch(`${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/keyframes`)
       .then((r) => r.json())
       .then((data) => {
         const fresh = (data.keyframes || []).find((k: { id: string }) => k.id === kf.id)
@@ -700,7 +700,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
       kf.selected = variantNum
       // Invalidate frame cache and re-preload so preview + video track update
       invalidateEntry(`kf:${kf.id}`)
-      preloadKeyframeImage(`kf:${kf.id}`, beatlabFileUrl(projectName, `selected_keyframes/${kf.id}.png`) + `?v=${variantNum}`)
+      preloadKeyframeImage(`kf:${kf.id}`, scenecraftFileUrl(projectName, `selected_keyframes/${kf.id}.png`) + `?v=${variantNum}`)
       kf.hasSelectedImage = true
       autoSave(projectName, `Selected ${kf.id} candidate v${variantNum}`)
       onDataChange()
@@ -746,7 +746,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
           value={refinementPrompt}
           onChange={(e) => { setRefinementPrompt(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
           onBlur={async () => {
-            const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+            const { postUpdateKeyframeStyle } = await import('@/lib/scenecraft-client')
             postUpdateKeyframeStyle(projectName, kf.id, { refinementPrompt } as never)
           }}
           placeholder="Refinement prompt (optional) — generates from selected image..."
@@ -761,7 +761,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
                 const result = await enhanceKeyframePrompt({ data: { projectName, prompt: refinementPrompt, sectionContent: '', event: { time: kf.timeSeconds, effect: '', intensity: 0, stem_source: '' } } })
                 if (result.prompt) {
                   setRefinementPrompt(result.prompt)
-                  const { postUpdateKeyframeStyle } = await import('@/lib/beatlab-client')
+                  const { postUpdateKeyframeStyle } = await import('@/lib/scenecraft-client')
                   postUpdateKeyframeStyle(projectName, kf.id, { refinementPrompt: result.prompt } as never)
                 }
               } catch (e) { alert(`Enhance failed: ${e}`) } finally { setEnhancing(false) }
@@ -786,7 +786,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
         <button
           onClick={async () => {
             try {
-              const { fetchDirectoryListing } = await import('@/lib/beatlab-client')
+              const { fetchDirectoryListing } = await import('@/lib/scenecraft-client')
               const files = await fetchDirectoryListing(projectName, `keyframe_candidates/candidates/section_${kf.id}`)
               const newCandidates = files
                 .filter((f: { name: string; isDirectory: boolean }) => !f.isDirectory && (f.name.endsWith('.png') || f.name.endsWith('.jpg')))
@@ -872,7 +872,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
           title={`${kf.id} — Keyframe Candidates`}
           groups={{ [kf.id]: candidates.map((c) => {
             const parts = c.split('/')
-            const projectIdx = parts.indexOf('.beatlab_work')
+            const projectIdx = parts.indexOf('.scenecraft_work')
             return projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : c
           }) }}
           selectedMap={{ [kf.id]: selectedIdx }}
@@ -898,11 +898,11 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
             const vMatch = candidatePath.match(/v(\d+)\./)
             const variantNum = vMatch ? parseInt(vMatch[1], 10) : 0
             const selected = selectedIdx === variantNum
-            // Convert .beatlab_work/project/path to beatlab API file URL
+            // Convert .scenecraft_work/project/path to scenecraft API file URL
             const parts = candidatePath.split('/')
-            const projectIdx = parts.indexOf('.beatlab_work')
+            const projectIdx = parts.indexOf('.scenecraft_work')
             const relativePath = projectIdx >= 0 ? parts.slice(projectIdx + 2).join('/') : candidatePath
-            const imgUrl = beatlabFileUrl(projectName, relativePath)
+            const imgUrl = scenecraftFileUrl(projectName, relativePath)
 
             return (
               <div
@@ -912,7 +912,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
                 onMouseLeave={() => onHoverPreview?.(null)}
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData('application/x-beatlab-pool-path', relativePath)
+                  e.dataTransfer.setData('application/x-scenecraft-pool-path', relativePath)
                   e.dataTransfer.effectAllowed = 'copy'
                   const preview = e.currentTarget.cloneNode(true) as HTMLElement
                   preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
@@ -940,7 +940,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
                       <button
                         onClick={async (e) => {
                           e.stopPropagation()
-                          const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/save-as-still`
+                          const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/save-as-still`
                           const res = await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -959,7 +959,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
                       <button
                         onClick={async (e) => {
                           e.stopPropagation()
-                          const url = `${import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/bench/add`
+                          const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/bench/add`
                           await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -1007,7 +1007,7 @@ function BrowseTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pr
   const handleAssign = useCallback(async (stillName: string) => {
     setAssigning(true)
     try {
-      const { postSetBaseImage } = await import('@/lib/beatlab-client')
+      const { postSetBaseImage } = await import('@/lib/scenecraft-client')
       await postSetBaseImage(projectName, kf.id, stillName)
       kf.hasSelectedImage = true
       invalidateEntry(`kf:${kf.id}`)
@@ -1038,7 +1038,7 @@ function BrowseTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pr
                 onClick={() => handleAssign(entry.name)}
               >
                 <img
-                  src={beatlabFileUrl(projectName, entry.path)}
+                  src={scenecraftFileUrl(projectName, entry.path)}
                   alt={entry.name}
                   className="w-full aspect-video object-cover"
                   loading="lazy"
@@ -1067,7 +1067,7 @@ function BrowseTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pr
                 onClick={() => handleAssign(`${entry.id}.png`)}
               >
                 <img
-                  src={beatlabFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
+                  src={scenecraftFileUrl(projectName, `selected_keyframes/${entry.id}.png`)}
                   alt={entry.id}
                   className="w-full aspect-video object-cover"
                   loading="lazy"
@@ -1091,11 +1091,11 @@ function BrowseTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pr
 }
 
 function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void }) {
-  const [items, setItems] = useState<import('@/lib/beatlab-client').BenchItem[]>([])
+  const [items, setItems] = useState<import('@/lib/scenecraft-client').BenchItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    import('@/lib/beatlab-client').then(({ fetchBench }) =>
+    import('@/lib/scenecraft-client').then(({ fetchBench }) =>
       fetchBench(projectName).then((all) => {
         setItems(all.filter((b) => b.type === 'keyframe'))
         setLoading(false)
@@ -1104,15 +1104,15 @@ function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pro
   }, [projectName])
 
   const handleBenchCurrent = useCallback(async () => {
-    const { postAddToBench, fetchBench } = await import('@/lib/beatlab-client')
+    const { postAddToBench, fetchBench } = await import('@/lib/scenecraft-client')
     await postAddToBench(projectName, 'keyframe', kf.id)
     const all = await fetchBench(projectName)
     setItems(all.filter((b) => b.type === 'keyframe'))
   }, [projectName, kf.id])
 
-  const handleApply = useCallback(async (benchItem: import('@/lib/beatlab-client').BenchItem) => {
+  const handleApply = useCallback(async (benchItem: import('@/lib/scenecraft-client').BenchItem) => {
     // Copy the benched image as this keyframe's selected image
-    const { postSetBaseImage } = await import('@/lib/beatlab-client')
+    const { postSetBaseImage } = await import('@/lib/scenecraft-client')
     // The bench sourcePath is relative to the project — extract the still name or use assign
     // Use set-base-image if it's a still, otherwise we need a different approach
     // For benched keyframes, sourcePath is like "selected_keyframes/kf_XXX.png"
@@ -1124,7 +1124,7 @@ function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pro
   }, [projectName, kf, onDataChange])
 
   const handleRemove = useCallback(async (benchId: string) => {
-    const { postRemoveFromBench } = await import('@/lib/beatlab-client')
+    const { postRemoveFromBench } = await import('@/lib/scenecraft-client')
     await postRemoveFromBench(projectName, benchId)
     setItems((prev) => prev.filter((b) => b.id !== benchId))
   }, [projectName])
@@ -1149,14 +1149,14 @@ function BenchTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; pro
           {items.map((item) => (
             <div key={item.id} className="relative rounded overflow-hidden border-2 border-transparent hover:border-green-500 transition-colors group">
               <img
-                src={beatlabFileUrl(projectName, item.sourcePath)}
+                src={scenecraftFileUrl(projectName, item.sourcePath)}
                 alt={item.label || item.id}
                 className="w-full aspect-video object-cover cursor-pointer"
                 loading="lazy"
                 onClick={() => handleApply(item)}
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData('application/x-beatlab-pool-path', item.sourcePath)
+                  e.dataTransfer.setData('application/x-scenecraft-pool-path', item.sourcePath)
                   e.dataTransfer.effectAllowed = 'copy'
                 }}
               />
@@ -1200,7 +1200,7 @@ export function preloadStills(projectName: string): Promise<{ entries: FileEntry
       const blobs = new Map<string, string>()
       await Promise.all(imageEntries.map(async (entry) => {
         try {
-          const res = await fetch(beatlabFileUrl(projectName, `assets/stills/${entry.name}`))
+          const res = await fetch(scenecraftFileUrl(projectName, `assets/stills/${entry.name}`))
           const blob = await res.blob()
           blobs.set(entry.name, URL.createObjectURL(blob))
         } catch {}
@@ -1249,7 +1249,7 @@ export function StillPicker({ projectName, onSelect, disabled, selectedStill }: 
             className={`relative rounded overflow-hidden border-2 transition-colors disabled:opacity-50 ${selectedStill === still.name ? 'border-teal-500' : 'border-transparent hover:border-blue-500'}`}
           >
             <img
-              src={blobs.get(still.name) || beatlabFileUrl(projectName, `assets/stills/${still.name}`)}
+              src={blobs.get(still.name) || scenecraftFileUrl(projectName, `assets/stills/${still.name}`)}
               alt={still.name}
               className="w-full aspect-video object-cover"
             />

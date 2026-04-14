@@ -1,4 +1,4 @@
-const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'
+const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'
 
 /** Fire-and-forget auto-save after expensive operations. */
 export function autoSave(project: string, description: string) {
@@ -29,7 +29,7 @@ export type DiffResult = {
 }
 
 export async function fetchVersionHistory(project: string, limit: number = 20) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/version/history?limit=${limit}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/version/history?limit=${limit}`)
   if (!res.ok) throw new Error(`Failed to fetch version history: ${res.status}`)
   return res.json() as Promise<VersionHistory>
 }
@@ -39,13 +39,13 @@ export async function fetchVersionDiff(project: string, from?: string, to?: stri
   if (from) params.set('from', from)
   if (to) params.set('to', to)
   const qs = params.toString()
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/version/diff${qs ? `?${qs}` : ''}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/version/diff${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error(`Failed to fetch diff: ${res.status}`)
   return res.json() as Promise<DiffResult>
 }
 
 export async function postVersionCommit(project: string, message: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/version/commit`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/version/commit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
@@ -54,7 +54,7 @@ export async function postVersionCommit(project: string, message: string) {
 }
 
 export async function postVersionCheckout(project: string, sha: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/version/checkout`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/version/checkout`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sha }),
@@ -63,7 +63,7 @@ export async function postVersionCheckout(project: string, sha: string) {
 }
 
 export async function postVersionBranch(project: string, name: string, create: boolean = false) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/version/branch`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/version/branch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, create }),
@@ -72,7 +72,7 @@ export async function postVersionBranch(project: string, name: string, create: b
 }
 
 export async function postVersionDeleteBranch(project: string, name: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/version/delete-branch`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/version/delete-branch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),

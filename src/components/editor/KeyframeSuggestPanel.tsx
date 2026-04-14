@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { StillPicker } from './KeyframePanel'
-import { beatlabFileUrl, type AudioEvent, type AudioDescription, fetchSectionSettings, postSectionSettings, fetchStagingCandidates } from '@/lib/beatlab-client'
+import { scenecraftFileUrl, type AudioEvent, type AudioDescription, fetchSectionSettings, postSectionSettings, fetchStagingCandidates } from '@/lib/scenecraft-client'
 import {
   suggestKeyframePrompts,
   enhanceKeyframePrompt,
@@ -89,7 +89,7 @@ export function KeyframeSuggestPanel({ section, audioEvents, projectName, onKeyf
         keyframeId: s.keyframeId, candidates: s.candidates,
         selectedCandidate: s.selectedCandidate, status: s.status,
       }))
-      postSectionSettings(projectName, section.label, { suggestions: toSave as unknown as import('@/lib/beatlab-client').KeyframePromptSuggestion[] }).catch(() => {})
+      postSectionSettings(projectName, section.label, { suggestions: toSave as unknown as import('@/lib/scenecraft-client').KeyframePromptSuggestion[] }).catch(() => {})
       return next
     })
   }, [projectName, section.label])
@@ -217,7 +217,7 @@ function SelectedStillPreview({
   return (
     <div className="flex items-center gap-2 bg-gray-800 rounded p-2">
       <img
-        src={beatlabFileUrl(projectName, `assets/stills/${stillName}`)}
+        src={scenecraftFileUrl(projectName, `assets/stills/${stillName}`)}
         alt={stillName}
         className="w-12 h-8 object-cover rounded"
       />
@@ -430,7 +430,7 @@ function EventSuggestionRow({
               return (
                 <div key={ci} className={`relative rounded overflow-hidden border-2 ${isSelected ? 'border-teal-500' : 'border-transparent'}`}>
                   <img
-                    src={beatlabFileUrl(projectName, path)}
+                    src={scenecraftFileUrl(projectName, path)}
                     alt={`v${ci + 1}`}
                     className="w-full aspect-video object-cover"
                     loading="lazy"
@@ -594,9 +594,9 @@ function EventSuggestionRow({
                   className="relative rounded-md overflow-hidden border-2 border-transparent hover:border-teal-500 transition-colors group/cand"
                   draggable
                   onDragStart={(e) => {
-                    e.dataTransfer.setData('application/x-beatlab-staging-path', path)
-                    e.dataTransfer.setData('application/x-beatlab-staging-id', stagingIdStable)
-                    e.dataTransfer.setData('application/x-beatlab-variant', String(variantNum))
+                    e.dataTransfer.setData('application/x-scenecraft-staging-path', path)
+                    e.dataTransfer.setData('application/x-scenecraft-staging-id', stagingIdStable)
+                    e.dataTransfer.setData('application/x-scenecraft-variant', String(variantNum))
                     e.dataTransfer.effectAllowed = 'copy'
                     const preview = e.currentTarget.cloneNode(true) as HTMLElement
                     preview.style.width = '120px'; preview.style.height = '68px'; preview.style.opacity = '0.85'
@@ -608,7 +608,7 @@ function EventSuggestionRow({
                   }}
                 >
                   <img
-                    src={beatlabFileUrl(projectName, path)}
+                    src={scenecraftFileUrl(projectName, path)}
                     alt={`v${variantNum}`}
                     className="w-full aspect-[16/9] object-cover cursor-pointer"
                     onClick={() => setExpandedImage({ path, variantNum })}
@@ -630,7 +630,7 @@ function EventSuggestionRow({
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setExpandedImage(null)}>
               <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
                 <img
-                  src={beatlabFileUrl(projectName, expandedImage.path)}
+                  src={scenecraftFileUrl(projectName, expandedImage.path)}
                   alt={`v${expandedImage.variantNum}`}
                   className="max-w-full max-h-[85vh] object-contain rounded-lg"
                 />

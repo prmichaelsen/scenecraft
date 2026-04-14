@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { importAssets } from '@/routes/project/$name/editor'
 import { autoSave } from '@/lib/version-client'
-import { fetchBrowse, postWatchFolder, postUnwatchFolder, type BrowseEntry } from '@/lib/beatlab-client'
+import { fetchBrowse, postWatchFolder, postUnwatchFolder, type BrowseEntry } from '@/lib/scenecraft-client'
 
 type ImportDialogProps = {
   projectName: string
@@ -71,7 +71,7 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
 
     // Import each selected file (the server handles them via the work dir)
     // We pass the directory and let the server process, or pass individual paths
-    // Since the paths are relative to .beatlab_work, we need to tell the server the absolute path
+    // Since the paths are relative to .scenecraft_work, we need to tell the server the absolute path
     // The server's import endpoint expects an absolute sourcePath — we need to construct it
     // from the browse path which is relative to work_dir
     try {
@@ -129,7 +129,7 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0">
-          <h2 className="text-sm font-medium">Import from .beatlab_work</h2>
+          <h2 className="text-sm font-medium">Import from .scenecraft_work</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">
             &times;
           </button>
@@ -141,7 +141,7 @@ export function ImportDialog({ projectName, onClose, onImported }: ImportDialogP
             onClick={() => navigateTo('')}
             className={`hover:text-gray-200 transition-colors ${currentPath ? 'text-blue-400' : 'text-gray-300'}`}
           >
-            .beatlab_work
+            .scenecraft_work
           </button>
           {breadcrumbs.map((part, i) => {
             const pathUpTo = breadcrumbs.slice(0, i + 1).join('/')

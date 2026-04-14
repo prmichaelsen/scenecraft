@@ -4,7 +4,7 @@
  * - IndexedDB: persists decoded frames across page reloads
  */
 
-const DB_NAME = 'beatlab-frame-cache'
+const DB_NAME = 'scenecraft-frame-cache'
 const STORE_NAME = 'frames'
 const DB_VERSION = 2 // bumped: keys now include resolution suffix
 let PREVIEW_WIDTH = 256
@@ -230,14 +230,14 @@ let totalMemoryBytes = 0
 // 32GB allows ~26 transitions at 1920x1080 (~1.2GB each) in memory.
 let MEMORY_LIMIT = (() => {
   if (typeof window === 'undefined') return 2 * 1024 * 1024 * 1024
-  const stored = localStorage.getItem('beatlab-cache-memory-gb')
+  const stored = localStorage.getItem('scenecraft-cache-memory-gb')
   return (stored ? parseFloat(stored) : 2) * 1024 * 1024 * 1024
 })()
 
 /** Update the memory limit (in GB). Called from settings. */
 export function setCacheMemoryLimit(gb: number) {
   MEMORY_LIMIT = gb * 1024 * 1024 * 1024
-  localStorage.setItem('beatlab-cache-memory-gb', String(gb))
+  localStorage.setItem('scenecraft-cache-memory-gb', String(gb))
 }
 
 function estimateEntryBytes(frames: ImageBitmap[]): number {

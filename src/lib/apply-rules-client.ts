@@ -3,7 +3,7 @@
  * Simplified version of the backend apply_rules — no bleed suppression.
  */
 
-import type { AudioRule, AudioEvent } from './beatlab-client'
+import type { AudioRule, AudioEvent } from './scenecraft-client'
 
 export type OnsetData = Record<string, Record<string, { time: number; strength: number }[]>>
 

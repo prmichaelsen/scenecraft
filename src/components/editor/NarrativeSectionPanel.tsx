@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { NarrativeSection } from '@/lib/timeline-client'
 import { postUpdateNarrative } from '@/lib/timeline-client'
 
-const STORAGE_KEY = 'beatlab-side-panel-width'
+const STORAGE_KEY = 'scenecraft-side-panel-width'
 const DEFAULT_WIDTH = 360
 const MIN_WIDTH = 240
 

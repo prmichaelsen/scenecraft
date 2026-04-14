@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useRef, useSyncExternalStore } from 'react'
-import { useBeatlabSocket, type JobMessage } from '@/hooks/useBeatlabSocket'
+import { useScenecraftSocket, type JobMessage } from '@/hooks/useScenecraftSocket'
 import { useEffect } from 'react'
 
 export type JobEntry = {
@@ -30,7 +30,7 @@ type JobStateContextValue = {
 const JobStateContext = createContext<JobStateContextValue | null>(null)
 
 export function JobStateProvider({ children }: { children: React.ReactNode }) {
-  const socket = useBeatlabSocket()
+  const socket = useScenecraftSocket()
   const storeRef = useRef<JobStore>({ jobs: new Map(), jobIdToEntity: new Map() })
   const changeCounter = useRef(0)
   const listeners = useRef(new Set<() => void>())

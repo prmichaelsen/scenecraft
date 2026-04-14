@@ -1,23 +1,23 @@
-const BEATLAB_API_URL = import.meta.env.VITE_BEATLAB_API_URL || 'http://localhost:8888'
+const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'
 
 // --- File URL helper (used client-side in img/audio/video src) ---
 
-export function beatlabFileUrl(project: string, path: string): string {
-  return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/files/${path}`
+export function scenecraftFileUrl(project: string, path: string): string {
+  return `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/files/${path}`
 }
 
-export function beatlabThumbUrl(project: string, path: string): string {
-  return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/thumb/${path}`
+export function scenecraftThumbUrl(project: string, path: string): string {
+  return `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/thumb/${path}`
 }
 
-export function beatlabThumbnailUrl(project: string, path: string): string {
-  return `${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/thumbnail/${path}`
+export function scenecraftThumbnailUrl(project: string, path: string): string {
+  return `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/thumbnail/${path}`
 }
 
 // --- Server-side API functions ---
 
 export async function fetchProjects() {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects`)
   if (!res.ok) throw new Error(`Failed to fetch projects: ${res.status}`)
   return res.json() as Promise<Array<{
     name: string
@@ -31,7 +31,7 @@ export async function fetchProjects() {
 }
 
 export async function postCreateProject(name: string, opts?: { fps?: number; resolution?: [number, number]; motionPrompt?: string }) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/create`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/create`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, ...opts }),
   })
@@ -43,19 +43,19 @@ export async function postCreateProject(name: string, opts?: { fps?: number; res
 }
 
 export async function fetchKeyframes(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/keyframes`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/keyframes`)
   if (!res.ok) throw new Error(`Failed to fetch keyframes: ${res.status}`)
   return res.json()
 }
 
 export async function fetchBeats(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/beats`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/beats`)
   if (!res.ok) throw new Error(`Failed to fetch beats: ${res.status}`)
   return res.json()
 }
 
 export async function postUpdateTimestamp(project: string, keyframeId: string, newTimestamp: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-timestamp`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-timestamp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, newTimestamp }),
@@ -64,24 +64,24 @@ export async function postUpdateTimestamp(project: string, keyframeId: string, n
 }
 
 export async function postAddKeyframe(project: string, timestamp: string, section: string, prompt: string, trackId?: string) {
-  console.log(`[beatlab-client] add-keyframe: ${project} at ${timestamp} track=${trackId}`)
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/add-keyframe`, {
+  console.log(`[scenecraft-client] add-keyframe: ${project} at ${timestamp} track=${trackId}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/add-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ timestamp, section, prompt, source: 'assets/stills/default.png', ...(trackId ? { trackId } : {}) }),
   })
   if (!res.ok) {
     const text = await res.text()
-    console.error(`[beatlab-client] add-keyframe failed: ${res.status} ${text}`)
+    console.error(`[scenecraft-client] add-keyframe failed: ${res.status} ${text}`)
     throw new Error(`Failed to add keyframe: ${res.status} ${text}`)
   }
   const result = await res.json()
-  console.log('[beatlab-client] add-keyframe result:', result)
+  console.log('[scenecraft-client] add-keyframe result:', result)
   return result
 }
 
 export async function postDuplicateKeyframe(project: string, keyframeId: string, timestamp: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-keyframe`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, timestamp }),
@@ -91,7 +91,7 @@ export async function postDuplicateKeyframe(project: string, keyframeId: string,
 }
 
 export async function postBatchDeleteKeyframes(project: string, keyframeIds: string[]) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/batch-delete-keyframes`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/batch-delete-keyframes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeIds }),
@@ -101,7 +101,7 @@ export async function postBatchDeleteKeyframes(project: string, keyframeIds: str
 }
 
 export async function postDeleteKeyframe(project: string, keyframeId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/delete-keyframe`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/delete-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId }),
@@ -111,7 +111,7 @@ export async function postDeleteKeyframe(project: string, keyframeId: string) {
 }
 
 export async function postRestoreKeyframe(project: string, keyframeId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/restore-keyframe`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/restore-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId }),
@@ -120,7 +120,7 @@ export async function postRestoreKeyframe(project: string, keyframeId: string) {
 }
 
 export async function postUpdatePrompt(project: string, keyframeId: string, prompt: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-prompt`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, prompt }),
@@ -145,7 +145,7 @@ export type BrowseEntry = {
 
 export async function fetchBrowse(subpath: string = '') {
   const params = subpath ? `?path=${encodeURIComponent(subpath)}` : ''
-  const res = await fetch(`${BEATLAB_API_URL}/api/browse${params}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/browse${params}`)
   if (!res.ok) throw new Error(`Failed to browse: ${res.status}`)
   return res.json() as Promise<{ path: string; entries: BrowseEntry[] }>
 }
@@ -187,7 +187,7 @@ export type AudioRule = {
 }
 
 export async function fetchAudioIntelligence(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/audio-intelligence`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-intelligence`)
   if (!res.ok) throw new Error(`Failed to fetch audio intelligence: ${res.status}`)
   return res.json() as Promise<{
     activeFile: string | null
@@ -202,7 +202,7 @@ export async function fetchAudioIntelligence(project: string) {
 
 export async function fetchDirectoryListing(project: string, subpath: string = '') {
   const params = subpath ? `?path=${encodeURIComponent(subpath)}` : ''
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/ls${params}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/ls${params}`)
   if (!res.ok) throw new Error(`Failed to list directory: ${res.status}`)
   return res.json() as Promise<FileEntry[]>
 }
@@ -225,7 +225,7 @@ export type TransitionBinEntry = {
 }
 
 export async function fetchBin(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bin`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/bin`)
   if (!res.ok) throw new Error(`Failed to fetch bin: ${res.status}`)
   return res.json() as Promise<{ bin: BinEntry[]; transitionBin: TransitionBinEntry[] }>
 }
@@ -254,14 +254,14 @@ export type Track = {
 }
 
 export async function fetchTracks(project: string): Promise<Track[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks`)
   if (!res.ok) return [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, enabled: true, opacityKeyframes: [] }]
   const data = await res.json() as { tracks: Track[] }
   return data.tracks.map((t) => ({ ...t, opacityKeyframes: t.opacityKeyframes || [] }))
 }
 
 export async function postAddTrack(project: string, name?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/add`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/add`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
@@ -269,21 +269,21 @@ export async function postAddTrack(project: string, name?: string) {
 }
 
 export async function postUpdateTrack(project: string, id: string, updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/update`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/update`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...updates }),
   })
 }
 
 export async function postDeleteTrack(project: string, id: string) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/delete`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/delete`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
 }
 
 export async function postReorderTracks(project: string, trackIds: string[]) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/reorder`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/reorder`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trackIds }),
   })
@@ -293,21 +293,21 @@ export type UnselectedCandidate = { keyframeId: string; variant: number; path: s
 export type VideoCandidate = { transitionId: string; slot: string; variant: number; path: string; size: number }
 
 export async function fetchVideoCandidates(project: string): Promise<VideoCandidate[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/video-candidates`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/video-candidates`)
   if (!res.ok) return []
   const data = await res.json() as { candidates: VideoCandidate[] }
   return data.candidates
 }
 
 export async function fetchUnselectedCandidates(project: string): Promise<UnselectedCandidate[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unselected-candidates`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/unselected-candidates`)
   if (!res.ok) return []
   const data = await res.json() as { candidates: UnselectedCandidate[] }
   return data.candidates
 }
 
 export async function postGenerateKeyframeVariations(project: string, keyframeId: string, count?: number) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-variations`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-variations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, count: count || 4 }),
@@ -317,7 +317,7 @@ export async function postGenerateKeyframeVariations(project: string, keyframeId
 }
 
 export async function postEscalateKeyframe(project: string, keyframeId: string, count?: number) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/escalate-keyframe`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/escalate-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, count: count || 2 }),
@@ -327,7 +327,7 @@ export async function postEscalateKeyframe(project: string, keyframeId: string, 
 }
 
 export async function postUpdateKeyframeLabel(project: string, keyframeId: string, label: string, labelColor: string) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-label`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-label`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, label, labelColor }),
@@ -335,7 +335,7 @@ export async function postUpdateKeyframeLabel(project: string, keyframeId: strin
 }
 
 export async function postUpdateTransitionLabel(project: string, transitionId: string, label: string, labelColor: string, tags?: string[]) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-label`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-label`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, label, labelColor, ...(tags ? { tags } : {}) }),
@@ -343,7 +343,7 @@ export async function postUpdateTransitionLabel(project: string, transitionId: s
 }
 
 export async function postUpdateKeyframeStyle(project: string, keyframeId: string, style: { blendMode?: string; opacity?: number | null }) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-style`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-keyframe-style`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, ...style }),
@@ -351,7 +351,7 @@ export async function postUpdateKeyframeStyle(project: string, keyframeId: strin
 }
 
 export async function postUpdateTransitionStyle(project: string, transitionId: string, style: { blendMode?: string; opacity?: number | null; opacityCurve?: [number, number][] | null; redCurve?: [number, number][] | null; greenCurve?: [number, number][] | null; blueCurve?: [number, number][] | null; blackCurve?: [number, number][] | null; hueShiftCurve?: [number, number][] | null; saturationCurve?: [number, number][] | null; invertCurve?: [number, number][] | null; isAdjustment?: boolean; chromaKey?: { color: [number, number, number]; threshold: number; feather: number } | null; maskCenterX?: number | null; maskCenterY?: number | null; maskRadius?: number | null; maskFeather?: number | null; transformX?: number | null; transformY?: number | null; anchorX?: number | null; anchorY?: number | null; hidden?: boolean }) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-style`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-style`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, ...style }),
@@ -359,7 +359,7 @@ export async function postUpdateTransitionStyle(project: string, transitionId: s
 }
 
 export async function postCopyTransitionStyle(project: string, sourceId: string, targetId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/copy-transition-style`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/copy-transition-style`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourceId, targetId }),
@@ -369,7 +369,7 @@ export async function postCopyTransitionStyle(project: string, sourceId: string,
 }
 
 export async function postDuplicateTransitionVideo(project: string, sourceId: string, targetId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-transition-video`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/duplicate-transition-video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourceId, targetId }),
@@ -379,7 +379,7 @@ export async function postDuplicateTransitionVideo(project: string, sourceId: st
 }
 
 export async function postPasteGroup(project: string, keyframeIds: string[], targetTime: string, targetTrackId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/paste-group`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/paste-group`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeIds, targetTime, targetTrackId }),
@@ -389,7 +389,7 @@ export async function postPasteGroup(project: string, keyframeIds: string[], tar
 }
 
 export async function postUndo(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/undo`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/undo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
@@ -398,7 +398,7 @@ export async function postUndo(project: string) {
 }
 
 export async function postRedo(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/redo`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/redo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
@@ -409,14 +409,14 @@ export async function postRedo(project: string) {
 export type UndoHistoryEntry = { id: number; description: string; timestamp: string; undone: boolean }
 
 export async function fetchUndoHistory(project: string, limit: number = 50): Promise<UndoHistoryEntry[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/undo-history?limit=${limit}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/undo-history?limit=${limit}`)
   if (!res.ok) return []
   const data = await res.json() as { history: UndoHistoryEntry[] }
   return data.history || []
 }
 
 export async function postUnlinkKeyframe(project: string, keyframeId: string, side: 'both' | 'left' | 'right' = 'both') {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unlink-keyframe`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/unlink-keyframe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, side }),
@@ -426,7 +426,7 @@ export async function postUnlinkKeyframe(project: string, keyframeId: string, si
 }
 
 export async function postAssignKeyframeImage(project: string, keyframeId: string, sourcePath: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-keyframe-image`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/assign-keyframe-image`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, sourcePath }),
@@ -439,7 +439,7 @@ export async function postReapplyRules(project: string, rules?: AudioRule[], sec
   const body: Record<string, unknown> = {}
   if (rules) body.rules = rules
   if (sectionStart != null && sectionEnd != null) { body.sectionStart = sectionStart; body.sectionEnd = sectionEnd }
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/reapply-rules`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/reapply-rules`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -449,7 +449,7 @@ export async function postReapplyRules(project: string, rules?: AudioRule[], sec
 }
 
 export async function postUpdateRules(project: string, rules: AudioRule[]) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-rules`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-rules`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rules }),
@@ -461,28 +461,28 @@ export async function postUpdateRules(project: string, rules: AudioRule[]) {
 export type MarkerType = 'note' | 'todo' | 'section'
 
 export async function fetchMarkers(project: string): Promise<{ id: string; time: number; label: string; type: MarkerType }[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/markers`)
   if (!res.ok) return []
   const data = await res.json() as { markers: { id: string; time: number; label: string; type: MarkerType }[] }
   return data.markers
 }
 
 export async function postAddMarker(project: string, id: string, time: number, label: string = '', type: MarkerType = 'note') {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/add`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/markers/add`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, time, label, type }),
   })
 }
 
 export async function postUpdateMarker(project: string, id: string, updates: { label?: string; type?: MarkerType }) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/update`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/markers/update`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...updates }),
   })
 }
 
 export async function postRemoveMarker(project: string, id: string) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/markers/remove`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/markers/remove`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
@@ -493,14 +493,14 @@ export async function postRemoveMarker(project: string, id: string) {
 export type PromptRosterEntry = { id: string; name: string; template: string; category: string }
 
 export async function fetchPromptRoster(project: string): Promise<PromptRosterEntry[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster`)
   if (!res.ok) return []
   const data = await res.json() as { prompts: PromptRosterEntry[] }
   return data.prompts
 }
 
 export async function postAddPromptRoster(project: string, name: string, template: string, category: string = 'general') {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/add`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/add`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, template, category }),
   })
@@ -508,34 +508,34 @@ export async function postAddPromptRoster(project: string, name: string, templat
 }
 
 export async function postUpdatePromptRoster(project: string, id: string, updates: { name?: string; template?: string; category?: string }) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/update`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/update`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...updates }),
   })
 }
 
 export async function postRemovePromptRoster(project: string, id: string) {
-  await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/remove`, {
+  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/prompt-roster/remove`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
 }
 
 export async function fetchStagingCandidates(project: string, stagingId: string): Promise<string[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/staging/${encodeURIComponent(stagingId)}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/staging/${encodeURIComponent(stagingId)}`)
   if (!res.ok) return []
   const data = await res.json() as { candidates: string[] }
   return data.candidates
 }
 
 export async function fetchPool(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/pool`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool`)
   if (!res.ok) throw new Error(`Failed to fetch pool: ${res.status}`)
   return res.json() as Promise<{ keyframes: PoolEntry[]; segments: PoolEntry[] }>
 }
 
 export async function postUpdatePoolTags(project: string, poolPath: string, tags: string[]) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-pool-tags`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-pool-tags`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ poolPath, tags }),
@@ -545,22 +545,22 @@ export async function postUpdatePoolTags(project: string, poolPath: string, tags
 }
 
 export async function postGenerateKeyframeCandidates(project: string, keyframeId: string, count?: number, refinementPrompt?: string, freeform?: boolean) {
-  console.log('[beatlab-client] generating keyframe candidates:', project, keyframeId, count, refinementPrompt ? `refine: ${refinementPrompt.slice(0, 50)}` : '', freeform ? 'freeform' : '')
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
+  console.log('[scenecraft-client] generating keyframe candidates:', project, keyframeId, count, refinementPrompt ? `refine: ${refinementPrompt.slice(0, 50)}` : '', freeform ? 'freeform' : '')
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/generate-keyframe-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, count, ...(refinementPrompt ? { refinementPrompt } : {}), ...(freeform ? { freeform: true } : {}) }),
   })
   if (!res.ok) {
     const text = await res.text()
-    console.error('[beatlab-client] generate-keyframe-candidates failed:', res.status, text)
+    console.error('[scenecraft-client] generate-keyframe-candidates failed:', res.status, text)
     throw new Error(`Failed to generate keyframe candidates: ${res.status} ${text}`)
   }
   return res.json() as Promise<{ jobId: string; keyframeId: string; candidates?: string[] }>
 }
 
 export async function postGenerateTransitionAction(project: string, transitionId: string, sectionContext?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-action`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, ...(sectionContext && { sectionContext }) }),
@@ -569,7 +569,7 @@ export async function postGenerateTransitionAction(project: string, transitionId
 }
 
 export async function postEnhanceTransitionAction(project: string, transitionId: string, action: string, sectionContext?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-transition-action`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, action, ...(sectionContext && { sectionContext }) }),
@@ -578,7 +578,7 @@ export async function postEnhanceTransitionAction(project: string, transitionId:
 }
 
 export async function postUpdateTransitionRemap(project: string, transitionId: string, targetDuration: number, method?: string, curvePoints?: [number, number, number?][]) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-remap`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-remap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, targetDuration, method, ...(curvePoints && { curvePoints }) }),
@@ -587,7 +587,7 @@ export async function postUpdateTransitionRemap(project: string, transitionId: s
 }
 
 export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean, slotActions?: string[], includeSectionDesc?: boolean) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, action, useGlobalPrompt, ...(slotActions && { slotActions }), ...(includeSectionDesc !== undefined && { includeSectionDesc }) }),
@@ -596,14 +596,14 @@ export async function postUpdateTransitionAction(project: string, transitionId: 
 }
 
 export async function fetchMeta(project: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/keyframes`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/keyframes`)
   if (!res.ok) return {}
   const data = await res.json()
   return (data.meta || {}) as Record<string, unknown>
 }
 
 export async function postUpdateMeta(project: string, fields: Record<string, string>) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/update-meta`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-meta`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
@@ -612,7 +612,7 @@ export async function postUpdateMeta(project: string, fields: Record<string, str
 }
 
 export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number, duration?: number, useNextTransitionFrame?: boolean, noEndFrame?: boolean) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }), ...(useNextTransitionFrame && { useNextTransitionFrame: true }), ...(noEndFrame && { noEndFrame: true }) }),
@@ -625,7 +625,7 @@ export async function postGenerateTransitionCandidates(project: string, transiti
 }
 
 export async function postDeleteTransition(project: string, transitionId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/delete-transition`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/delete-transition`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId }),
@@ -634,7 +634,7 @@ export async function postDeleteTransition(project: string, transitionId: string
 }
 
 export async function postRestoreTransition(project: string, transitionId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/restore-transition`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/restore-transition`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId }),
@@ -661,13 +661,13 @@ export type BeatSuppression = {
 }
 
 export async function fetchEffects(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/effects`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/effects`)
   if (!res.ok) throw new Error(`Failed to fetch effects: ${res.status}`)
   return res.json() as Promise<{ effects: UserEffect[]; suppressions: BeatSuppression[] }>
 }
 
 export async function postUpdateEffects(project: string, effects: UserEffect[], suppressions: BeatSuppression[]) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/effects`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/effects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ effects, suppressions }),
@@ -676,13 +676,13 @@ export async function postUpdateEffects(project: string, effects: UserEffect[], 
 }
 
 export async function fetchWatchedFolders(project: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/watched-folders`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/watched-folders`)
   if (!res.ok) throw new Error(`Failed to fetch watched folders: ${res.status}`)
   return res.json() as Promise<{ watchedFolders: string[] }>
 }
 
 export async function postWatchFolder(project: string, folderPath: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/watch-folder`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/watch-folder`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folderPath }),
@@ -691,7 +691,7 @@ export async function postWatchFolder(project: string, folderPath: string) {
 }
 
 export async function postUnwatchFolder(project: string, folderPath: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/unwatch-folder`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/unwatch-folder`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folderPath }),
@@ -700,7 +700,7 @@ export async function postUnwatchFolder(project: string, folderPath: string) {
 }
 
 export async function postImport(project: string, sourcePath: string, timestamp?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/import`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourcePath, timestamp }),
@@ -713,7 +713,7 @@ export async function postImport(project: string, sourcePath: string, timestamp?
 }
 
 export async function postSelectTransitions(project: string, selections: Record<string, number>) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-transitions`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/select-transitions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selections }),
@@ -723,7 +723,7 @@ export async function postSelectTransitions(project: string, selections: Record<
 }
 
 export async function postSetBaseImage(project: string, keyframeId: string, stillName: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/set-base-image`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/set-base-image`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, stillName }),
@@ -733,22 +733,22 @@ export async function postSetBaseImage(project: string, keyframeId: string, stil
 }
 
 export async function postAssignPoolVideo(project: string, transitionId: string, poolPath: string) {
-  console.log(`[beatlab-client] assigning pool video: ${transitionId} <- ${poolPath}`)
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/assign-pool-video`, {
+  console.log(`[scenecraft-client] assigning pool video: ${transitionId} <- ${poolPath}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/assign-pool-video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, poolPath }),
   })
   if (!res.ok) {
     const text = await res.text()
-    console.error(`[beatlab-client] assign-pool-video failed: ${res.status} ${text}`)
+    console.error(`[scenecraft-client] assign-pool-video failed: ${res.status} ${text}`)
     throw new Error(`Failed to assign pool video: ${res.status} ${text}`)
   }
   return res.json()
 }
 
 export async function postSplitTransition(project: string, transitionId: string, splitTime: number) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/split-transition`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/split-transition`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, splitTime }),
@@ -768,14 +768,14 @@ export type BenchItem = {
 }
 
 export async function fetchBench(project: string): Promise<BenchItem[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bench`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/bench`)
   if (!res.ok) return []
   const data = await res.json()
   return data.items || []
 }
 
 export async function postAddToBench(project: string, type: 'keyframe' | 'transition', entityId?: string, sourcePath?: string, label?: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bench/add`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/bench/add`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, entityId, sourcePath, label }),
@@ -785,7 +785,7 @@ export async function postAddToBench(project: string, type: 'keyframe' | 'transi
 }
 
 export async function postRemoveFromBench(project: string, benchId: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/bench/remove`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/bench/remove`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ benchId }),
@@ -797,7 +797,7 @@ export async function postRemoveFromBench(project: string, benchId: string) {
 // ── Transition effects ──
 
 export async function postAddTransitionEffect(project: string, transitionId: string, type: string, params: Record<string, number> = {}) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/add`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/add`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, type, params }),
   })
@@ -806,7 +806,7 @@ export async function postAddTransitionEffect(project: string, transitionId: str
 }
 
 export async function postUpdateTransitionEffect(project: string, id: string, updates: { params?: Record<string, number>; enabled?: boolean }) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/update`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/update`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...updates }),
   })
@@ -815,7 +815,7 @@ export async function postUpdateTransitionEffect(project: string, id: string, up
 }
 
 export async function postDeleteTransitionEffect(project: string, id: string) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/delete`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/transition-effects/delete`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
   })
@@ -824,19 +824,19 @@ export async function postDeleteTransitionEffect(project: string, id: string) {
 }
 
 export async function postInsertPoolItem(project: string, type: 'keyframe' | 'segment', poolPath: string, atTime: number) {
-  console.log(`[beatlab-client] inserting pool item: ${type} ${poolPath} at ${atTime}s`)
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
+  console.log(`[scenecraft-client] inserting pool item: ${type} ${poolPath} at ${atTime}s`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/insert-pool-item`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, poolPath, atTime }),
   })
   if (!res.ok) {
     const text = await res.text()
-    console.error(`[beatlab-client] insert-pool-item failed: ${res.status} ${text}`)
+    console.error(`[scenecraft-client] insert-pool-item failed: ${res.status} ${text}`)
     throw new Error(`Failed to insert pool item: ${res.status} ${text}`)
   }
   const result = await res.json()
-  console.log('[beatlab-client] insert-pool-item result:', result)
+  console.log('[scenecraft-client] insert-pool-item result:', result)
   return result
 }
 
@@ -849,14 +849,14 @@ export type AudioDescription = {
 }
 
 export async function fetchDescriptions(project: string): Promise<AudioDescription[]> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/descriptions`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/descriptions`)
   if (!res.ok) return []
   const data = await res.json()
   return data.sections || []
 }
 
 export async function postSelectKeyframes(project: string, selections: Record<string, number>) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/select-keyframes`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/select-keyframes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selections }),
@@ -877,7 +877,7 @@ export async function postEnhanceKeyframePrompt(
     event: { time: number; effect: string; intensity: number; stem_source: string; rationale?: string }
   }
 ): Promise<{ success: boolean; prompt: string }> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-keyframe-prompt`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/enhance-keyframe-prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -895,7 +895,7 @@ export async function postSuggestKeyframePrompts(
     baseStillName: string
   }
 ): Promise<{ suggestions: KeyframePromptSuggestion[] }> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/suggest-keyframe-prompts`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/suggest-keyframe-prompts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -905,7 +905,7 @@ export async function postSuggestKeyframePrompts(
 }
 
 export async function postPromoteStagedCandidate(project: string, keyframeId: string, stagingId: string, variant: number) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/promote-staged-candidate`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/promote-staged-candidate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyframeId, stagingId, variant }),
@@ -915,7 +915,7 @@ export async function postPromoteStagedCandidate(project: string, keyframeId: st
 }
 
 export async function postGenerateStagedCandidate(project: string, prompt: string, stillName: string, stagingId: string, count: number = 1) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/generate-staged-candidate`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/generate-staged-candidate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, stillName, stagingId, count }),
@@ -925,13 +925,13 @@ export async function postGenerateStagedCandidate(project: string, prompt: strin
 }
 
 export async function fetchSectionSettings(project: string, sectionLabel: string): Promise<{ still: string | null; suggestions: KeyframePromptSuggestion[] | null }> {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings?section=${encodeURIComponent(sectionLabel)}`)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings?section=${encodeURIComponent(sectionLabel)}`)
   if (!res.ok) return { still: null, suggestions: null }
   return res.json()
 }
 
 export async function postSectionSettings(project: string, sectionLabel: string, settings: { still?: string; suggestions?: KeyframePromptSuggestion[] }) {
-  const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/section-settings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sectionLabel, ...settings }),
