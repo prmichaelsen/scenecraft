@@ -1485,6 +1485,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea')) return
+      // Let browser handle copy/paste when text is selected on the page
+      const sel = window.getSelection()
+      if (sel && sel.toString().length > 0 && (matchesHotkey(e, 'copy') || matchesHotkey(e, 'paste'))) return
 
       if (matchesHotkey(e, 'delete') || matchesHotkey(e, 'deleteAlt')) {
         if (selectedKeyframeIds.size > 0) {

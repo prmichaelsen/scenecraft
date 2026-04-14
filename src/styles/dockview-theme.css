@@ -101,10 +101,14 @@
   background: #111827;
 }
 
+.dv-dockview .dv-groupview-header-left .dv-tab {
+  padding: 0;
+}
+
 .dv-dockview .dv-groupview-header-left .dv-default-tab {
   writing-mode: vertical-lr;
   text-orientation: mixed;
-  padding: 10px 6px;
+  padding: 8px 6px;
   height: auto;
   width: 100%;
   font-size: 11px;
@@ -112,6 +116,8 @@
   border-bottom: 1px solid #1f2937;
   justify-content: flex-start;
   background: #111827;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .dv-dockview .dv-groupview-header-left .dv-default-tab-action {
@@ -119,12 +125,13 @@
 }
 
 .dv-dockview .dv-groupview-header-left .dv-active-tab .dv-default-tab {
-  box-shadow: inset -1px 0 0 0 #3b82f6;
+  box-shadow: none;
   background: #1f2937;
 }
 
 .dv-dockview .dv-groupview-header-left .dv-right-actions-container {
   padding: 2px 0;
+  order: -1;
 }
 
 /* Collapsed mode: hide content, force group to header width only */

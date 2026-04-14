@@ -14,6 +14,7 @@ import { SettingsPanel } from './SettingsPanel'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
 import { useRouter } from '@tanstack/react-router'
+import { ArrowRightFromLine } from 'lucide-react'
 import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
 import { KeyframePanel } from './KeyframePanel'
@@ -221,10 +222,10 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
     <div className="relative flex items-center justify-center gap-0 h-full">
       <button
         onClick={toggleCollapse}
-        className="flex items-center justify-center w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-[rgba(255,255,255,0.1)] rounded text-sm"
+        className="flex items-center justify-center w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-[rgba(255,255,255,0.1)] rounded"
         title={collapsed ? 'Expand panel' : 'Collapse panel'}
       >
-        {collapsed ? '▶' : '◀'}
+        <ArrowRightFromLine size={14} className={collapsed ? '' : 'rotate-180'} />
       </button>
       {!collapsed && (
         <button
