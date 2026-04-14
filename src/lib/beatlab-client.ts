@@ -30,6 +30,18 @@ export async function fetchProjects() {
   }>>
 }
 
+export async function postCreateProject(name: string, opts?: { fps?: number; resolution?: [number, number]; motionPrompt?: string }) {
+  const res = await fetch(`${BEATLAB_API_URL}/api/projects/create`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...opts }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || `Failed to create project: ${res.status}`)
+  }
+  return res.json() as Promise<{ success: boolean; name: string }>
+}
+
 export async function fetchKeyframes(project: string) {
   const res = await fetch(`${BEATLAB_API_URL}/api/projects/${encodeURIComponent(project)}/keyframes`)
   if (!res.ok) throw new Error(`Failed to fetch keyframes: ${res.status}`)
@@ -605,6 +617,10 @@ export async function postGenerateTransitionCandidates(project: string, transiti
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }), ...(useNextTransitionFrame && { useNextTransitionFrame: true }), ...(noEndFrame && { noEndFrame: true }) }),
   })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(body.error || `Generate failed: ${res.status}`)
+  }
   return res.json() as Promise<{ jobId: string; transitionId: string; candidates?: Record<string, string[]> }>
 }
 

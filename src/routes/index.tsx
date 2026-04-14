@@ -1,6 +1,7 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { fetchProjects } from '@/lib/beatlab-client'
+import { fetchProjects, postCreateProject } from '@/lib/beatlab-client'
+import { useState } from 'react'
 
 const getProjects = createServerFn({ method: 'GET' }).handler(async () => {
   const projects = await fetchProjects()
@@ -14,11 +15,37 @@ export const Route = createFileRoute('/')({
 
 function HomePage() {
   const projects = Route.useLoaderData()
+  const router = useRouter()
+  const [creating, setCreating] = useState(false)
+
+  const handleCreateProject = async () => {
+    const name = prompt('Project name:')
+    if (!name?.trim()) return
+    setCreating(true)
+    try {
+      await postCreateProject(name.trim())
+      window.location.href = `/project/${encodeURIComponent(name.trim())}/editor`
+    } catch (e) {
+      alert(`Failed: ${e}`)
+      setCreating(false)
+    }
+  }
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold mb-1">Beatlab Synthesizer</h1>
-      <p className="text-gray-400 mb-8 text-sm">Browse and play project media files</p>
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold mb-1">Beatlab Synthesizer</h1>
+          <p className="text-gray-400 text-sm">Browse and play project media files</p>
+        </div>
+        <button
+          onClick={handleCreateProject}
+          disabled={creating}
+          className="text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white px-4 py-2 rounded transition-colors"
+        >
+          {creating ? 'Creating...' : '+ New Project'}
+        </button>
+      </div>
 
       <div className="space-y-2">
         {projects.map((project) => (
