@@ -180,9 +180,33 @@ const ADDABLE_PANELS = [
   { id: 'properties', component: 'placeholder', title: 'Properties' },
 ] as const
 
-// Track collapsed state + saved widths per group
+// Track collapsed state + saved pre-collapse dims per group
 const collapsedState = new Map<string, { width: number; height: number }>()
 const COLLAPSED_SIZE = 34
+
+type CollapsedGroupEntry = { width: number; height: number }
+
+function saveLayoutWithCollapsed(api: DockviewApi, projectName: string, viewName: string) {
+  const layout = api.toJSON() as Record<string, unknown>
+  const collapsed: Record<string, CollapsedGroupEntry> = {}
+  for (const [id, dims] of collapsedState) {
+    collapsed[id] = dims
+  }
+  layout._collapsedGroups = collapsed
+  saveWorkspaceView(projectName, viewName, layout).catch(() => {})
+}
+
+function restoreCollapsedFromLayout(api: DockviewApi, layout: Record<string, unknown>) {
+  const collapsed = layout._collapsedGroups as Record<string, CollapsedGroupEntry> | undefined
+  if (!collapsed) return
+  for (const group of api.groups) {
+    const entry = collapsed[group.id]
+    if (entry) {
+      collapsedState.set(group.id, { width: entry.width, height: entry.height })
+      group.api.setConstraints({ minimumWidth: COLLAPSED_SIZE, maximumWidth: COLLAPSED_SIZE })
+    }
+  }
+}
 
 function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
   const [open, setOpen] = useState(false)
@@ -193,7 +217,7 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
       // Expand: restore header position, constraints, and saved dimensions
       const saved = collapsedState.get(group.id)
       collapsedState.delete(group.id)
-      group.api.setConstraints({ minimumWidth: 100 })
+      group.api.setConstraints({ minimumWidth: 100, maximumWidth: Number.MAX_SAFE_INTEGER })
       group.api.setHeaderPosition('top')
       // Delay size restore to let header position change settle
       requestAnimationFrame(() => {
@@ -205,10 +229,10 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
       })
       setCollapsed(false)
     } else {
-      // Collapse: save current size, lower minimum width, vertical headers, shrink
+      // Collapse: save size, lock min+max to COLLAPSED_SIZE so sash can't resize it
       collapsedState.set(group.id, { width: group.api.width, height: group.api.height })
-      group.api.setConstraints({ minimumWidth: COLLAPSED_SIZE })
       group.api.setHeaderPosition('left')
+      group.api.setConstraints({ minimumWidth: COLLAPSED_SIZE, maximumWidth: COLLAPSED_SIZE })
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           group.api.setSize({ width: COLLAPSED_SIZE })
@@ -413,8 +437,9 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
       const api = apiRef.current
       if (!api) return
       api.clear()
+      collapsedState.clear()
       buildDefaultLayout(api, dataRef.current)
-      saveWorkspaceView(dataRef.current.projectName, '_autosave', api.toJSON()).catch(() => {})
+      saveLayoutWithCollapsed(api, dataRef.current.projectName, '_autosave')
     },
     getApi() { return apiRef.current },
   }), [])
@@ -426,7 +451,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
     const disposable = api.onDidLayoutChange(() => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       saveTimerRef.current = setTimeout(() => {
-        saveWorkspaceView(dataRef.current.projectName, '_autosave', api.toJSON()).catch(() => {})
+        saveLayoutWithCollapsed(api, dataRef.current.projectName, '_autosave')
       }, 2000)
     })
     return () => { disposable.dispose(); if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
@@ -439,14 +464,9 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
     try {
       const saved = await fetchWorkspaceView(dataRef.current.projectName, '_autosave')
       if (saved && typeof saved === 'object') {
-        event.api.fromJSON(saved as Parameters<typeof event.api.fromJSON>[0])
-        // Restore collapsed state for groups that were serialized with header='left'
-        for (const group of event.api.groups) {
-          if (group.model.headerPosition === 'left') {
-            collapsedState.set(group.id, { width: 320, height: group.api.height })
-            group.api.setConstraints({ minimumWidth: COLLAPSED_SIZE })
-          }
-        }
+        const layout = saved as Record<string, unknown>
+        event.api.fromJSON(layout as Parameters<typeof event.api.fromJSON>[0])
+        restoreCollapsedFromLayout(event.api, layout)
         return
       }
     } catch { /* fall through to default */ }
@@ -505,8 +525,12 @@ export function WorkspaceMenu({ projectName, onReset, api }: { projectName: stri
               className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
               onClick={async () => {
                 if (!api) return
-                const layout = await fetchWorkspaceView(projectName, name)
-                if (layout) api.fromJSON(layout as Parameters<typeof api.fromJSON>[0])
+                const layout = await fetchWorkspaceView(projectName, name) as Record<string, unknown> | null
+                if (layout) {
+                  collapsedState.clear()
+                  api.fromJSON(layout as Parameters<typeof api.fromJSON>[0])
+                  restoreCollapsedFromLayout(api, layout)
+                }
                 setOpen(false)
               }}
             >
@@ -520,7 +544,7 @@ export function WorkspaceMenu({ projectName, onReset, api }: { projectName: stri
               if (!api) return
               const name = prompt('Workspace view name:')
               if (!name?.trim()) return
-              saveWorkspaceView(projectName, name.trim(), api.toJSON()).catch(() => {})
+              saveLayoutWithCollapsed(api, projectName, name.trim())
               setOpen(false)
             }}
           >
