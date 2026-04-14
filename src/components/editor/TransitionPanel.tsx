@@ -1133,7 +1133,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
                   await postAddToBench(projectName, 'transition', undefined, videoPath)
                 }}
                 onPool={async () => {
-                  const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                  const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                   await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

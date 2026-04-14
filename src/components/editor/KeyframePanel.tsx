@@ -614,7 +614,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
 
   // Refresh candidates from disk on mount (catches async generation results)
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/keyframes`)
+    fetch(`${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/keyframes`)
       .then((r) => r.json())
       .then((data) => {
         const fresh = (data.keyframes || []).find((k: { id: string }) => k.id === kf.id)
@@ -940,7 +940,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
                       <button
                         onClick={async (e) => {
                           e.stopPropagation()
-                          const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/save-as-still`
+                          const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/save-as-still`
                           const res = await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -959,7 +959,7 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
                       <button
                         onClick={async (e) => {
                           e.stopPropagation()
-                          const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/bench/add`
+                          const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/bench/add`
                           await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },

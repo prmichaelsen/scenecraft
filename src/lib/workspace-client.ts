@@ -1,4 +1,4 @@
-const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'
+const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'
 
 export async function fetchWorkspaceViews(project: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/workspace-views`)

@@ -1,4 +1,4 @@
-const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'
+const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'
 
 export type ProjectSettings = {
   preview_quality: number  // percentage of original resolution (5-100)

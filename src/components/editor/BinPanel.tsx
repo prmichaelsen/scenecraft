@@ -460,7 +460,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation()
-                                  const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                                  const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                                   await fetch(url, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
@@ -573,7 +573,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         <button
                           onClick={async (e) => {
                             e.stopPropagation()
-                            const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
+                            const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                             await fetch(url, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },

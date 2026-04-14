@@ -601,10 +601,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     trackTransitions.set(track.id, localTransitions.filter((tr) => tr.trackId === track.id))
   }
 
-  // Use audio duration if available, otherwise estimate from keyframes
-  const effectiveDuration = duration > 0 ? duration : (
-    keyframes.length > 0 ? Math.max(...keyframes.map((kf) => kf.timeSeconds)) + 10 : 60
-  )
+  // Use audio duration if available, otherwise estimate from keyframes, or default to 5 minutes
+  const contentEnd = keyframes.length > 0 ? Math.max(...keyframes.map((kf) => kf.timeSeconds)) + 10 : 0
+  const effectiveDuration = duration > 0
+    ? Math.max(duration, contentEnd)
+    : Math.max(contentEnd, 300)
   const totalWidth = effectiveDuration * pxPerSec
 
   // Find the current keyframe — prefer one with a selected image (for the preview src)
@@ -2092,7 +2093,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           <button
             onClick={async () => {
               try {
-                const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
+                const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(data.projectName)}/bench/capture`
                 const res = await fetch(url, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -2209,7 +2210,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             {/* Sticky header: time ruler, markers, descriptions */}
             <div className="sticky top-0 z-50 bg-gray-950">
               {/* Time ruler */}
-              <TimeRuler duration={duration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
+              <TimeRuler duration={effectiveDuration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
 
               {/* Marker track */}
               <MarkerTrack
@@ -3274,7 +3275,7 @@ function RuleEditorPanel({ section, projectName, onClose, onUpdate, onRulesChang
     setSaving(true)
     try {
       // Fetch all rules, replace this section's rules, save + reapply
-      const allRes = await window.fetch(`${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'}/api/projects/${encodeURIComponent(projectName)}/audio-intelligence`)
+      const allRes = await window.fetch(`${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/audio-intelligence`)
       const allData = await allRes.json() as { rules: import('@/lib/scenecraft-client').AudioRule[] }
       const allRules = allData.rules || []
 

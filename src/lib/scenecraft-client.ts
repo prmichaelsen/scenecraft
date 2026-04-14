@@ -1,4 +1,4 @@
-const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8888'
+const SCENECRAFT_API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'
 
 // --- File URL helper (used client-side in img/audio/video src) ---
 
