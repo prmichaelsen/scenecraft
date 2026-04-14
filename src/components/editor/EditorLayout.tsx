@@ -440,6 +440,13 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
       const saved = await fetchWorkspaceView(dataRef.current.projectName, '_autosave')
       if (saved && typeof saved === 'object') {
         event.api.fromJSON(saved as Parameters<typeof event.api.fromJSON>[0])
+        // Restore collapsed state for groups that were serialized with header='left'
+        for (const group of event.api.groups) {
+          if (group.model.headerPosition === 'left') {
+            collapsedState.set(group.id, { width: 320, height: group.api.height })
+            group.api.setConstraints({ minimumWidth: COLLAPSED_SIZE })
+          }
+        }
         return
       }
     } catch { /* fall through to default */ }
