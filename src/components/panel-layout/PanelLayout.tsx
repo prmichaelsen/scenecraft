@@ -35,6 +35,19 @@ function getNode(root: LayoutNode, path: number[]): LayoutNode {
   return node
 }
 
+// Clean up the tree: remove empty groups, collapse splits with one empty child
+function pruneTree(node: LayoutNode): LayoutNode | null {
+  if (node.type === 'group') {
+    return node.tabs.length === 0 ? null : node
+  }
+  const left = pruneTree(node.children[0])
+  const right = pruneTree(node.children[1])
+  if (!left && !right) return null
+  if (!left) return right
+  if (!right) return left
+  return { ...node, children: [left, right] }
+}
+
 function findGroupPath(node: LayoutNode, groupId: string, path: number[] = []): number[] | null {
   if (node.type === 'group') return node.id === groupId ? path : null
   if (node.collapsed) return null
@@ -237,12 +250,13 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
   const handleTabClose = useCallback((groupId: string, tabId: PanelId) => {
     const path = findGroupPath(layout, groupId)
     if (!path) return
-    update(updateNode(layout, path, (node) => {
+    let newLayout = updateNode(layout, path, (node) => {
       if (node.type !== 'group') return node
       const newTabs = node.tabs.filter((t) => t !== tabId)
-      if (newTabs.length === 0) return node
-      return { ...node, tabs: newTabs, activeTab: node.activeTab === tabId ? newTabs[0] : node.activeTab }
-    }))
+      return { ...node, tabs: newTabs, activeTab: node.activeTab === tabId ? (newTabs[0] || '') : node.activeTab }
+    })
+    newLayout = pruneTree(newLayout) || newLayout
+    update(newLayout)
   }, [layout, update])
 
   const handleTabAdd = useCallback((groupId: string, tabId: PanelId) => {
@@ -275,13 +289,14 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     } else {
       // Move between groups — remove from source, add to target
       let newLayout = layout
-      // Remove from source
+      // Remove from source (allow emptying — pruneTree will clean up)
       newLayout = updateNode(newLayout, sourcePath, (node) => {
         if (node.type !== 'group') return node
         const tabs = node.tabs.filter((t) => t !== tabId)
-        if (tabs.length === 0) return node // Don't empty a group
-        return { ...node, tabs, activeTab: node.activeTab === tabId ? tabs[0] : node.activeTab }
+        return { ...node, tabs, activeTab: node.activeTab === tabId ? (tabs[0] || '') : node.activeTab }
       })
+      // Prune empty groups / dangling splits
+      newLayout = pruneTree(newLayout) || newLayout
       // Add to target (re-find path since tree may have changed shape)
       const newTargetPath = findGroupPath(newLayout, targetGroupId)
       if (!newTargetPath) return
@@ -301,34 +316,26 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     const targetPath = findGroupPath(layout, targetGroupId)
     if (!targetPath) return
 
-    // Remove tab from source group first
+    // Remove tab from source group (allow emptying — prune later)
     let newLayout = layout
-    const sourcePath = findGroupPath(newLayout, sourceGroupId)
-    if (sourcePath) {
-      const sourceNode = getNode(newLayout, sourcePath)
-      if (sourceNode.type === 'group') {
-        // Don't remove the last tab from a group — that would leave an empty group
-        if (sourceNode.tabs.length > 1 || sourceGroupId !== targetGroupId) {
-          if (sourceNode.tabs.length > 1) {
-            newLayout = updateNode(newLayout, sourcePath, (node) => {
-              if (node.type !== 'group') return node
-              const tabs = node.tabs.filter((t) => t !== tabId)
-              return { ...node, tabs, activeTab: node.activeTab === tabId ? tabs[0] : node.activeTab }
-            })
-          }
-        }
+    if (sourceGroupId !== targetGroupId) {
+      const sourcePath = findGroupPath(newLayout, sourceGroupId)
+      if (sourcePath) {
+        newLayout = updateNode(newLayout, sourcePath, (node) => {
+          if (node.type !== 'group') return node
+          const tabs = node.tabs.filter((t) => t !== tabId)
+          return { ...node, tabs, activeTab: node.activeTab === tabId ? (tabs[0] || '') : node.activeTab }
+        })
+        newLayout = pruneTree(newLayout) || newLayout
       }
     }
 
-    // Re-find target path since tree may have changed
+    // Re-find target path since tree may have changed after prune
     const newTargetPath = findGroupPath(newLayout, targetGroupId)
     if (!newTargetPath) return
 
     const targetNode = getNode(newLayout, newTargetPath)
     if (targetNode.type !== 'group') return
-
-    // If source was the same group with only 1 tab, don't split (would create empty group)
-    if (sourceGroupId === targetGroupId && targetNode.tabs.length <= 1) return
 
     // Create new group for the dragged tab
     const newGroupId = `group-${Date.now()}`
@@ -344,9 +351,10 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     const newGroupFirst = direction === 'left' || direction === 'top'
 
     // Remove the tab from target if source === target (tab is being pulled out to create split)
-    let updatedTarget = targetNode
+    let updatedTarget: LayoutNode = targetNode
     if (sourceGroupId === targetGroupId && targetNode.tabs.includes(tabId)) {
       const tabs = targetNode.tabs.filter((t) => t !== tabId)
+      if (tabs.length === 0) return // Can't split a single-tab group into itself
       updatedTarget = { ...targetNode, tabs, activeTab: targetNode.activeTab === tabId ? tabs[0] : targetNode.activeTab }
     }
 
