@@ -5,6 +5,8 @@ export type SplitNode = {
   direction: 'horizontal' | 'vertical'
   ratio: number // 0-1
   children: [LayoutNode, LayoutNode]
+  collapsed?: boolean       // When true, this entire subtree is collapsed (used for column collapse)
+  preCollapseSize?: number  // Preserved width/height before collapse
 }
 
 export type GroupNode = {

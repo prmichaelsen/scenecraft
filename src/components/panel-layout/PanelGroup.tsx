@@ -12,6 +12,10 @@ type PanelGroupProps = {
   onTabAdd: (groupId: string, tabId: PanelId) => void
   onCollapse: (groupId: string) => void
   onExpand: (groupId: string) => void
+  // Column-level collapse (collapses the entire parent vertical split)
+  onCollapseColumn?: () => void
+  showCollapseColumn?: boolean
+  columnCollapseDirection?: 'left' | 'right'
   // Tab drag-and-drop
   onTabDragStart?: (groupId: string, tabId: PanelId) => void
   onTabDrop?: (groupId: string, index: number) => void
@@ -27,18 +31,19 @@ const COLLAPSE_ROTATION: Record<string, string> = {
 export function PanelGroup({
   group, panels, allPanelIds, collapseDirection,
   onTabActivate, onTabClose, onTabAdd, onCollapse, onExpand,
+  onCollapseColumn, showCollapseColumn, columnCollapseDirection,
   onTabDragStart, onTabDrop,
 }: PanelGroupProps) {
   const [menuOpen, setMenuOpen] = useState(false)
 
-  // Collapsed state
+  // Collapsed state — always renders as a thin bar with vertical tab labels on the right side
   if (group.collapsed) {
     const isVerticalCollapse = collapseDirection === 'up' || collapseDirection === 'down'
     return (
       <div
-        className="bg-[#111827] flex overflow-hidden"
+        className="bg-[#111827] flex overflow-hidden border-b border-gray-800"
         style={isVerticalCollapse
-          ? { height: 28, flexDirection: 'row', width: '100%' }
+          ? { height: 28, flexDirection: 'row', width: '100%', alignItems: 'center' }
           : { width: 34, flexDirection: 'column', height: '100%' }
         }
       >
@@ -57,10 +62,11 @@ export function PanelGroup({
               <button
                 key={tabId}
                 onClick={() => { onExpand(group.id); onTabActivate(group.id, tabId) }}
-                className={`text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 px-2 py-1 truncate ${
-                  isVerticalCollapse ? '' : 'writing-mode-vertical border-b border-gray-800'
-                }`}
-                style={isVerticalCollapse ? {} : { writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '8px 6px' }}
+                className="text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 truncate"
+                style={isVerticalCollapse
+                  ? { padding: '2px 8px' }
+                  : { writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '8px 6px', borderBottom: '1px solid #1f2937' }
+                }
               >
                 {def.title}
               </button>
@@ -120,8 +126,19 @@ export function PanelGroup({
           })}
         </div>
 
-        {/* Right actions: collapse + add menu */}
+        {/* Right actions: collapse column + collapse inner + add menu */}
         <div className="flex items-center gap-0 px-1 shrink-0">
+          {/* Column collapse — collapses entire parent column width-wise */}
+          {showCollapseColumn && onCollapseColumn && (
+            <button
+              onClick={onCollapseColumn}
+              className="flex items-center justify-center w-6 h-6 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
+              title="Collapse column"
+            >
+              <ArrowRightFromLine size={12} className={COLLAPSE_ROTATION[columnCollapseDirection || 'right']} />
+            </button>
+          )}
+          {/* Inner collapse — collapses this group within its split */}
           {collapseDirection && (
             <button
               onClick={() => onCollapse(group.id)}
