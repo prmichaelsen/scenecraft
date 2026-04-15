@@ -6,6 +6,7 @@ import { CurrentTimeProvider } from './CurrentTimeContext'
 import { PreviewProvider } from './PreviewContext'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
 import { EditorDataProvider, useEditorData } from './EditorDataContext'
+import { usePreview } from './PreviewContext'
 import { Timeline } from './Timeline'
 import { PreviewPanel } from './PreviewPanel'
 import { LogPanel } from './LogPanel'
@@ -89,6 +90,7 @@ function BinPanelComponent() {
 function PropertiesPanelComponent() {
   const data = useEditorData()
   const { selectedKeyframe, selectedTransition, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
+  const { setHoverPreviewUrl } = usePreview()
   const router = useRouter()
 
   if (selectedKeyframe) {
@@ -108,6 +110,7 @@ function PropertiesPanelComponent() {
           audioDescriptions={data.audioDescriptions}
           audioEvents={data.audioEvents}
           initialPromptRoster={data.promptRoster}
+          onHoverPreview={setHoverPreviewUrl}
         />
       </Panel>
     )
@@ -130,6 +133,7 @@ function PropertiesPanelComponent() {
           onDuplicateToNext={() => {}}
           onDuplicateToPrev={() => {}}
           onDataChange={() => { onTransitionDataChange?.(); router.invalidate() }}
+          onHoverPreview={setHoverPreviewUrl}
         />
       </Panel>
     )
