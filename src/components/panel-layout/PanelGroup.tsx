@@ -127,7 +127,7 @@ export function PanelGroup({
                 onClick={() => onTabActivate(group.id, tabId)}
                 className={`flex items-center gap-1.5 px-3 h-full text-[13px] cursor-pointer select-none shrink-0 ${
                   isActive
-                    ? 'text-gray-200 bg-gray-800/50 border-b-2 border-blue-500'
+                    ? 'text-gray-200 bg-gray-800/50'
                     : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
                 }`}
               >
