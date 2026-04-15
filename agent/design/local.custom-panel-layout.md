@@ -265,7 +265,7 @@ The serialization format is scope-agnostic. Future config hierarchy (user > proj
 const defaultLayout: LayoutNode = {
   type: 'split',
   direction: 'horizontal',
-  ratio: 0.55,
+  ratio: 0.5,
   children: [
     // Left: Preview + Timeline stacked
     {
@@ -277,13 +277,23 @@ const defaultLayout: LayoutNode = {
         { type: 'group', id: 'timeline-group', tabs: ['timeline'], activeTab: 'timeline' },
       ],
     },
-    // Right: Props + Sidebar
+    // Right: Props column + Sidebar column
     {
       type: 'split',
       direction: 'horizontal',
-      ratio: 0.55,
+      ratio: 0.6,
       children: [
-        { type: 'group', id: 'props-group', tabs: ['bin', 'properties', 'logs', 'checkpoints', 'settings', 'extensions'], activeTab: 'bin' },
+        // Props column: Properties/Effects on top, Bin/Logs/Checkpoints on bottom
+        {
+          type: 'split',
+          direction: 'vertical',
+          ratio: 0.5,
+          children: [
+            { type: 'group', id: 'properties-group', tabs: ['properties', 'effects'], activeTab: 'properties' },
+            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'settings', 'extensions'], activeTab: 'bin' },
+          ],
+        },
+        // Sidebar: Sections on top, Chat on bottom
         {
           type: 'split',
           direction: 'vertical',
