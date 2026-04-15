@@ -219,14 +219,15 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
 
     // Collapsed split node — render as a single collapsed bar with all tabs from the subtree
     if (node.collapsed) {
-      const allTabs = collectAllTabs(node)
-      const flatTabs = allTabs.flatMap((g) => g.tabs)
+      const allGroups = collectAllTabs(node)
+      const flatTabs = allGroups.flatMap((g) => g.tabs)
       const collapseDir = getCollapseDir(layout, path)
+      const alignRight = collapseDir === 'right'
 
       return (
         <div
           key={path.join('-') || 'root'}
-          className="bg-[#111827] flex flex-col overflow-hidden"
+          className={`bg-[#111827] flex flex-col overflow-hidden ${alignRight ? 'ml-auto' : ''}`}
           style={{ width: 34, height: '100%' }}
         >
           <button
@@ -243,7 +244,12 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
               return (
                 <button
                   key={tabId}
-                  onClick={() => handleExpandColumn(path)}
+                  onClick={() => {
+                    handleExpandColumn(path)
+                    // Find which group owns this tab and activate it
+                    const ownerGroup = allGroups.find((g) => g.tabs.includes(tabId))
+                    if (ownerGroup) handleTabActivate(ownerGroup.groupId, tabId)
+                  }}
                   className="text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 truncate"
                   style={{ writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '8px 6px', borderBottom: '1px solid #1f2937' }}
                 >

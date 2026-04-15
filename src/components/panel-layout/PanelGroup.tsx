@@ -82,9 +82,10 @@ export function PanelGroup({
     }
 
     // Vertical bar — expand button at top, tabs below
+    const alignRight = collapseDirection === 'right'
     return (
       <div
-        className="bg-[#111827] flex flex-col overflow-hidden"
+        className={`bg-[#111827] flex flex-col overflow-hidden ${alignRight ? 'ml-auto' : ''}`}
         style={{ width: 34, height: '100%' }}
       >
         {expandButton}
