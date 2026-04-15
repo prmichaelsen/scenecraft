@@ -17,8 +17,10 @@ import { useRouter } from '@tanstack/react-router'
 import { ArrowRightFromLine } from 'lucide-react'
 import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
+import { CurrentTimeProvider } from './CurrentTimeContext'
 import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
+import { PreviewDockPanel } from './PreviewPanel'
 
 // --- Editor Layout Context ---
 
@@ -187,7 +189,7 @@ const COLLAPSED_SIZE = 34
 type CollapsedGroupEntry = { width: number; height: number }
 
 function saveLayoutWithCollapsed(api: DockviewApi, projectName: string, viewName: string) {
-  const layout = api.toJSON() as Record<string, unknown>
+  const layout = api.toJSON() as unknown as Record<string, unknown>
   const collapsed: Record<string, CollapsedGroupEntry> = {}
   for (const [id, dims] of collapsedState) {
     collapsed[id] = dims
@@ -293,6 +295,7 @@ function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
 
 const components = {
   timeline: TimelinePanel,
+  preview: PreviewDockPanel,
   logs: LogDockPanel,
   checkpoints: CheckpointsDockPanel,
   settings: SettingsDockPanel,
@@ -340,13 +343,21 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   })
   leftGroup.api.setVisible(false)
 
-  // Col 2: Timeline — goes into the remaining center space (left of props)
+  // Col 2: Center area (left of props) — Preview on top, Timeline below
+  const previewPanel = api.addPanel({
+    id: 'preview',
+    component: 'preview',
+    title: 'Preview',
+    params: { data },
+    position: { referenceGroup: propsGroup, direction: 'left' },
+  })
+
   api.addPanel({
     id: 'timeline',
     component: 'timeline',
     title: 'Timeline',
     params: { data },
-    position: { referenceGroup: propsGroup, direction: 'left' },
+    position: { referencePanel: previewPanel, direction: 'below' },
   })
 
   // Col 3: Single tab group (full height — no vertical split, max space for timeline)
@@ -472,7 +483,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
       const saved = await fetchWorkspaceView(dataRef.current.projectName, '_autosave')
       if (saved && typeof saved === 'object') {
         const layout = saved as Record<string, unknown>
-        event.api.fromJSON(layout as Parameters<typeof event.api.fromJSON>[0])
+        event.api.fromJSON(layout as unknown as Parameters<typeof event.api.fromJSON>[0])
         restoreCollapsedFromLayout(event.api, layout)
         return
       }
@@ -482,6 +493,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
   }, [])
 
   return (
+    <CurrentTimeProvider>
     <EditorStateProvider>
     <EditorLayoutContext.Provider value={{ api: apiRef.current }}>
       <DockviewReact
@@ -493,6 +505,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
       />
     </EditorLayoutContext.Provider>
     </EditorStateProvider>
+    </CurrentTimeProvider>
   )
 })
 
@@ -541,7 +554,7 @@ export function WorkspaceMenu({ projectName, onReset, api }: { projectName: stri
                     }
                   }
                   collapsedState.clear()
-                  api.fromJSON(layout as Parameters<typeof api.fromJSON>[0])
+                  api.fromJSON(layout as unknown as Parameters<typeof api.fromJSON>[0])
                   restoreCollapsedFromLayout(api, layout)
                 }
                 setOpen(false)

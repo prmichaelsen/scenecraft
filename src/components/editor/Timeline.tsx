@@ -18,6 +18,8 @@ import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
 import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { useEditorState } from './EditorStateContext'
+import { useCurrentTime } from './CurrentTimeContext'
+import { PreviewContext } from './PreviewContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, setEvictionProtectWindow, setMaxConcurrentPreloads, invalidateEntry } from '@/lib/frame-cache'
@@ -339,11 +341,21 @@ const MAX_AUDIO_HEIGHT = 400
 export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const router = useRouter()
   const editorState = useEditorState()
-  const [currentTime, setCurrentTime] = useState(() => {
+
+  // In v2 mode, currentTime/isPlaying/refs are shared via context so PreviewPanel can read them.
+  // In v1 mode, they're local state.
+  const ctxTime = v2 ? useCurrentTime() : null // eslint-disable-line react-hooks/rules-of-hooks
+  const [localCurrentTime, setLocalCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
     const stored = localStorage.getItem(`scenecraft-playhead-${data.projectName}`)
     return stored ? parseFloat(stored) : 0
   })
+  const currentTime = ctxTime ? ctxTime.currentTime : localCurrentTime
+  const setCurrentTime = ctxTime ? ctxTime.setCurrentTime : setLocalCurrentTime
+  const [localIsPlaying, setLocalIsPlaying] = useState(false)
+  const isPlaying = ctxTime ? ctxTime.isPlaying : localIsPlaying
+  const setIsPlaying = ctxTime ? ctxTime.setIsPlaying : setLocalIsPlaying
+
   // Persist playhead position to localStorage (debounced)
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -358,7 +370,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const stored = localStorage.getItem('scenecraft-zoom')
     return stored ? parseFloat(stored) : 20
   })
-  const [isPlaying, setIsPlaying] = useState(false)
   const [playbackRate, setPlaybackRate] = useState(() => {
     if (typeof window === 'undefined') return 1
     const stored = localStorage.getItem('scenecraft-playback-speed')
@@ -493,14 +504,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Drag-select state
   const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; active: boolean } | null>(null)
   const [dragSelectRect, setDragSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
-  const seekFnRef = useRef<((time: number) => void) | null>(null)
+  const localSeekRef = useRef<((time: number) => void) | null>(null)
+  const seekFnRef = ctxTime ? ctxTime.seekRef : localSeekRef
   const currentTimeRef = useRef(currentTime)
-  const playPauseFnRef = useRef<(() => void) | null>(null)
+  const localPlayPauseRef = useRef<(() => void) | null>(null)
+  const playPauseFnRef = ctxTime ? ctxTime.playPauseRef : localPlayPauseRef
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const audioDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewRef = useRef<BeatEffectPreviewHandle>(null)
-  const audioElRef = useRef<HTMLAudioElement | null>(null)
+  const localAudioElRef = useRef<HTMLAudioElement | null>(null)
+  const audioElRef = ctxTime ? ctxTime.audioElRef : localAudioElRef
   const [recording, setRecording] = useState<{ progress: number } | null>(null)
   const [markers, setMarkers] = useState<{ id: string; time: number; label: string }[]>([])
 
@@ -1047,10 +1061,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           const now = performance.now()
           const delta = (now - fallbackLastRef.current) / 1000
           fallbackLastRef.current = now
-          setCurrentTime((prev) => {
-            const next = prev + delta
-            return next <= effectiveDuration ? next : prev
-          })
+          const next = currentTimeRef.current + delta
+          if (next <= effectiveDuration) setCurrentTime(next)
           fallbackTimerRef.current = requestAnimationFrame(tick)
         }
         fallbackTimerRef.current = requestAnimationFrame(tick)
@@ -1796,12 +1808,21 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [keyframes, handlePlayPause, selectedTransition])
 
 
-  return (
+  const previewContextValue = v2 ? {
+    crossfadeData,
+    trackLayers,
+    isTransitionLoading,
+    hoverPreviewUrl,
+    setHoverPreviewUrl,
+    previewRef,
+  } : null
+
+  const content = (
     <div className="h-full flex">
       {/* Main timeline area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Preview */}
-        <div
+        {/* Preview — only in v1 mode; in v2 it's a separate dockview panel */}
+        {!v2 && <div
           className="bg-gray-950 flex items-center justify-center shrink-0 overflow-hidden"
           style={{ height: previewHeight }}
         >
@@ -1887,13 +1908,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               }}
             />
           </div>
-        </div>
+        </div>}
 
-        {/* Preview/tracks divider */}
-        <div
+        {/* Preview/tracks divider — only in v1 */}
+        {!v2 && <div
           className="h-1.5 cursor-row-resize hover:bg-blue-500/50 active:bg-blue-500 bg-gray-800 transition-colors shrink-0 relative z-20"
           onMouseDown={handlePreviewDividerDown}
-        />
+        />}
 
         {/* Controls bar */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 bg-gray-900 border-b border-gray-800 shrink-0">
@@ -2829,6 +2850,16 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       )}
     </div>
   )
+
+  if (previewContextValue) {
+    return (
+      <PreviewContext.Provider value={previewContextValue}>
+        {content}
+      </PreviewContext.Provider>
+    )
+  }
+
+  return content
 }
 
 const TimeRuler = memo(function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec: number; onClick?: (e: React.MouseEvent) => void }) {
