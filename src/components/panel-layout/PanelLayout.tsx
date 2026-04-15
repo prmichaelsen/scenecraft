@@ -32,6 +32,18 @@ function findGroupPath(node: LayoutNode, groupId: string, path: number[] = []): 
 }
 
 // Get collapse direction for a node at a given path
+// Check if a node is in the leftmost column of the tree
+// (every horizontal split ancestor chose child 0)
+function isInLeftmostColumn(root: LayoutNode, path: number[]): boolean {
+  let node: LayoutNode = root
+  for (let i = 0; i < path.length; i++) {
+    if (node.type !== 'split') break
+    if (node.direction === 'horizontal' && path[i] !== 0) return false
+    node = node.children[path[i]]
+  }
+  return true
+}
+
 function getCollapseDir(root: LayoutNode, path: number[]): CollapseDir | undefined {
   if (path.length === 0) return undefined
   let parent: LayoutNode = root
@@ -40,10 +52,11 @@ function getCollapseDir(root: LayoutNode, path: number[]): CollapseDir | undefin
     parent = parent.children[path[i]]
   }
   if (parent.type !== 'split') return undefined
-  const childIndex = path[path.length - 1]
   if (parent.direction === 'horizontal') {
-    return childIndex === 0 ? 'left' : 'right'
+    // Leftmost column collapses left, everything else collapses right
+    return isInLeftmostColumn(root, path) ? 'left' : 'right'
   } else {
+    const childIndex = path[path.length - 1]
     return childIndex === 0 ? 'up' : 'down'
   }
 }
@@ -179,8 +192,7 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
           const grandparentDir = getParentDirection(layout, verticalSplitPath)
           if (grandparentDir === 'horizontal' && path[path.length - 1] === 0) {
             showCollapseColumn = true
-            const childIndexInHorizontal = verticalSplitPath[verticalSplitPath.length - 1]
-            columnCollapseDirection = childIndexInHorizontal === 0 ? 'left' : 'right'
+            columnCollapseDirection = isInLeftmostColumn(layout, verticalSplitPath) ? 'left' : 'right'
             columnSplitPath = verticalSplitPath
           }
         }
