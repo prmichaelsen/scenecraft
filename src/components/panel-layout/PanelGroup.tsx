@@ -12,6 +12,7 @@ type PanelGroupProps = {
   onTabAdd: (groupId: string, tabId: PanelId) => void
   onCollapse: (groupId: string) => void
   onExpand: (groupId: string) => void
+  onExpandAndActivate?: (groupId: string, tabId: PanelId) => void
   // Column-level collapse (collapses the entire parent vertical split)
   onCollapseColumn?: () => void
   showCollapseColumn?: boolean
@@ -28,9 +29,18 @@ const COLLAPSE_ROTATION: Record<string, string> = {
   up: '-rotate-90',
 }
 
+// Expand icon points opposite to collapse direction
+const EXPAND_ROTATION: Record<string, string> = {
+  right: 'rotate-180',
+  left: '',
+  down: '-rotate-90',
+  up: 'rotate-90',
+}
+
 export function PanelGroup({
   group, panels, allPanelIds, collapseDirection,
   onTabActivate, onTabClose, onTabAdd, onCollapse, onExpand,
+  onExpandAndActivate,
   onCollapseColumn, showCollapseColumn, columnCollapseDirection,
   onTabDragStart, onTabDrop,
 }: PanelGroupProps) {
@@ -46,7 +56,7 @@ export function PanelGroup({
         className="flex items-center justify-center shrink-0 w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
         title="Expand"
       >
-        <ArrowRightFromLine size={14} className={COLLAPSE_ROTATION[collapseDirection || 'right']} />
+        <ArrowRightFromLine size={14} className={EXPAND_ROTATION[collapseDirection || 'right']} />
       </button>
     )
 
@@ -56,7 +66,7 @@ export function PanelGroup({
       return (
         <button
           key={tabId}
-          onClick={() => { onExpand(group.id); onTabActivate(group.id, tabId) }}
+          onClick={() => onExpandAndActivate ? onExpandAndActivate(group.id, tabId) : (onExpand(group.id), onTabActivate(group.id, tabId))}
           className="text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 truncate"
           style={isVerticalCollapse
             ? { padding: '2px 8px' }
@@ -68,26 +78,37 @@ export function PanelGroup({
       )
     })
 
+    const columnCollapseButton = showCollapseColumn && onCollapseColumn ? (
+      <button
+        onClick={onCollapseColumn}
+        className="flex items-center justify-center shrink-0 w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
+        title="Collapse column"
+      >
+        <ArrowRightFromLine size={12} className={COLLAPSE_ROTATION[columnCollapseDirection || 'right']} />
+      </button>
+    ) : null
+
     if (isVerticalCollapse) {
-      // Horizontal bar — tabs on left, expand button floated to right
+      // Horizontal bar — tabs on left, buttons floated to right
       return (
         <div
           className="bg-[#111827] flex items-center overflow-hidden border-b border-gray-800"
           style={{ height: 28, width: '100%' }}
         >
           <div className="flex flex-row gap-0 overflow-hidden flex-1">{tabLabels}</div>
+          {columnCollapseButton}
           {expandButton}
         </div>
       )
     }
 
-    // Vertical bar — expand button at top, tabs below
-    const alignRight = collapseDirection === 'right'
+    // Vertical bar — buttons at top, tabs below
     return (
       <div
-        className={`bg-[#111827] flex flex-col overflow-hidden ${alignRight ? 'ml-auto' : ''}`}
+        className="bg-[#111827] flex flex-col overflow-hidden"
         style={{ width: 34, height: '100%' }}
       >
+        {columnCollapseButton}
         {expandButton}
         <div className="flex flex-col gap-0 overflow-hidden flex-1">{tabLabels}</div>
       </div>

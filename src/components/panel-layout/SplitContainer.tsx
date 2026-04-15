@@ -19,7 +19,8 @@ const COLLAPSED_PX_VERTICAL = 28
 
 export function SplitContainer({
   direction, ratio, onRatioChange, children,
-  firstCollapsed, secondCollapsed, collapsedSize,
+  firstCollapsed, secondCollapsed,
+  collapsedSize,
 }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isHorizontal = direction === 'horizontal'
@@ -37,18 +38,18 @@ export function SplitContainer({
   }, [onRatioChange, isHorizontal])
 
   const collapsedPx = collapsedSize ?? (isHorizontal ? COLLAPSED_PX : COLLAPSED_PX_VERTICAL)
+  const anyCollapsed = firstCollapsed || secondCollapsed
 
-  // Compute flex styles
   const firstStyle: React.CSSProperties = firstCollapsed
     ? { flex: `0 0 ${collapsedPx}px`, overflow: 'hidden' }
     : secondCollapsed
-      ? { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX }
+      ? { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
       : { flex: `0 0 ${ratio * 100}%`, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
 
   const secondStyle: React.CSSProperties = secondCollapsed
     ? { flex: `0 0 ${collapsedPx}px`, overflow: 'hidden' }
     : firstCollapsed
-      ? { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX }
+      ? { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
       : { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
 
   return (
@@ -58,9 +59,7 @@ export function SplitContainer({
       style={{ flexDirection: isHorizontal ? 'row' : 'column' }}
     >
       <div style={firstStyle}>{children[0]}</div>
-      {!firstCollapsed && !secondCollapsed && (
-        <ResizeSash direction={direction} onDrag={handleDrag} />
-      )}
+      {!anyCollapsed && <ResizeSash direction={direction} onDrag={handleDrag} />}
       <div style={secondStyle}>{children[1]}</div>
     </div>
   )

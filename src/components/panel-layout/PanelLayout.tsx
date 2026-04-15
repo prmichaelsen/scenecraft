@@ -79,12 +79,14 @@ function collectAllTabs(node: LayoutNode): { groupId: string; tabs: PanelId[] }[
   return [...collectAllTabs(node.children[0]), ...collectAllTabs(node.children[1])]
 }
 
-const COLLAPSE_ROTATION: Record<string, string> = {
-  right: '',
-  left: 'rotate-180',
-  down: 'rotate-90',
-  up: '-rotate-90',
+// Expand icon points opposite to collapse direction
+const EXPAND_ROTATION: Record<string, string> = {
+  right: 'rotate-180',
+  left: '',
+  down: '-rotate-90',
+  up: 'rotate-90',
 }
+
 
 export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayoutProps) {
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout)
@@ -145,6 +147,16 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     update(updateNode(layout, path, (node) => {
       if (node.type !== 'group') return node
       return { ...node, collapsed: false }
+    }))
+  }, [layout, update])
+
+  // Combined expand + activate in a single tree update
+  const handleExpandAndActivate = useCallback((groupId: string, tabId: PanelId) => {
+    const path = findGroupPath(layout, groupId)
+    if (!path) return
+    update(updateNode(layout, path, (node) => {
+      if (node.type !== 'group') return node
+      return { ...node, collapsed: false, activeTab: tabId }
     }))
   }, [layout, update])
 
@@ -210,6 +222,7 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
           onTabAdd={handleTabAdd}
           onCollapse={handleCollapse}
           onExpand={handleExpand}
+          onExpandAndActivate={handleExpandAndActivate}
           showCollapseColumn={showCollapseColumn}
           columnCollapseDirection={columnCollapseDirection}
           onCollapseColumn={columnSplitPath ? () => handleCollapseColumn(columnSplitPath) : undefined}
@@ -222,12 +235,10 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
       const allGroups = collectAllTabs(node)
       const flatTabs = allGroups.flatMap((g) => g.tabs)
       const collapseDir = getCollapseDir(layout, path)
-      const alignRight = collapseDir === 'right'
-
       return (
         <div
           key={path.join('-') || 'root'}
-          className={`bg-[#111827] flex flex-col overflow-hidden ${alignRight ? 'ml-auto' : ''}`}
+          className="bg-[#111827] flex flex-col overflow-hidden"
           style={{ width: 34, height: '100%' }}
         >
           <button
@@ -235,7 +246,7 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
             className="flex items-center justify-center shrink-0 w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded m-0.5"
             title="Expand column"
           >
-            <ArrowRightFromLine size={14} className={COLLAPSE_ROTATION[collapseDir || 'right']} />
+            <ArrowRightFromLine size={14} className={EXPAND_ROTATION[collapseDir || 'right']} />
           </button>
           <div className="flex flex-col gap-0 overflow-hidden flex-1">
             {flatTabs.map((tabId) => {
@@ -276,7 +287,6 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
 
     const firstCollapsed = !!node.children[0].collapsed
     const secondCollapsed = !!node.children[1].collapsed
-
     return (
       <SplitContainer
         key={path.join('-') || 'root'}
