@@ -202,10 +202,18 @@ Tabs are draggable between groups. When dragging:
 ### Collapse / Expand
 
 - Each `GroupNode` has `collapsed: boolean` and `preCollapseSize: number`
-- Collapsed groups render as `<CollapsedGroup>`: 34px wide, vertical tab labels, expand button
-- Expand button: `ArrowRightFromLine` from lucide-react, rotated based on position in split tree
-  - Right child of horizontal split → arrow points right (collapse rightward)
-  - Left child of horizontal split → arrow rotated 180° (collapse leftward)
+- Collapse direction is **contextual** — determined by the parent split's direction:
+  - **Parent is horizontal split** → group collapses **width** (shrinks to 34px wide, vertical tab labels)
+  - **Parent is vertical split** → group collapses **height** (shrinks to 28px tall, horizontal tab labels)
+- Collapse button placement:
+  - **Horizontal collapse** → button at **top-right corner** of the group header
+  - **Vertical collapse** → button at **right end** of the group header
+- Icon: `ArrowRightFromLine` from lucide-react, rotated to match collapse direction:
+  - Right child of horizontal split → arrow points right
+  - Left child of horizontal split → arrow rotated 180°
+  - Bottom child of vertical split → arrow rotated 90° (points down)
+  - Top child of vertical split → arrow rotated 270° (points up)
+- Nested splits can each be independently collapsed — e.g., collapse a vertical split within an already-narrow horizontal column
 - Collapsing overrides the parent split's `minWidth`/`minHeight` for this child
 
 ### Tab Rendering
@@ -369,9 +377,11 @@ const defaultLayout: LayoutNode = {
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Collapsed appearance | Vertical tab labels | User chose over thin bar |
-| Collapse icon | ArrowRightFromLine, direction based on position in tree | Matches existing; direction auto-detected |
-| Collapsed width | Fixed 34px | Matches current implementation |
+| Collapsed appearance | Contextual: vertical tab labels (horizontal collapse) or horizontal labels (vertical collapse) | Collapse direction matches parent split direction |
+| Collapse button | Top-right corner of group header | Consistent, discoverable placement |
+| Collapse icon | ArrowRightFromLine, rotated to match collapse direction (right/left/down/up) | Auto-detected from position in split tree |
+| Collapsed size | 34px wide (horizontal) or 28px tall (vertical) | Tight but readable |
+| Nesting | Each split level independently collapsible | Width and height collapses can coexist in nested splits |
 
 ### Persistence
 
