@@ -100,7 +100,7 @@ export function PanelGroup({
   return (
     <div className="flex flex-col h-full w-full bg-[#111827]">
       {/* Tab bar */}
-      <div className="flex items-center shrink-0 bg-[#111827] border-b border-gray-800 h-[35px]">
+      <div className="flex shrink-0 bg-[#111827] border-b border-gray-800 h-[35px]">
         <div
           className="flex-1 flex overflow-x-auto"
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
@@ -144,7 +144,7 @@ export function PanelGroup({
         </div>
 
         {/* Right actions: collapse column + collapse inner + add menu */}
-        <div className="flex items-center gap-0 px-1 shrink-0">
+        <div className="flex items-center gap-0 px-1 shrink-0 self-center">
           {/* Column collapse — collapses entire parent column width-wise */}
           {showCollapseColumn && onCollapseColumn && (
             <button
