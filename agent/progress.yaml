@@ -185,7 +185,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-6-git-version-control.md
     tasks_total: 15
-    tasks_completed: 2
+    tasks_completed: 3
     estimated_weeks: 6
     tasks:
       - id: task-29
@@ -208,8 +208,10 @@ milestones:
         actual_hours: null
       - id: task-31
         name: Admin CLI
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-15T13:00:00Z
+        completed_date: 2026-04-15T13:15:00Z
+        actual_hours: 0.25
         file: agent/tasks/milestone-6-git-version-control/task-31-admin-cli.md
         estimated_hours: 4
         actual_hours: null
