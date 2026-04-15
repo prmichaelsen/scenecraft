@@ -185,7 +185,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-6-git-version-control.md
     tasks_total: 15
-    tasks_completed: 3
+    tasks_completed: 4
     estimated_weeks: 6
     tasks:
       - id: task-29
@@ -217,8 +217,10 @@ milestones:
         actual_hours: null
       - id: task-32
         name: UUID migration
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-15T13:15:00Z
+        completed_date: 2026-04-15T13:30:00Z
+        actual_hours: 0.25
         file: agent/tasks/milestone-6-git-version-control/task-32-uuid-migration.md
         estimated_hours: 6
         actual_hours: null
