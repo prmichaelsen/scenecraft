@@ -244,8 +244,8 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
       )
     }
 
-    const firstCollapsed = node.children[0].type === 'group' && node.children[0].collapsed
-    const secondCollapsed = node.children[1].type === 'group' && node.children[1].collapsed
+    const firstCollapsed = !!node.children[0].collapsed
+    const secondCollapsed = !!node.children[1].collapsed
 
     return (
       <SplitContainer
