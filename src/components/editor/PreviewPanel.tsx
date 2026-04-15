@@ -1,15 +1,14 @@
 import { useRef } from 'react'
-import type { IDockviewPanelProps } from 'dockview-react'
-import type { EditorData } from '@/routes/project/$name/editor'
 import { useCurrentTime } from './CurrentTimeContext'
 import { usePreview } from './PreviewContext'
 import { useEditorState } from './EditorStateContext'
 import { BeatEffectPreview } from './BeatEffectPreview'
 import { TransformHandles } from './TransformHandles'
 import { scenecraftFileUrl } from '@/lib/scenecraft-client'
+import { useEditorData } from './EditorDataContext'
 
-export function PreviewDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
-  const { data } = params
+export function PreviewPanel() {
+  const data = useEditorData()
   const { currentTime, isPlaying } = useCurrentTime()
   const { crossfadeData, trackLayers, isTransitionLoading, hoverPreviewUrl, previewRef } = usePreview()
   const { selectedTransition } = useEditorState()

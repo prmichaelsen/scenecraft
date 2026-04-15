@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ArrowRightFromLine } from 'lucide-react'
 import type { GroupNode, PanelId, PanelRegistry } from './types'
 
@@ -48,6 +48,17 @@ export function PanelGroup({
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [splitZone, setSplitZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
 
   // Collapsed state
   if (group.collapsed) {
@@ -204,16 +215,17 @@ export function PanelGroup({
               <ArrowRightFromLine size={12} className={COLLAPSE_ROTATION[columnCollapseDirection || 'right']} />
             </button>
           )}
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               className="flex items-center justify-center w-6 h-6 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded text-base"
-              title="Add panel"
+              title="Panel menu"
             >
               &#x22EE;
             </button>
             {menuOpen && (
               <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-xl z-50 min-w-[140px] py-1">
+                <div className="px-3 py-1 text-[10px] text-gray-500 uppercase tracking-wider">Add Panel</div>
                 {allPanelIds.map((id) => {
                   const exists = group.tabs.includes(id)
                   const def = panels[id]
@@ -229,6 +241,17 @@ export function PanelGroup({
                     </button>
                   )
                 })}
+                <div className="border-t border-gray-700 my-1" />
+                <button
+                  className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-red-600/20"
+                  onClick={() => {
+                    // Close all tabs in this group — pruneTree will remove the empty group
+                    for (const tabId of group.tabs) onTabClose(group.id, tabId)
+                    setMenuOpen(false)
+                  }}
+                >
+                  Close Group
+                </button>
               </div>
             )}
           </div>

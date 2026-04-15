@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { Timeline } from '@/components/editor/Timeline'
-import { EditorLayout, WorkspaceMenu, type EditorLayoutHandle } from '@/components/editor/EditorLayout'
+import { EditorPanelLayout, type EditorPanelLayoutHandle } from '@/components/editor/EditorPanelLayout'
 import { useRef, useEffect } from 'react'
 import { StatusBar } from '@/components/editor/StatusBar'
 import { JobStateProvider } from '@/contexts/JobStateContext'
@@ -663,8 +662,6 @@ export const Route = createFileRoute('/project/$name/editor')({
 function EditorPage() {
   const data = Route.useLoaderData()
   const { name } = Route.useParams()
-  const useV2 = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('layout') === 'v2'
-
   // Block browser zoom globally in the editor (Ctrl+scroll, pinch-to-zoom, Ctrl+/-)
   useEffect(() => {
     const onWheel = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }
@@ -675,7 +672,7 @@ function EditorPage() {
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('wheel', onWheel); document.removeEventListener('keydown', onKey) }
   }, [])
-  const layoutRef = useRef<EditorLayoutHandle>(null)
+  const layoutRef = useRef<EditorPanelLayoutHandle>(null)
 
   return (
     <JobStateProvider>
@@ -695,17 +692,16 @@ function EditorPage() {
         {data.timelineInfo && (
           <span className="text-xs text-purple-400 font-mono">{data.timelineInfo.active}</span>
         )}
-        {useV2 && (
-          <>
-            <span className="text-[10px] text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded">v2</span>
-            <WorkspaceMenu projectName={name} onReset={() => layoutRef.current?.resetLayout()} api={layoutRef.current?.getApi() ?? null} />
-          </>
-        )}
+        <button
+          onClick={() => layoutRef.current?.resetLayout()}
+          className="text-xs text-gray-500 hover:text-gray-300 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded transition-colors"
+        >
+          Reset Layout
+        </button>
       </div>
 
-      {/* v1: original Timeline, v2: dockview EditorLayout */}
       <div className="flex-1 min-h-0">
-        {useV2 ? <EditorLayout ref={layoutRef} data={data} /> : <Timeline data={data} />}
+        <EditorPanelLayout ref={layoutRef} data={data} />
       </div>
 
       {/* Status bar */}
