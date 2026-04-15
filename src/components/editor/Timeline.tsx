@@ -330,7 +330,6 @@ const MAX_VIDEO_HEIGHT = 400
 const PREVIEW_HEIGHT_KEY = 'scenecraft-preview-height'
 const DEFAULT_PREVIEW_HEIGHT = 180
 const MIN_PREVIEW_HEIGHT = 80
-const MAX_PREVIEW_HEIGHT = 500
 
 const AUDIO_HEIGHT_KEY = 'scenecraft-audio-track-height'
 const DEFAULT_AUDIO_HEIGHT = 0 // 0 means flex-1 (fill remaining space)
@@ -431,7 +430,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const storedVideo = localStorage.getItem(VIDEO_HEIGHT_KEY)
     if (storedVideo) setVideoTrackHeight(Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(storedVideo, 10))))
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
-    if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, parseInt(storedPreview, 10))))
+    if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, parseInt(storedPreview, 10)))
     const storedAudio = localStorage.getItem(AUDIO_HEIGHT_KEY)
     if (storedAudio) setAudioTrackHeight(Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, parseInt(storedAudio, 10))))
   }, [])
@@ -1671,7 +1670,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const handleMouseMove = (e: MouseEvent) => {
       if (previewDragRef.current.dragging) {
         const delta = e.clientY - previewDragRef.current.startY
-        const newHeight = Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, previewDragRef.current.startHeight + delta))
+        const newHeight = Math.max(MIN_PREVIEW_HEIGHT, previewDragRef.current.startHeight + delta)
         setPreviewHeight(newHeight)
         return
       }
