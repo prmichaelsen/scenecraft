@@ -320,26 +320,32 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   //
   // Build right-to-left using addGroup to avoid insertion ordering issues.
 
-  // Step 1: Create groups right-to-left
+  // Step 1: Create all column groups at the same level (avoids nested splits / double sashes)
 
   // Col 4: Right sidebar (full height, 240px)
   const rightSidebarGroup = api.addGroup({ direction: 'right' })
 
-  // Col 3: Properties column (400px) — to the left of right sidebar
+  // Col 3: Properties column — to the left of right sidebar
   const propsGroup = api.addGroup({
     referenceGroup: rightSidebarGroup,
     direction: 'left',
   })
 
+  // Col 2: Center area — to the left of props (same split level)
+  const centerGroup = api.addGroup({
+    referenceGroup: propsGroup,
+    direction: 'left',
+  })
+
   // Step 2: Add panels to groups
 
-  // Col 2: Center area (left of props) — Preview on top, Timeline below
+  // Center: Preview on top, Timeline below
   const previewPanel = api.addPanel({
     id: 'preview',
     component: 'preview',
     title: 'Preview',
     params: { data },
-    position: { referenceGroup: propsGroup, direction: 'left' },
+    position: { referenceGroup: centerGroup },
   })
 
   api.addPanel({
@@ -350,8 +356,7 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
     position: { referencePanel: previewPanel, direction: 'below' },
   })
 
-  // Col 3: Single tab group (full height — no vertical split, max space for timeline)
-  // Bin default, Properties/Logs/Checkpoints/Settings as inactive tabs
+  // Props: Bin default, Properties/Logs/Checkpoints/Settings as inactive tabs
   api.addPanel({
     id: 'bin',
     component: 'bin',
