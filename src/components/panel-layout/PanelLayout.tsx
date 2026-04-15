@@ -255,6 +255,47 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     }))
   }, [layout, update])
 
+  // Tab reorder within a group or move between groups
+  const handleTabDrop = useCallback((targetGroupId: string, insertIndex: number, sourceGroupId: string, tabId: PanelId) => {
+    const sourcePath = findGroupPath(layout, sourceGroupId)
+    const targetPath = findGroupPath(layout, targetGroupId)
+    if (!sourcePath || !targetPath) return
+
+    if (sourceGroupId === targetGroupId) {
+      // Reorder within same group
+      update(updateNode(layout, sourcePath, (node) => {
+        if (node.type !== 'group') return node
+        const tabs = node.tabs.filter((t) => t !== tabId)
+        // Adjust insert index since we removed the tab
+        const currentIdx = node.tabs.indexOf(tabId)
+        const adjustedIdx = currentIdx < insertIndex ? insertIndex - 1 : insertIndex
+        tabs.splice(adjustedIdx, 0, tabId)
+        return { ...node, tabs, activeTab: tabId }
+      }))
+    } else {
+      // Move between groups — remove from source, add to target
+      let newLayout = layout
+      // Remove from source
+      newLayout = updateNode(newLayout, sourcePath, (node) => {
+        if (node.type !== 'group') return node
+        const tabs = node.tabs.filter((t) => t !== tabId)
+        if (tabs.length === 0) return node // Don't empty a group
+        return { ...node, tabs, activeTab: node.activeTab === tabId ? tabs[0] : node.activeTab }
+      })
+      // Add to target (re-find path since tree may have changed shape)
+      const newTargetPath = findGroupPath(newLayout, targetGroupId)
+      if (!newTargetPath) return
+      newLayout = updateNode(newLayout, newTargetPath, (node) => {
+        if (node.type !== 'group') return node
+        if (node.tabs.includes(tabId)) return node
+        const tabs = [...node.tabs]
+        tabs.splice(insertIndex, 0, tabId)
+        return { ...node, tabs, activeTab: tabId }
+      })
+      update(newLayout)
+    }
+  }, [layout, update])
+
   // Inner group collapse (vertical within a column)
   const handleCollapse = useCallback((groupId: string) => {
     const path = findGroupPath(layout, groupId)
@@ -422,6 +463,7 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
           showCollapseColumn={showCollapseColumn}
           columnCollapseDirection={columnCollapseDirection}
           onCollapseColumn={columnSplitPath ? () => handleCollapseColumn(columnSplitPath) : undefined}
+          onTabDrop={(targetGroupId, insertIndex, sourceGroupId, tabId) => handleTabDrop(targetGroupId, insertIndex, sourceGroupId, tabId)}
         />
       )
     }

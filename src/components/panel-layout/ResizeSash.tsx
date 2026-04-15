@@ -39,10 +39,10 @@ export function ResizeSash({ direction, onDrag }: ResizeSashProps) {
   return (
     <div
       onMouseDown={handleMouseDown}
-      className="shrink-0 hover:bg-blue-500/50 active:bg-blue-500 bg-transparent transition-colors z-10"
+      className="shrink-0 bg-gray-800 hover:bg-blue-500/50 active:bg-blue-500 transition-colors z-10"
       style={{
-        width: direction === 'horizontal' ? 4 : '100%',
-        height: direction === 'vertical' ? 4 : '100%',
+        width: direction === 'horizontal' ? 1 : '100%',
+        height: direction === 'vertical' ? 1 : '100%',
         cursor: direction === 'horizontal' ? 'col-resize' : 'row-resize',
       }}
     />

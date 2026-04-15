@@ -19,7 +19,7 @@ type PanelGroupProps = {
   columnCollapseDirection?: 'left' | 'right'
   // Tab drag-and-drop
   onTabDragStart?: (groupId: string, tabId: PanelId) => void
-  onTabDrop?: (groupId: string, index: number) => void
+  onTabDrop?: (targetGroupId: string, insertIndex: number, sourceGroupId: string, tabId: PanelId) => void
 }
 
 const COLLAPSE_ROTATION: Record<string, string> = {
@@ -45,6 +45,7 @@ export function PanelGroup({
   onTabDragStart, onTabDrop,
 }: PanelGroupProps) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
   // Collapsed state
   if (group.collapsed) {
@@ -124,10 +125,15 @@ export function PanelGroup({
       <div className="flex shrink-0 bg-[#111827] border-b border-gray-800 h-[35px]">
         <div
           className="flex-1 flex overflow-x-auto"
-          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverIndex(group.tabs.length) }}
+          onDragLeave={() => setDragOverIndex(null)}
           onDrop={(e) => {
             e.preventDefault()
-            onTabDrop?.(group.id, group.tabs.length)
+            setDragOverIndex(null)
+            const raw = e.dataTransfer.getData('application/x-panel-tab')
+            if (!raw) return
+            const { groupId: srcGroupId, tabId } = JSON.parse(raw)
+            onTabDrop?.(group.id, group.tabs.length, srcGroupId, tabId)
           }}
         >
           {group.tabs.map((tabId, i) => {
@@ -135,33 +141,43 @@ export function PanelGroup({
             if (!def) return null
             const isActive = tabId === group.activeTab
             return (
-              <div
-                key={tabId}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', tabId)
-                  e.dataTransfer.setData('application/x-panel-tab', JSON.stringify({ groupId: group.id, tabId }))
-                  onTabDragStart?.(group.id, tabId)
-                }}
-                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move' }}
-                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onTabDrop?.(group.id, i) }}
-                onClick={() => onTabActivate(group.id, tabId)}
-                className={`flex items-center gap-1.5 px-3 h-full text-[13px] cursor-pointer select-none shrink-0 ${
-                  isActive
-                    ? 'text-gray-200 bg-gray-800/50'
-                    : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
-                }`}
-              >
-                <span>{def.title}</span>
+              <div key={tabId} className="flex items-center h-full">
+                {dragOverIndex === i && <div className="w-0.5 h-4 bg-blue-500 shrink-0 rounded-full" />}
+                <div
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', tabId)
+                    e.dataTransfer.setData('application/x-panel-tab', JSON.stringify({ groupId: group.id, tabId }))
+                    onTabDragStart?.(group.id, tabId)
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDragOverIndex(i) }}
+                  onDrop={(e) => {
+                    e.preventDefault(); e.stopPropagation()
+                    setDragOverIndex(null)
+                    const raw = e.dataTransfer.getData('application/x-panel-tab')
+                    if (!raw) return
+                    const { groupId: srcGroupId, tabId: srcTabId } = JSON.parse(raw)
+                    onTabDrop?.(group.id, i, srcGroupId, srcTabId)
+                  }}
+                  onClick={() => onTabActivate(group.id, tabId)}
+                  className={`flex items-center gap-1.5 px-3 h-full text-[13px] cursor-pointer select-none shrink-0 ${
+                    isActive
+                      ? 'text-gray-200 bg-gray-800/50'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
+                  }`}
+                >
+                  <span>{def.title}</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); onTabClose(group.id, tabId) }}
                   className="w-4 h-4 flex items-center justify-center text-[10px] rounded opacity-40 hover:opacity-100 hover:bg-white/10"
                 >
                   ×
                 </button>
+                </div>
               </div>
             )
           })}
+          {dragOverIndex === group.tabs.length && <div className="w-0.5 h-4 bg-blue-500 shrink-0 rounded-full self-center" />}
         </div>
 
         {/* Right actions: inner collapse + column collapse + add menu */}
