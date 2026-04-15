@@ -180,18 +180,20 @@ milestones:
 
   - id: milestone_6
     name: Git-Style Version Control
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-15
     completed: null
     file: agent/milestones/milestone-6-git-version-control.md
     tasks_total: 15
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 6
     tasks:
       - id: task-29
         name: ".scenecraft directory structure & server bootstrap"
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-15T12:00:00Z
+        completed_date: 2026-04-15T12:30:00Z
+        actual_hours: 0.5
         file: agent/tasks/milestone-6-git-version-control/task-29-scenecraft-directory-structure.md
         estimated_hours: 4
         actual_hours: null
