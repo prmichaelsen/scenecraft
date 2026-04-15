@@ -19,7 +19,7 @@ import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPre
 import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { useEditorState } from './EditorStateContext'
 import { useCurrentTime } from './CurrentTimeContext'
-import { PreviewContext } from './PreviewContext'
+import { usePreview } from './PreviewContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, setEvictionProtectWindow, setMaxConcurrentPreloads, invalidateEntry } from '@/lib/frame-cache'
@@ -345,6 +345,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // In v2 mode, currentTime/isPlaying/refs are shared via context so PreviewPanel can read them.
   // In v1 mode, they're local state.
   const ctxTime = v2 ? useCurrentTime() : null // eslint-disable-line react-hooks/rules-of-hooks
+  const ctxPreview = v2 ? usePreview() : null // eslint-disable-line react-hooks/rules-of-hooks
   const [localCurrentTime, setLocalCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
     const stored = localStorage.getItem(`scenecraft-playhead-${data.projectName}`)
@@ -1808,16 +1809,14 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [keyframes, handlePlayPause, selectedTransition])
 
 
-  const previewContextValue = v2 ? {
-    crossfadeData,
-    trackLayers,
-    isTransitionLoading,
-    hoverPreviewUrl,
-    setHoverPreviewUrl,
-    previewRef,
-  } : null
+  // Push computed preview data up to PreviewContext so PreviewPanel can read it
+  useEffect(() => {
+    if (ctxPreview) {
+      ctxPreview.updatePreview({ crossfadeData, trackLayers, isTransitionLoading })
+    }
+  }, [ctxPreview, crossfadeData, trackLayers, isTransitionLoading])
 
-  const content = (
+  return (
     <div className="h-full flex">
       {/* Main timeline area */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -2850,16 +2849,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       )}
     </div>
   )
-
-  if (previewContextValue) {
-    return (
-      <PreviewContext.Provider value={previewContextValue}>
-        {content}
-      </PreviewContext.Provider>
-    )
-  }
-
-  return content
 }
 
 const TimeRuler = memo(function TimeRuler({ duration, pxPerSec, onClick }: { duration: number; pxPerSec: number; onClick?: (e: React.MouseEvent) => void }) {

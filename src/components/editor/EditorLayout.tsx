@@ -18,6 +18,7 @@ import { ArrowRightFromLine } from 'lucide-react'
 import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
 import { CurrentTimeProvider } from './CurrentTimeContext'
+import { PreviewProvider } from './PreviewContext'
 import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
 import { PreviewDockPanel } from './PreviewPanel'
@@ -494,6 +495,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
 
   return (
     <CurrentTimeProvider>
+    <PreviewProvider>
     <EditorStateProvider>
     <EditorLayoutContext.Provider value={{ api: apiRef.current }}>
       <DockviewReact
@@ -505,6 +507,7 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
       />
     </EditorLayoutContext.Provider>
     </EditorStateProvider>
+    </PreviewProvider>
     </CurrentTimeProvider>
   )
 })
