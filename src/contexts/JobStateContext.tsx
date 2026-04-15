@@ -89,7 +89,16 @@ export function JobStateProvider({ children }: { children: React.ReactNode }) {
     const unsub = socket.subscribeAll((msg: JobMessage) => {
       if (!('jobId' in msg)) return
       const store = storeRef.current
-      const entityKey = store.jobIdToEntity.get(msg.jobId)
+      let entityKey = store.jobIdToEntity.get(msg.jobId)
+
+      // Auto-register unknown jobs from external sources (CLI, other tabs, agents)
+      if (!entityKey && msg.type === 'job_started') {
+        const meta = (msg as { meta?: Record<string, unknown> }).meta || {}
+        const id = (meta.keyframeId || meta.transitionId || msg.jobId) as string
+        entityKey = id
+        startJob(entityKey, msg.jobId)
+      }
+
       if (!entityKey) return
       const entry = store.jobs.get(entityKey)
       if (!entry || entry.jobId !== msg.jobId) return
