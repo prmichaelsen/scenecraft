@@ -74,10 +74,10 @@ The layout takes a component registry — a map of panel IDs to React components
 
 ```tsx
 const panels: PanelRegistry = {
-  timeline: { component: TimelinePanel, title: 'Timeline', closeable: false },
-  preview:  { component: PreviewPanel,  title: 'Preview',  closeable: false },
-  bin:      { component: BinPanel,      title: 'Bin',      closeable: true },
-  logs:     { component: LogPanel,      title: 'Logs',     closeable: true },
+  timeline: { component: TimelinePanel, title: 'Timeline' },
+  preview:  { component: PreviewPanel,  title: 'Preview' },
+  bin:      { component: BinPanel,      title: 'Bin' },
+  logs:     { component: LogPanel,      title: 'Logs' },
   // ...
 }
 
@@ -118,7 +118,6 @@ type LayoutNode = SplitNode | GroupNode
 type PanelDef = {
   component: React.ComponentType
   title: string
-  closeable: boolean
   icon?: React.ComponentType  // optional tab icon
 }
 
@@ -361,8 +360,7 @@ const defaultLayout: LayoutNode = {
 | Decision | Choice | Rationale |
 |---|---|---|
 | Tab drag-and-drop | Full drag between groups | User confirmed |
-| Tab closing | Close via X, reopen via ⋮ menu | Matches current behavior |
-| Closeable flag | Per-panel `closeable: boolean` | Some panels (timeline, preview) shouldn't be closable |
+| Tab closing | All panels closeable via X, reopen via ⋮ menu | Every panel is equal — no special cases |
 | All panels addable | Every panel type listed in every group's add menu | User specified |
 | Tab rendering | Unmount inactive tabs | Saves memory, state persists via contexts |
 | Context-sensitive activation | `activatePanel('properties')` on keyframe/transition select | User confirmed |
