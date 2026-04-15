@@ -20,6 +20,7 @@ type PanelGroupProps = {
   // Tab drag-and-drop
   onTabDragStart?: (groupId: string, tabId: PanelId) => void
   onTabDrop?: (targetGroupId: string, insertIndex: number, sourceGroupId: string, tabId: PanelId) => void
+  onSplitDrop?: (targetGroupId: string, direction: 'left' | 'right' | 'top' | 'bottom', sourceGroupId: string, tabId: PanelId) => void
 }
 
 const COLLAPSE_ROTATION: Record<string, string> = {
@@ -42,10 +43,11 @@ export function PanelGroup({
   onTabActivate, onTabClose, onTabAdd, onCollapse, onExpand,
   onExpandAndActivate,
   onCollapseColumn, showCollapseColumn, columnCollapseDirection,
-  onTabDragStart, onTabDrop,
+  onTabDragStart, onTabDrop, onSplitDrop,
 }: PanelGroupProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [splitZone, setSplitZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null)
 
   // Collapsed state
   if (group.collapsed) {
@@ -233,10 +235,62 @@ export function PanelGroup({
         </div>
       </div>
 
-      {/* Panel content */}
-      <div className="flex-1 overflow-hidden">
+      {/* Panel content with split drop zones */}
+      <div className="flex-1 overflow-hidden relative"
+        onDragOver={(e) => {
+          // Only show split zones when dragging a panel tab
+          if (!e.dataTransfer.types.includes('application/x-panel-tab')) return
+          e.preventDefault()
+          const rect = e.currentTarget.getBoundingClientRect()
+          const x = (e.clientX - rect.left) / rect.width
+          const y = (e.clientY - rect.top) / rect.height
+          const EDGE = 0.25
+          if (x < EDGE) setSplitZone('left')
+          else if (x > 1 - EDGE) setSplitZone('right')
+          else if (y < EDGE) setSplitZone('top')
+          else if (y > 1 - EDGE) setSplitZone('bottom')
+          else setSplitZone('center')
+        }}
+        onDragLeave={(e) => {
+          // Only clear if leaving the container (not entering a child)
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setSplitZone(null)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          const zone = splitZone
+          setSplitZone(null)
+          if (!zone || zone === 'center') {
+            // Drop on center = add as tab (same as tab bar drop)
+            const raw = e.dataTransfer.getData('application/x-panel-tab')
+            if (!raw) return
+            const { groupId: srcGroupId, tabId } = JSON.parse(raw)
+            onTabDrop?.(group.id, group.tabs.length, srcGroupId, tabId)
+            return
+          }
+          const raw = e.dataTransfer.getData('application/x-panel-tab')
+          if (!raw) return
+          const { groupId: srcGroupId, tabId } = JSON.parse(raw)
+          onSplitDrop?.(group.id, zone, srcGroupId, tabId)
+        }}
+      >
         {ActiveComponent ? <ActiveComponent /> : (
           <div className="h-full flex items-center justify-center text-gray-600 text-sm">No panel</div>
+        )}
+        {/* Split zone overlay */}
+        {splitZone && splitZone !== 'center' && (
+          <div className="absolute inset-0 pointer-events-none z-20">
+            <div className={`absolute bg-blue-500/20 border-2 border-blue-500/50 ${
+              splitZone === 'left' ? 'inset-y-0 left-0 w-1/2' :
+              splitZone === 'right' ? 'inset-y-0 right-0 w-1/2' :
+              splitZone === 'top' ? 'inset-x-0 top-0 h-1/2' :
+              'inset-x-0 bottom-0 h-1/2'
+            }`} />
+          </div>
+        )}
+        {splitZone === 'center' && (
+          <div className="absolute inset-0 pointer-events-none z-20">
+            <div className="absolute inset-2 bg-blue-500/10 border-2 border-blue-500/30 rounded" />
+          </div>
         )}
       </div>
     </div>

@@ -296,6 +296,74 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     }
   }, [layout, update])
 
+  // Split drop: drag a tab to the edge of a group to create a new split
+  const handleSplitDrop = useCallback((targetGroupId: string, direction: 'left' | 'right' | 'top' | 'bottom', sourceGroupId: string, tabId: PanelId) => {
+    const targetPath = findGroupPath(layout, targetGroupId)
+    if (!targetPath) return
+
+    // Remove tab from source group first
+    let newLayout = layout
+    const sourcePath = findGroupPath(newLayout, sourceGroupId)
+    if (sourcePath) {
+      const sourceNode = getNode(newLayout, sourcePath)
+      if (sourceNode.type === 'group') {
+        // Don't remove the last tab from a group — that would leave an empty group
+        if (sourceNode.tabs.length > 1 || sourceGroupId !== targetGroupId) {
+          if (sourceNode.tabs.length > 1) {
+            newLayout = updateNode(newLayout, sourcePath, (node) => {
+              if (node.type !== 'group') return node
+              const tabs = node.tabs.filter((t) => t !== tabId)
+              return { ...node, tabs, activeTab: node.activeTab === tabId ? tabs[0] : node.activeTab }
+            })
+          }
+        }
+      }
+    }
+
+    // Re-find target path since tree may have changed
+    const newTargetPath = findGroupPath(newLayout, targetGroupId)
+    if (!newTargetPath) return
+
+    const targetNode = getNode(newLayout, newTargetPath)
+    if (targetNode.type !== 'group') return
+
+    // If source was the same group with only 1 tab, don't split (would create empty group)
+    if (sourceGroupId === targetGroupId && targetNode.tabs.length <= 1) return
+
+    // Create new group for the dragged tab
+    const newGroupId = `group-${Date.now()}`
+    const newGroup: LayoutNode = {
+      type: 'group',
+      id: newGroupId,
+      tabs: [tabId],
+      activeTab: tabId,
+    }
+
+    // Create a split node replacing the target group
+    const splitDirection = (direction === 'left' || direction === 'right') ? 'horizontal' : 'vertical'
+    const newGroupFirst = direction === 'left' || direction === 'top'
+
+    // Remove the tab from target if source === target (tab is being pulled out to create split)
+    let updatedTarget = targetNode
+    if (sourceGroupId === targetGroupId && targetNode.tabs.includes(tabId)) {
+      const tabs = targetNode.tabs.filter((t) => t !== tabId)
+      updatedTarget = { ...targetNode, tabs, activeTab: targetNode.activeTab === tabId ? tabs[0] : targetNode.activeTab }
+    }
+
+    const splitNode: LayoutNode = {
+      type: 'split',
+      direction: splitDirection,
+      ratio: 0.5,
+      children: newGroupFirst
+        ? [newGroup, updatedTarget]
+        : [updatedTarget, newGroup],
+    }
+
+    // Replace the target group with the new split
+    newLayout = updateNode(newLayout, newTargetPath, () => splitNode)
+    update(newLayout)
+  }, [layout, update])
+
   // Inner group collapse (vertical within a column)
   const handleCollapse = useCallback((groupId: string) => {
     const path = findGroupPath(layout, groupId)
@@ -464,6 +532,7 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
           columnCollapseDirection={columnCollapseDirection}
           onCollapseColumn={columnSplitPath ? () => handleCollapseColumn(columnSplitPath) : undefined}
           onTabDrop={(targetGroupId, insertIndex, sourceGroupId, tabId) => handleTabDrop(targetGroupId, insertIndex, sourceGroupId, tabId)}
+          onSplitDrop={(targetGroupId, direction, sourceGroupId, tabId) => handleSplitDrop(targetGroupId, direction, sourceGroupId, tabId)}
         />
       )
     }
