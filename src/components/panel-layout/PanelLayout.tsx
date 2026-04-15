@@ -245,10 +245,22 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
                 <button
                   key={tabId}
                   onClick={() => {
-                    handleExpandColumn(path)
-                    // Find which group owns this tab and activate it
+                    // Combine expand + activate into a single tree update to avoid stale closure
                     const ownerGroup = allGroups.find((g) => g.tabs.includes(tabId))
-                    if (ownerGroup) handleTabActivate(ownerGroup.groupId, tabId)
+                    let newLayout = updateNode(layout, path, (node) => {
+                      if (node.type !== 'split') return node
+                      return { ...node, collapsed: false }
+                    })
+                    if (ownerGroup) {
+                      const groupPath = findGroupPath(newLayout, ownerGroup.groupId)
+                      if (groupPath) {
+                        newLayout = updateNode(newLayout, groupPath, (node) => {
+                          if (node.type !== 'group') return node
+                          return { ...node, activeTab: tabId }
+                        })
+                      }
+                    }
+                    update(newLayout)
                   }}
                   className="text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 truncate"
                   style={{ writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '8px 6px', borderBottom: '1px solid #1f2937' }}
