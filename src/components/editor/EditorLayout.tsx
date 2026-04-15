@@ -210,7 +210,7 @@ function restoreCollapsedFromLayout(api: DockviewApi, layout: Record<string, unk
 
 function GroupActions({ containerApi, group }: IDockviewHeaderActionsProps) {
   const [open, setOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(() => collapsedState.has(group.id))
+  const [collapsed, setCollapsed] = useState(() => group.model.headerPosition === 'left')
 
   const toggleCollapse = () => {
     if (collapsed) {
@@ -436,8 +436,15 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
     resetLayout() {
       const api = apiRef.current
       if (!api) return
-      api.clear()
+      // Uncollapse all groups before clearing so components unmount cleanly
+      for (const group of api.groups) {
+        if (collapsedState.has(group.id)) {
+          group.api.setConstraints({ minimumWidth: 100 })
+          group.api.setHeaderPosition('top')
+        }
+      }
       collapsedState.clear()
+      api.clear()
       buildDefaultLayout(api, dataRef.current)
       saveLayoutWithCollapsed(api, dataRef.current.projectName, '_autosave')
     },
@@ -527,6 +534,12 @@ export function WorkspaceMenu({ projectName, onReset, api }: { projectName: stri
                 if (!api) return
                 const layout = await fetchWorkspaceView(projectName, name) as Record<string, unknown> | null
                 if (layout) {
+                  for (const group of api.groups) {
+                    if (collapsedState.has(group.id)) {
+                      group.api.setConstraints({ minimumWidth: 100 })
+                      group.api.setHeaderPosition('top')
+                    }
+                  }
                   collapsedState.clear()
                   api.fromJSON(layout as Parameters<typeof api.fromJSON>[0])
                   restoreCollapsedFromLayout(api, layout)
