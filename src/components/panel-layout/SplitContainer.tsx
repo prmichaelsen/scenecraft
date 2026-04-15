@@ -23,6 +23,8 @@ export function SplitContainer({
 }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isHorizontal = direction === 'horizontal'
+  const ratioRef = useRef(ratio)
+  ratioRef.current = ratio
 
   const handleDrag = useCallback((deltaPx: number) => {
     const container = containerRef.current
@@ -30,9 +32,9 @@ export function SplitContainer({
     const totalSize = isHorizontal ? container.clientWidth : container.clientHeight
     if (totalSize === 0) return
     const deltaRatio = deltaPx / totalSize
-    const clamped = Math.max(MIN_RATIO, Math.min(MAX_RATIO, ratio + deltaRatio))
+    const clamped = Math.max(MIN_RATIO, Math.min(MAX_RATIO, ratioRef.current + deltaRatio))
     onRatioChange(clamped)
-  }, [ratio, onRatioChange, isHorizontal])
+  }, [onRatioChange, isHorizontal])
 
   const collapsedPx = collapsedSize ?? (isHorizontal ? COLLAPSED_PX : COLLAPSED_PX_VERTICAL)
 
