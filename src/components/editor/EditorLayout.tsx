@@ -161,7 +161,7 @@ function PlaceholderPanel({ params }: IDockviewPanelProps<{ label: string }>) {
 
 // --- Custom Tab (smaller close button with confirm) ---
 
-const MANAGED_PANELS = new Set(['leftSidebar', 'timeline', 'sections', 'chat'])
+const MANAGED_PANELS = new Set(['timeline', 'preview', 'sections', 'chat'])
 
 function CustomTab(props: IDockviewPanelHeaderProps) {
   const isManaged = MANAGED_PANELS.has(props.api.id)
@@ -332,17 +332,6 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   })
 
   // Step 2: Add panels to groups
-
-  // Col 1: Left sidebar (starts hidden)
-  const leftGroup = api.addGroup({ direction: 'left' })
-  api.addPanel({
-    id: 'leftSidebar',
-    component: 'placeholder',
-    title: 'Explorer',
-    params: { label: '' },
-    position: { referenceGroup: leftGroup },
-  })
-  leftGroup.api.setVisible(false)
 
   // Col 2: Center area (left of props) — Preview on top, Timeline below
   const previewPanel = api.addPanel({
