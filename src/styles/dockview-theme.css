@@ -4,7 +4,7 @@
   /* Core backgrounds — match editor bg-gray-900 */
   --dv-background-color: #111827;
   --dv-paneview-header-border-color: #111827;
-  --dv-separator-border: #1f2937;
+  --dv-separator-border: transparent;
 
   /* Tab bar background — gray-900 */
   --dv-tabs-and-actions-container-background-color: #111827;
