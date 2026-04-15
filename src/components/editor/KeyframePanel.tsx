@@ -104,22 +104,10 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
 
       {/* Panel content */}
       <div ref={scrollContainerRef} className="flex-1 bg-gray-900 border-l border-gray-800 overflow-y-auto flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={onMoveLeft}
-              className="text-sm text-gray-500 hover:text-gray-200 transition-colors px-1"
-              title="Swap with previous keyframe"
-            >&larr;</button>
-            <span className="text-sm font-medium">{kf.id}</span>
-            <button
-              onClick={onMoveRight}
-              className="text-sm text-gray-500 hover:text-gray-200 transition-colors px-1"
-              title="Swap with next keyframe"
-            >&rarr;</button>
-          </div>
-          <div className="flex items-center gap-4">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-3 py-1 border-b border-gray-800 sticky top-0 bg-gray-900 z-10 shrink-0">
+          <span className="text-[10px] text-gray-500 font-mono">{kf.id}</span>
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-0.5 border border-gray-700 rounded overflow-hidden">
               <button
                 onClick={() => onUnlink('left')}
@@ -137,27 +125,8 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
                 title="Unlink right (remove outgoing transition)"
               >&#x293A;</button>
             </div>
-            <button
-              onClick={onDuplicate}
-              className="text-xs text-blue-500/70 hover:text-blue-400 transition-colors"
-              title="Duplicate keyframe halfway to next"
-            >
-              Dup
-            </button>
-            <button
-              onClick={onDelete}
-              className="text-xs text-red-500/70 hover:text-red-400 transition-colors"
-              title="Delete keyframe (move to bin)"
-            >
-              Del
-            </button>
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-gray-300 text-lg leading-none"
-              title="Close panel"
-            >
-              &times;
-            </button>
+            <button onClick={onDuplicate} className="text-[10px] text-blue-500/70 hover:text-blue-400 transition-colors" title="Duplicate">Dup</button>
+            <button onClick={onDelete} className="text-[10px] text-red-500/70 hover:text-red-400 transition-colors" title="Delete">Del</button>
           </div>
         </div>
 
@@ -196,9 +165,9 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto">
           {tab === 'details' ? (
-            <DetailsTab kf={kf} projectName={projectName} audioDescriptions={audioDescriptions} audioEvents={audioEvents} onDataChange={onDataChange} initialPromptRoster={initialPromptRoster} />
+            <DetailsTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           ) : tab === 'candidates' ? (
-            <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} onHoverPreview={onHoverPreview} />
+            <CandidatesTab kf={kf} projectName={projectName} onDataChange={onDataChange} onHoverPreview={onHoverPreview} audioDescriptions={audioDescriptions} audioEvents={audioEvents} initialPromptRoster={initialPromptRoster} />
           ) : tab === 'browse' ? (
             <BrowseTab kf={kf} projectName={projectName} onDataChange={onDataChange} />
           ) : (
@@ -210,111 +179,15 @@ export function KeyframePanel({ keyframe, projectName, onClose, onDelete, onDupl
   )
 }
 
-function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataChange, initialPromptRoster }: { kf: KeyframeWithTime; projectName: string; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; onDataChange: () => void; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
-  const [editingPrompt, setEditingPrompt] = useState(false)
-  const [promptText, setPromptText] = useState(kf.prompt)
-  const [promptRoster, setPromptRoster] = useState<import('@/lib/scenecraft-client').PromptRosterEntry[]>(initialPromptRoster || [])
-  const [saving, setSaving] = useState(false)
+function DetailsTab({ kf, projectName, onDataChange }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void }) {
   const [hasImage, setHasImage] = useState(kf.hasSelectedImage)
-  const [generating, setGenerating] = useState(false)
-  const [enhancing, setEnhancing] = useState(false)
   const [labelText, setLabelText] = useState(kf.label || '')
 
   // Sync when keyframe changes
   useEffect(() => {
-    setPromptText(kf.prompt)
-    setEditingPrompt(false)
     setHasImage(kf.hasSelectedImage)
     setLabelText(kf.label || '')
-  }, [kf.id, kf.prompt, kf.hasSelectedImage, kf.label])
-
-  const savePrompt = useCallback(async () => {
-    if (promptText === kf.prompt) {
-      setEditingPrompt(false)
-      return
-    }
-    setSaving(true)
-    await updateKeyframePrompt({
-      data: { projectName, keyframeId: kf.id, prompt: promptText },
-    })
-    kf.prompt = promptText
-    setSaving(false)
-    setEditingPrompt(false)
-  }, [promptText, kf, projectName])
-
-  // Find section content and nearest audio event for this keyframe
-  const sectionDesc = audioDescriptions?.find((d) => d.label === kf.section)
-  const sectionContent = sectionDesc?.content || ''
-  const nearestEvent = audioEvents
-    ?.filter((ev) => {
-      if (!sectionDesc) return true
-      return ev.time >= sectionDesc.startTime && ev.time <= sectionDesc.endTime
-    })
-    .reduce<AudioEvent | null>((best, ev) => {
-      if (!best) return ev
-      return Math.abs(ev.time - kf.timeSeconds) < Math.abs(best.time - kf.timeSeconds) ? ev : best
-    }, null)
-
-  const handleGeneratePrompt = useCallback(async () => {
-    setGenerating(true)
-    try {
-      const event = nearestEvent || { time: kf.timeSeconds, effect: 'pulse', intensity: 0.8, stem_source: 'kick' }
-      const result = await suggestKeyframePrompts({
-        data: {
-          projectName,
-          sectionLabel: kf.section,
-          sectionContent,
-          events: [{ time: event.time, effect: event.effect, intensity: event.intensity, stem_source: event.stem_source }],
-          baseStillName: '',
-        },
-      })
-      if (result.suggestions.length > 0) {
-        const newPrompt = result.suggestions[0].prompt
-        setPromptText(newPrompt)
-        // Auto-save
-        await updateKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: newPrompt } })
-        kf.prompt = newPrompt
-      }
-    } catch (e) {
-      alert(`Generate failed: ${e}`)
-    } finally {
-      setGenerating(false)
-    }
-  }, [projectName, kf, sectionContent, nearestEvent])
-
-  const handleEnhancePrompt = useCallback(async () => {
-    if (!promptText) {
-      alert('Add a prompt first before enhancing.')
-      return
-    }
-    setEnhancing(true)
-    try {
-      const event = nearestEvent || { time: kf.timeSeconds, effect: 'pulse', intensity: 0.8, stem_source: 'kick' }
-      const result = await enhanceKeyframePrompt({
-        data: {
-          projectName,
-          prompt: promptText,
-          sectionContent,
-          event: {
-            time: event.time,
-            effect: event.effect,
-            intensity: event.intensity,
-            stem_source: event.stem_source,
-            rationale: 'rationale' in event ? (event as AudioEvent).rationale : undefined,
-          },
-        },
-      })
-      if (result.prompt) {
-        setPromptText(result.prompt)
-        await updateKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: result.prompt } })
-        kf.prompt = result.prompt
-      }
-    } catch (e) {
-      alert(`Enhance failed: ${e}`)
-    } finally {
-      setEnhancing(false)
-    }
-  }, [projectName, kf, promptText, sectionContent, nearestEvent])
+  }, [kf.id, kf.hasSelectedImage, kf.label])
 
   return (
     <>
@@ -418,134 +291,6 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
           </div>
         </div>
 
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt</div>
-            {!editingPrompt && (
-              <div className="flex gap-2">
-                <button
-                  onClick={handleGeneratePrompt}
-                  disabled={generating || enhancing}
-                  className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
-                  title="Auto-generate a prompt from context"
-                >
-                  {generating ? 'Generating...' : 'Generate'}
-                </button>
-                <button
-                  onClick={handleEnhancePrompt}
-                  disabled={enhancing || generating || !promptText}
-                  className="text-[10px] text-purple-400 hover:text-purple-300 disabled:text-gray-600 transition-colors"
-                  title="Enhance the current prompt with AI"
-                >
-                  {enhancing ? 'Enhancing...' : 'Enhance'}
-                </button>
-                <button
-                  onClick={() => setEditingPrompt(true)}
-                  className="text-[10px] text-gray-500 hover:text-gray-400"
-                  title="Edit prompt manually"
-                >
-                  Edit
-                </button>
-              </div>
-            )}
-          </div>
-          {editingPrompt ? (
-            <div className="space-y-1">
-              {/* Prompt roster selector */}
-              <div className="flex items-center gap-1">
-                <select
-                  className="flex-1 bg-gray-800 text-[10px] text-gray-400 border border-gray-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-500"
-                  value=""
-                  onChange={async (e) => {
-                    const entry = promptRoster.find((p) => p.id === e.target.value)
-                    if (entry) {
-                      setPromptText(entry.template)
-                      // Auto-save the inserted prompt immediately
-                      await updateKeyframePrompt({
-                        data: { projectName, keyframeId: kf.id, prompt: entry.template },
-                      })
-                      kf.prompt = entry.template
-                      setEditingPrompt(false)
-                    }
-                  }}
-                >
-                  <option value="">Insert from roster...</option>
-                  {Object.entries(
-                    promptRoster.reduce<Record<string, typeof promptRoster>>((acc, p) => {
-                      (acc[p.category] = acc[p.category] || []).push(p)
-                      return acc
-                    }, {})
-                  ).map(([cat, entries]) => (
-                    <optgroup key={cat} label={cat}>
-                      {entries.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </optgroup>
-                  ))}
-                </select>
-                <button
-                  onClick={async () => {
-                    if (!promptText.trim()) { alert('Write a prompt first, then save it to the roster.'); return }
-                    const name = prompt('Name for this prompt template:')
-                    if (!name) return
-                    const category = prompt('Category (e.g., general, style, composition):', 'general') || 'general'
-                    const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
-                    await postAddPromptRoster(projectName, name, promptText, category)
-                    setPromptRoster(await fetchPromptRoster(projectName))
-                  }}
-                  className="text-[9px] text-blue-400 hover:text-blue-300 whitespace-nowrap"
-                  title="Save current prompt to roster"
-                >
-                  + Save
-                </button>
-              </div>
-              <textarea
-                ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
-                value={promptText}
-                onChange={(e) => { setPromptText(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
-                onBlur={() => savePrompt()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    e.preventDefault()
-                    savePrompt()
-                  }
-                  if (e.key === 'Escape') {
-                    setPromptText(kf.prompt)
-                    setEditingPrompt(false)
-                  }
-                }}
-                onBlur={savePrompt}
-                autoFocus
-                className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none leading-relaxed overflow-hidden"
-                disabled={saving}
-              />
-              <div className="flex items-center justify-between text-[9px] text-gray-600">
-                <span>Ctrl+Enter to save, Esc to cancel</span>
-                {promptText && (
-                  <button
-                    onClick={async () => {
-                      const name = window.prompt('Save prompt as:', promptText.slice(0, 40))
-                      if (!name) return
-                      const category = window.prompt('Category:', 'general') || 'general'
-                      const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
-                      await postAddPromptRoster(projectName, name, promptText, category)
-                      setPromptRoster(await fetchPromptRoster(projectName))
-                    }}
-                    className="text-blue-400 hover:text-blue-300"
-                  >
-                    Save to roster
-                  </button>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div
-              className="text-sm text-gray-300 leading-relaxed cursor-pointer hover:bg-gray-800/50 rounded p-1 -m-1 transition-colors"
-              onClick={() => setEditingPrompt(true)}
-            >
-              {kf.prompt || <span className="text-gray-600 italic">No prompt</span>}
-            </div>
-          )}
-        </div>
-
         {kf.selected !== null && (
           <Field
             label="Selected"
@@ -600,13 +345,114 @@ function DetailsTab({ kf, projectName, audioDescriptions, audioEvents, onDataCha
   )
 }
 
-function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void; onHoverPreview?: (url: string | null) => void }) {
+function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview, audioDescriptions, audioEvents, initialPromptRoster }: { kf: KeyframeWithTime; projectName: string; onDataChange: () => void; onHoverPreview?: (url: string | null) => void; audioDescriptions?: AudioDescription[]; audioEvents?: AudioEvent[]; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
   const jobCtx = useJobContext()
   const entityKey = `kf:${kf.id}:candidates`
   const job = useJobState(entityKey)
 
   const [candidates, setCandidates] = useState(kf.candidates)
   const [enhancing, setEnhancing] = useState(false)
+
+  // Prompt editing state
+  const [editingPrompt, setEditingPrompt] = useState(false)
+  const [promptText, setPromptText] = useState(kf.prompt)
+  const [promptRoster, setPromptRoster] = useState<import('@/lib/scenecraft-client').PromptRosterEntry[]>(initialPromptRoster || [])
+  const [savingPrompt, setSavingPrompt] = useState(false)
+  const [generatingPrompt, setGeneratingPrompt] = useState(false)
+  const [enhancingPrompt, setEnhancingPrompt] = useState(false)
+
+  // Sync prompt when keyframe changes
+  useEffect(() => {
+    setPromptText(kf.prompt)
+    setEditingPrompt(false)
+  }, [kf.id, kf.prompt])
+
+  const savePrompt = useCallback(async () => {
+    if (promptText === kf.prompt) {
+      setEditingPrompt(false)
+      return
+    }
+    setSavingPrompt(true)
+    await updateKeyframePrompt({
+      data: { projectName, keyframeId: kf.id, prompt: promptText },
+    })
+    kf.prompt = promptText
+    setSavingPrompt(false)
+    setEditingPrompt(false)
+  }, [promptText, kf, projectName])
+
+  // Find section content and nearest audio event for this keyframe
+  const sectionDesc = audioDescriptions?.find((d) => d.label === kf.section)
+  const sectionContent = sectionDesc?.content || ''
+  const nearestEvent = audioEvents
+    ?.filter((ev) => {
+      if (!sectionDesc) return true
+      return ev.time >= sectionDesc.startTime && ev.time <= sectionDesc.endTime
+    })
+    .reduce<AudioEvent | null>((best, ev) => {
+      if (!best) return ev
+      return Math.abs(ev.time - kf.timeSeconds) < Math.abs(best.time - kf.timeSeconds) ? ev : best
+    }, null)
+
+  const handleGeneratePrompt = useCallback(async () => {
+    setGeneratingPrompt(true)
+    try {
+      const event = nearestEvent || { time: kf.timeSeconds, effect: 'pulse', intensity: 0.8, stem_source: 'kick' }
+      const result = await suggestKeyframePrompts({
+        data: {
+          projectName,
+          sectionLabel: kf.section,
+          sectionContent,
+          events: [{ time: event.time, effect: event.effect, intensity: event.intensity, stem_source: event.stem_source }],
+          baseStillName: '',
+        },
+      })
+      if (result.suggestions.length > 0) {
+        const newPrompt = result.suggestions[0].prompt
+        setPromptText(newPrompt)
+        await updateKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: newPrompt } })
+        kf.prompt = newPrompt
+      }
+    } catch (e) {
+      alert(`Generate failed: ${e}`)
+    } finally {
+      setGeneratingPrompt(false)
+    }
+  }, [projectName, kf, sectionContent, nearestEvent])
+
+  const handleEnhancePrompt = useCallback(async () => {
+    if (!promptText) {
+      alert('Add a prompt first before enhancing.')
+      return
+    }
+    setEnhancingPrompt(true)
+    try {
+      const event = nearestEvent || { time: kf.timeSeconds, effect: 'pulse', intensity: 0.8, stem_source: 'kick' }
+      const result = await enhanceKeyframePrompt({
+        data: {
+          projectName,
+          prompt: promptText,
+          sectionContent,
+          event: {
+            time: event.time,
+            effect: event.effect,
+            intensity: event.intensity,
+            stem_source: event.stem_source,
+            rationale: 'rationale' in event ? (event as AudioEvent).rationale : undefined,
+          },
+        },
+      })
+      if (result.prompt) {
+        setPromptText(result.prompt)
+        await updateKeyframePrompt({ data: { projectName, keyframeId: kf.id, prompt: result.prompt } })
+        kf.prompt = result.prompt
+      }
+    } catch (e) {
+      alert(`Enhance failed: ${e}`)
+    } finally {
+      setEnhancingPrompt(false)
+    }
+  }, [projectName, kf, promptText, sectionContent, nearestEvent])
 
   useEffect(() => {
     setCandidates(kf.candidates)
@@ -723,6 +569,132 @@ function CandidatesTab({ kf, projectName, onDataChange, onHoverPreview }: { kf: 
 
   return (
     <div className="p-2 space-y-2">
+      {/* Prompt */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">Prompt</div>
+          {!editingPrompt && (
+            <div className="flex gap-2">
+              <button
+                onClick={handleGeneratePrompt}
+                disabled={generatingPrompt || enhancingPrompt}
+                className="text-[10px] text-blue-400 hover:text-blue-300 disabled:text-gray-600 transition-colors"
+                title="Auto-generate a prompt from context"
+              >
+                {generatingPrompt ? 'Generating...' : 'Generate'}
+              </button>
+              <button
+                onClick={handleEnhancePrompt}
+                disabled={enhancingPrompt || generatingPrompt || !promptText}
+                className="text-[10px] text-purple-400 hover:text-purple-300 disabled:text-gray-600 transition-colors"
+                title="Enhance the current prompt with AI"
+              >
+                {enhancingPrompt ? 'Enhancing...' : 'Enhance'}
+              </button>
+              <button
+                onClick={() => setEditingPrompt(true)}
+                className="text-[10px] text-gray-500 hover:text-gray-400"
+                title="Edit prompt manually"
+              >
+                Edit
+              </button>
+            </div>
+          )}
+        </div>
+        {editingPrompt ? (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1">
+              <select
+                className="flex-1 bg-gray-800 text-[10px] text-gray-400 border border-gray-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-500"
+                value=""
+                onChange={async (e) => {
+                  const entry = promptRoster.find((p) => p.id === e.target.value)
+                  if (entry) {
+                    setPromptText(entry.template)
+                    await updateKeyframePrompt({
+                      data: { projectName, keyframeId: kf.id, prompt: entry.template },
+                    })
+                    kf.prompt = entry.template
+                    setEditingPrompt(false)
+                  }
+                }}
+              >
+                <option value="">Insert from roster...</option>
+                {Object.entries(
+                  promptRoster.reduce<Record<string, typeof promptRoster>>((acc, p) => {
+                    (acc[p.category] = acc[p.category] || []).push(p)
+                    return acc
+                  }, {})
+                ).map(([cat, entries]) => (
+                  <optgroup key={cat} label={cat}>
+                    {entries.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              <button
+                onClick={async () => {
+                  if (!promptText.trim()) { alert('Write a prompt first, then save it to the roster.'); return }
+                  const name = prompt('Name for this prompt template:')
+                  if (!name) return
+                  const category = prompt('Category (e.g., general, style, composition):', 'general') || 'general'
+                  const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
+                  await postAddPromptRoster(projectName, name, promptText, category)
+                  setPromptRoster(await fetchPromptRoster(projectName))
+                }}
+                className="text-[9px] text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                title="Save current prompt to roster"
+              >
+                + Save
+              </button>
+            </div>
+            <textarea
+              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
+              value={promptText}
+              onChange={(e) => { setPromptText(e.target.value); const t = e.target; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }}
+              onBlur={savePrompt}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  savePrompt()
+                }
+                if (e.key === 'Escape') {
+                  setPromptText(kf.prompt)
+                  setEditingPrompt(false)
+                }
+              }}
+              autoFocus
+              className="w-full bg-gray-800 text-sm text-gray-300 rounded p-2 border border-gray-700 focus:border-blue-500 focus:outline-none resize-none leading-relaxed overflow-hidden"
+              disabled={savingPrompt}
+            />
+            <div className="flex items-center justify-between text-[9px] text-gray-600">
+              <span>Ctrl+Enter to save, Esc to cancel</span>
+              {promptText && (
+                <button
+                  onClick={async () => {
+                    const name = window.prompt('Save prompt as:', promptText.slice(0, 40))
+                    if (!name) return
+                    const category = window.prompt('Category:', 'general') || 'general'
+                    const { postAddPromptRoster, fetchPromptRoster } = await import('@/lib/scenecraft-client')
+                    await postAddPromptRoster(projectName, name, promptText, category)
+                    setPromptRoster(await fetchPromptRoster(projectName))
+                  }}
+                  className="text-blue-400 hover:text-blue-300"
+                >
+                  Save to roster
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div
+            className="text-sm text-gray-300 leading-relaxed cursor-pointer hover:bg-gray-800/50 rounded p-1 -m-1 transition-colors"
+            onClick={() => setEditingPrompt(true)}
+          >
+            {kf.prompt || <span className="text-gray-600 italic">No prompt</span>}
+          </div>
+        )}
+      </div>
+
       {/* Count selector */}
       <div className="flex items-center gap-2">
         <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Count</span>

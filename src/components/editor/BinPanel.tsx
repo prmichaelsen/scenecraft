@@ -241,30 +241,19 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
         onMouseDown={handlePanelDragDown}
       />
       <div className="flex-1 bg-gray-900 border-l border-gray-800 flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Bin</span>
-          <button
-            onClick={() => setSortBy((s) => s === 'timeline' ? 'recent' : s === 'recent' ? 'oldest' : 'timeline')}
-            className="text-[9px] text-gray-500 hover:text-gray-300 bg-gray-800 px-1.5 py-0.5 rounded transition-colors"
-            title={`Sort: ${sortBy}`}
-          >{sortBy === 'timeline' ? '⏱ Timeline' : sortBy === 'recent' ? '↓ Newest' : '↑ Oldest'}</button>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => loadBin()}
-            className="text-xs text-green-500 hover:text-green-400 transition-colors px-1"
-            title="Refresh bin/pool data"
-          >
-            ↻ Refresh
-          </button>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
-          >
-            &times;
-          </button>
-        </div>
+      <div className="flex items-center justify-between px-3 py-1 border-b border-gray-800 shrink-0">
+        <button
+          onClick={() => setSortBy((s) => s === 'timeline' ? 'recent' : s === 'recent' ? 'oldest' : 'timeline')}
+          className="text-[9px] text-gray-500 hover:text-gray-300 bg-gray-800 px-1.5 py-0.5 rounded transition-colors"
+          title={`Sort: ${sortBy}`}
+        >{sortBy === 'timeline' ? '⏱ Timeline' : sortBy === 'recent' ? '↓ Newest' : '↑ Oldest'}</button>
+        <button
+          onClick={() => loadBin()}
+          className="text-[10px] text-green-500 hover:text-green-400 transition-colors px-1"
+          title="Refresh bin/pool data"
+        >
+          ↻ Refresh
+        </button>
       </div>
 
       {/* Watched folders */}

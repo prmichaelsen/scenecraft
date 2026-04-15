@@ -144,8 +144,7 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
         className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 z-20"
         onMouseDown={handleResizeMouseDown}
       />
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
-        <div className="text-sm font-medium">Sections</div>
+      <div className="flex items-center justify-end px-3 py-1 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={handleAddSection}
@@ -159,9 +158,6 @@ export function NarrativeSectionPanel({ sections: initialSections, projectName, 
             className="text-[10px] text-green-400 hover:text-green-300 disabled:text-gray-600"
           >
             {saving ? 'Saving...' : 'Save All'}
-          </button>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">
-            &times;
           </button>
         </div>
       </div>

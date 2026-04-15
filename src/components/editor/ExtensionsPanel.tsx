@@ -10,15 +10,7 @@ export function ExtensionsPanel({ onClose }: ExtensionsPanelProps) {
   const [tab, setTab] = useState<'browse' | 'installed'>('browse')
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
-        <div className="text-sm font-medium">Extensions</div>
-        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">
-          &times;
-        </button>
-      </div>
-
+    <div className="shrink-0 bg-gray-900 flex flex-col h-full w-full">
       {/* Tab bar */}
       <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-800 shrink-0">
         <button

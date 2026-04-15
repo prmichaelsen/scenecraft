@@ -15,14 +15,7 @@ export function LogPanel({ onClose }: { onClose: () => void }) {
   ), [])
 
   return (
-    <div className="shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col" style={{ width: parseInt(localStorage.getItem(STORAGE_KEY) || '360', 10) }}>
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0">
-        <span className="text-xs text-gray-400 font-medium">Server Logs</span>
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] text-gray-600">{logs.length} entries</span>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
-        </div>
-      </div>
+    <div className="shrink-0 bg-gray-900 flex flex-col h-full w-full">
       <div className="flex-1 font-mono text-[10px] leading-relaxed">
         {logs.length === 0 ? (
           <div className="text-gray-600 text-center py-4">No logs yet</div>
