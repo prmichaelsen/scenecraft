@@ -13,6 +13,7 @@ import { CheckpointsPanel } from './CheckpointsPanel'
 import { SettingsPanel } from './SettingsPanel'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
+import { ExtensionsPanel } from './ExtensionsPanel'
 import { useRouter } from '@tanstack/react-router'
 import { ArrowRightFromLine } from 'lucide-react'
 import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
@@ -151,6 +152,10 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
   )
 }
 
+function ExtensionsDockPanel() {
+  return <DockPanel><ExtensionsPanel onClose={() => {}} /></DockPanel>
+}
+
 function PlaceholderPanel({ params }: IDockviewPanelProps<{ label: string }>) {
   return (
     <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-gray-900">
@@ -181,6 +186,7 @@ const ADDABLE_PANELS = [
   { id: 'checkpoints', component: 'checkpoints', title: 'Checkpoints' },
   { id: 'settings', component: 'settings', title: 'Settings' },
   { id: 'properties', component: 'placeholder', title: 'Properties' },
+  { id: 'extensions', component: 'extensions', title: 'Extensions' },
 ] as const
 
 // Track collapsed state + saved pre-collapse dims per group
@@ -303,6 +309,7 @@ const components = {
   sections: SectionsDockPanel,
   bin: BinDockPanel,
   properties: PropertiesDockPanel,
+  extensions: ExtensionsDockPanel,
   placeholder: PlaceholderPanel,
 } satisfies Record<string, React.FunctionComponent<IDockviewPanelProps<any>>>
 
