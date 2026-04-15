@@ -448,6 +448,12 @@ export function SettingsPanel({ data, projectName, onClose, onSave, onPreviewQua
                 {saving ? 'Saving...' : 'Save Project Settings'}
               </button>
             </div>
+
+            {/* Extensions */}
+            <div className="px-3 py-3 space-y-3">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">Extensions</div>
+              <div className="text-[10px] text-gray-600 text-center py-2">No extensions installed</div>
+            </div>
           </div>
         )}
       </div>

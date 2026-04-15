@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { UserEffect, EffectType } from '@/lib/scenecraft-client'
+import { getPluginEffects } from '@/lib/plugin-api'
 
 const EFFECT_TYPES: EffectType[] = ['pulse', 'zoom', 'shake', 'glow', 'flash', 'echo']
+const pluginEffectIds = getPluginEffects().map((e) => e.id)
 
 type EffectEditorProps = {
   effect: UserEffect
@@ -92,6 +94,15 @@ export function EffectEditor({ effect, onUpdate, onDelete, onClose }: EffectEdit
                 className={`flex-1 text-[10px] px-2 py-1.5 rounded transition-colors ${type === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
               >
                 {t}
+              </button>
+            ))}
+            {pluginEffectIds.map((t) => (
+              <button
+                key={t}
+                onClick={() => { setType(t as EffectType); onUpdate({ ...effect, type: t as EffectType, intensity, duration, time }) }}
+                className={`flex-1 text-[10px] px-2 py-1.5 rounded transition-colors ${type === t ? 'bg-purple-600 text-white' : 'bg-gray-800 text-purple-400 hover:text-purple-200'}`}
+              >
+                {t} <span className="text-[8px] opacity-60">plugin</span>
               </button>
             ))}
           </div>

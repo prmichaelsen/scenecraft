@@ -17,6 +17,7 @@ import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
 import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
 import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
+import { getPluginBlendModes } from '@/lib/plugin-api'
 import { useEditorState } from './EditorStateContext'
 import { useCurrentTime } from './CurrentTimeContext'
 import { usePreview } from './PreviewContext'
@@ -3145,6 +3146,7 @@ function TrackSettingsPanel({ track, onClose, onUpdate }: {
 }) {
   const STORAGE_KEY = 'scenecraft-side-panel-width'
   const BLEND_MODES: import('@/lib/scenecraft-client').BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'difference', 'add', 'soft-light', 'chroma-key']
+  const pluginBlendModeIds = getPluginBlendModes().map((b) => b.id)
 
   const [blendMode, setBlendMode] = useState(track.blendMode)
   const [opacity, setOpacity] = useState(track.baseOpacity)
@@ -3175,6 +3177,7 @@ function TrackSettingsPanel({ track, onClose, onUpdate }: {
             className="w-full bg-gray-800 text-gray-200 text-xs px-2 py-1.5 rounded border border-gray-700"
           >
             {BLEND_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+            {pluginBlendModeIds.map((m) => <option key={m} value={m}>{m} (plugin)</option>)}
           </select>
         </div>
 
