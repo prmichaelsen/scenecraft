@@ -178,6 +178,122 @@ milestones:
         estimated_hours: 4
         actual_hours: null
 
+  - id: milestone_6
+    name: Git-Style Version Control
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-6-git-version-control.md
+    tasks_total: 15
+    tasks_completed: 0
+    estimated_weeks: 6
+    tasks:
+      - id: task-29
+        name: ".scenecraft directory structure & server bootstrap"
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-29-scenecraft-directory-structure.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-30
+        name: SSH-based auth system
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-30-ssh-auth-system.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-31
+        name: Admin CLI
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-31-admin-cli.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-32
+        name: UUID migration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-32-uuid-migration.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-33
+        name: Session management & working copy routing
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-33-session-management.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-34
+        name: Frontend JWT auth flow
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-34-frontend-jwt-auth.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-35
+        name: Project size view
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-35-project-size-view.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-36
+        name: Content-addressed object store & commit engine
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-36-object-store-commit-engine.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-37
+        name: Branch refs & operations
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-37-branch-refs-operations.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-38
+        name: Replace checkpoints with commits
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-38-replace-checkpoints.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-39
+        name: Branch UI in editor
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-39-branch-ui.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-40
+        name: SQL-level row-level diff engine
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-40-sql-diff-engine.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-41
+        name: Rebase engine
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-41-rebase-engine.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-42
+        name: Merge preview & auto-merge
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-42-merge-preview.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-43
+        name: Merge workspace view
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-6-git-version-control/task-43-merge-workspace-view.md
+        estimated_hours: 8
+        actual_hours: null
+
   - id: milestone_4
     name: AI Assistant Chat
     status: not_started
@@ -344,6 +460,127 @@ tasks:
       started: 2026-04-15T00:00:00Z
       completed_date: 2026-04-15T07:00:00Z
 
+  milestone_6:
+    - id: task-29
+      name: ".scenecraft directory structure & server bootstrap"
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-29-scenecraft-directory-structure.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-30
+      name: SSH-based auth system
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-30-ssh-auth-system.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-31
+      name: Admin CLI
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-31-admin-cli.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-32
+      name: UUID migration
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-32-uuid-migration.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-33
+      name: Session management & working copy routing
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-33-session-management.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-34
+      name: Frontend JWT auth flow
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-34-frontend-jwt-auth.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-35
+      name: Project size view
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-35-project-size-view.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-36
+      name: Content-addressed object store & commit engine
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-36-object-store-commit-engine.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-37
+      name: Branch refs & operations
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-37-branch-refs-operations.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-38
+      name: Replace checkpoints with commits
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-38-replace-checkpoints.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-39
+      name: Branch UI in editor
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-39-branch-ui.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-40
+      name: SQL-level row-level diff engine
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-40-sql-diff-engine.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-41
+      name: Rebase engine
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-41-rebase-engine.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
+    - id: task-42
+      name: Merge preview & auto-merge
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-42-merge-preview.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-43
+      name: Merge workspace view
+      status: not_started
+      milestone_id: milestone_6
+      file: agent/tasks/milestone-6-git-version-control/task-43-merge-workspace-view.md
+      estimated_hours: 8
+      actual_hours: null
+      started: null
   milestone_5:
     - id: task-25
       name: "Tier 1: Core mutation broadcasts + Map refactor"
@@ -469,10 +706,10 @@ tasks:
       started: null
 
 documentation:
-  design_documents: 9
-  milestone_documents: 3
+  design_documents: 10
+  milestone_documents: 4
   pattern_documents: 0
-  task_documents: 27
+  task_documents: 42
 
 progress:
   planning: 80
@@ -498,11 +735,11 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
-  - "M5: WebSocket State Sync — replace refreshTimeline with WS-pushed deltas (3 tiers)"
-  - "M2: Dynamic Panel Layout — install dockview, migrate all panels to 4-column layout"
+  - "M6: Git-Style Version Control — SSH auth, UUID migration, object store, branches, merge (15 tasks, ~85 hours)"
+  - "M2: Dynamic Panel Layout — migrate all panels to 4-column dockview layout"
   - "M3: Contribution Points — backend/frontend placeholders, plugin manifest schema"
+  - "M5: WebSocket State Sync — replace refreshTimeline with WS-pushed deltas (3 tiers)"
   - "M4: AI Assistant Chat — Claude chat panel with tool calling, streaming, MCP integration"
-  - Per-section beat source selection
 
 notes: []
 
