@@ -5,7 +5,17 @@
       "Bash(xargs sed:*)",
       "Bash(npx tsc:*)",
       "Bash(npm install:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "WebFetch(domain:dockview.dev)",
+      "WebFetch(domain:github.com)",
+      "Bash(git stash:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(python -m pytest tests/test_vcs_bootstrap.py -v)",
+      "Bash(python3 -m pytest tests/test_vcs_bootstrap.py -v)",
+      "Bash(pip3 install:*)",
+      "Bash(.venv/bin/python -c \"import jwt; print\\(jwt.__version__\\)\")",
+      "Bash(.venv/bin/python -m pytest tests/test_vcs_auth.py tests/test_vcs_bootstrap.py -v --no-header -q)",
+      "Bash(git add:*)"
     ]
   }
 }

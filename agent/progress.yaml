@@ -199,8 +199,8 @@ milestones:
         actual_hours: null
       - id: task-30
         name: SSH-based auth system
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-15T12:30:00Z
         file: agent/tasks/milestone-6-git-version-control/task-30-ssh-auth-system.md
         estimated_hours: 6
         actual_hours: null

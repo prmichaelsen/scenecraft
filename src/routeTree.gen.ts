@@ -10,7 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DemosIndexRouteImport } from './routes/demos/index'
 import { Route as ProjectNameRouteImport } from './routes/project/$name'
+import { Route as DemosPanelsRouteImport } from './routes/demos/panels'
 import { Route as ProjectNameIndexRouteImport } from './routes/project/$name/index'
 import { Route as ProjectNameEditorRouteImport } from './routes/project/$name/editor'
 
@@ -19,9 +21,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DemosIndexRoute = DemosIndexRouteImport.update({
+  id: '/demos/',
+  path: '/demos/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectNameRoute = ProjectNameRouteImport.update({
   id: '/project/$name',
   path: '/project/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DemosPanelsRoute = DemosPanelsRouteImport.update({
+  id: '/demos/panels',
+  path: '/demos/panels',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectNameIndexRoute = ProjectNameIndexRouteImport.update({
@@ -37,19 +49,25 @@ const ProjectNameEditorRoute = ProjectNameEditorRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/demos/panels': typeof DemosPanelsRoute
   '/project/$name': typeof ProjectNameRouteWithChildren
+  '/demos/': typeof DemosIndexRoute
   '/project/$name/editor': typeof ProjectNameEditorRoute
   '/project/$name/': typeof ProjectNameIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/demos/panels': typeof DemosPanelsRoute
+  '/demos': typeof DemosIndexRoute
   '/project/$name/editor': typeof ProjectNameEditorRoute
   '/project/$name': typeof ProjectNameIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/demos/panels': typeof DemosPanelsRoute
   '/project/$name': typeof ProjectNameRouteWithChildren
+  '/demos/': typeof DemosIndexRoute
   '/project/$name/editor': typeof ProjectNameEditorRoute
   '/project/$name/': typeof ProjectNameIndexRoute
 }
@@ -57,22 +75,33 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/demos/panels'
     | '/project/$name'
+    | '/demos/'
     | '/project/$name/editor'
     | '/project/$name/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/project/$name/editor' | '/project/$name'
+  to:
+    | '/'
+    | '/demos/panels'
+    | '/demos'
+    | '/project/$name/editor'
+    | '/project/$name'
   id:
     | '__root__'
     | '/'
+    | '/demos/panels'
     | '/project/$name'
+    | '/demos/'
     | '/project/$name/editor'
     | '/project/$name/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DemosPanelsRoute: typeof DemosPanelsRoute
   ProjectNameRoute: typeof ProjectNameRouteWithChildren
+  DemosIndexRoute: typeof DemosIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -84,11 +113,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/demos/': {
+      id: '/demos/'
+      path: '/demos'
+      fullPath: '/demos/'
+      preLoaderRoute: typeof DemosIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/project/$name': {
       id: '/project/$name'
       path: '/project/$name'
       fullPath: '/project/$name'
       preLoaderRoute: typeof ProjectNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/demos/panels': {
+      id: '/demos/panels'
+      path: '/demos/panels'
+      fullPath: '/demos/panels'
+      preLoaderRoute: typeof DemosPanelsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/project/$name/': {
@@ -124,7 +167,9 @@ const ProjectNameRouteWithChildren = ProjectNameRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DemosPanelsRoute: DemosPanelsRoute,
   ProjectNameRoute: ProjectNameRouteWithChildren,
+  DemosIndexRoute: DemosIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
