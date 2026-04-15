@@ -8,19 +8,16 @@ type SplitContainerProps = {
   children: [React.ReactNode, React.ReactNode]
   firstCollapsed?: boolean
   secondCollapsed?: boolean
-  collapsedSize?: number
 }
 
 const MIN_RATIO = 0.05
 const MAX_RATIO = 0.95
 const MIN_PX = 100
 const COLLAPSED_PX = 34
-const COLLAPSED_PX_VERTICAL = 28
 
 export function SplitContainer({
   direction, ratio, onRatioChange, children,
   firstCollapsed, secondCollapsed,
-  collapsedSize,
 }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isHorizontal = direction === 'horizontal'
@@ -37,20 +34,25 @@ export function SplitContainer({
     onRatioChange(clamped)
   }, [onRatioChange, isHorizontal])
 
-  const collapsedPx = collapsedSize ?? (isHorizontal ? COLLAPSED_PX : COLLAPSED_PX_VERTICAL)
   const anyCollapsed = firstCollapsed || secondCollapsed
 
   const firstStyle: React.CSSProperties = firstCollapsed
-    ? { flex: `0 0 ${collapsedPx}px`, overflow: 'hidden' }
-    : secondCollapsed
-      ? { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
-      : { flex: `0 0 ${ratio * 100}%`, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
+    ? { flex: `0 0 ${COLLAPSED_PX}px`, minWidth: 0, minHeight: 0, overflow: 'hidden' }
+    : {
+        flex: secondCollapsed ? 1 : `0 0 ${ratio * 100}%`,
+        minWidth: isHorizontal ? MIN_PX : undefined,
+        minHeight: isHorizontal ? undefined : MIN_PX,
+        overflow: 'hidden',
+      }
 
   const secondStyle: React.CSSProperties = secondCollapsed
-    ? { flex: `0 0 ${collapsedPx}px`, overflow: 'hidden' }
-    : firstCollapsed
-      ? { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
-      : { flex: 1, minWidth: isHorizontal ? MIN_PX : undefined, minHeight: isHorizontal ? undefined : MIN_PX, overflow: 'hidden' }
+    ? { flex: `0 0 ${COLLAPSED_PX}px`, minWidth: 0, minHeight: 0, overflow: 'hidden' }
+    : {
+        flex: 1,
+        minWidth: isHorizontal ? MIN_PX : undefined,
+        minHeight: isHorizontal ? undefined : MIN_PX,
+        overflow: 'hidden',
+      }
 
   return (
     <div

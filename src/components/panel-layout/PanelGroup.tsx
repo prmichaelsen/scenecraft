@@ -164,18 +164,8 @@ export function PanelGroup({
           })}
         </div>
 
-        {/* Right actions: collapse column + collapse inner + add menu */}
+        {/* Right actions: inner collapse + column collapse + add menu */}
         <div className="flex items-center gap-0 px-1 shrink-0 self-center">
-          {/* Column collapse — collapses entire parent column width-wise */}
-          {showCollapseColumn && onCollapseColumn && (
-            <button
-              onClick={onCollapseColumn}
-              className="flex items-center justify-center w-6 h-6 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
-              title="Collapse column"
-            >
-              <ArrowRightFromLine size={12} className={COLLAPSE_ROTATION[columnCollapseDirection || 'right']} />
-            </button>
-          )}
           {/* Inner collapse — collapses this group within its split */}
           {collapseDirection && (
             <button
@@ -184,6 +174,16 @@ export function PanelGroup({
               title="Collapse"
             >
               <ArrowRightFromLine size={12} className={COLLAPSE_ROTATION[collapseDirection]} />
+            </button>
+          )}
+          {/* Column collapse — collapses entire parent column width-wise */}
+          {showCollapseColumn && onCollapseColumn && (
+            <button
+              onClick={onCollapseColumn}
+              className="flex items-center justify-center w-6 h-6 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
+              title="Collapse column"
+            >
+              <ArrowRightFromLine size={12} className={COLLAPSE_ROTATION[columnCollapseDirection || 'right']} />
             </button>
           )}
           <div className="relative">

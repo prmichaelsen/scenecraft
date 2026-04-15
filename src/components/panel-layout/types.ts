@@ -7,6 +7,7 @@ export type SplitNode = {
   children: [LayoutNode, LayoutNode]
   collapsed?: boolean       // When true, this entire subtree is collapsed (used for column collapse)
   preCollapseSize?: number  // Preserved width/height before collapse
+  savedRatios?: Record<string, number>  // key = collapsePath.join(','), value = ratio before that collapse
 }
 
 export type GroupNode = {
