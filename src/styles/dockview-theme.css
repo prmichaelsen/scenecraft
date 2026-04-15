@@ -39,7 +39,7 @@
   padding: 0 10px;
   font-size: 13px;
   height: 35px;
-  border-right: 1px solid #1f2937;
+  border-right: none;
 }
 
 /* Active tab bottom highlight (blue underline) */
