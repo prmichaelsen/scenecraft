@@ -36,43 +36,59 @@ export function PanelGroup({
 }: PanelGroupProps) {
   const [menuOpen, setMenuOpen] = useState(false)
 
-  // Collapsed state — always renders as a thin bar with vertical tab labels on the right side
+  // Collapsed state
   if (group.collapsed) {
     const isVerticalCollapse = collapseDirection === 'up' || collapseDirection === 'down'
+
+    const expandButton = (
+      <button
+        onClick={() => onExpand(group.id)}
+        className="flex items-center justify-center shrink-0 w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
+        title="Expand"
+      >
+        <ArrowRightFromLine size={14} className={COLLAPSE_ROTATION[collapseDirection || 'right']} />
+      </button>
+    )
+
+    const tabLabels = group.tabs.map((tabId) => {
+      const def = panels[tabId]
+      if (!def) return null
+      return (
+        <button
+          key={tabId}
+          onClick={() => { onExpand(group.id); onTabActivate(group.id, tabId) }}
+          className="text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 truncate"
+          style={isVerticalCollapse
+            ? { padding: '2px 8px' }
+            : { writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '8px 6px', borderBottom: '1px solid #1f2937' }
+          }
+        >
+          {def.title}
+        </button>
+      )
+    })
+
+    if (isVerticalCollapse) {
+      // Horizontal bar — tabs on left, expand button floated to right
+      return (
+        <div
+          className="bg-[#111827] flex items-center overflow-hidden border-b border-gray-800"
+          style={{ height: 28, width: '100%' }}
+        >
+          <div className="flex flex-row gap-0 overflow-hidden flex-1">{tabLabels}</div>
+          {expandButton}
+        </div>
+      )
+    }
+
+    // Vertical bar — expand button at top, tabs below
     return (
       <div
-        className="bg-[#111827] flex overflow-hidden border-b border-gray-800"
-        style={isVerticalCollapse
-          ? { height: 28, flexDirection: 'row', width: '100%', alignItems: 'center' }
-          : { width: 34, flexDirection: 'column', height: '100%' }
-        }
+        className="bg-[#111827] flex flex-col overflow-hidden"
+        style={{ width: 34, height: '100%' }}
       >
-        <button
-          onClick={() => onExpand(group.id)}
-          className="flex items-center justify-center shrink-0 w-7 h-7 text-gray-500 hover:text-gray-200 hover:bg-white/10 rounded"
-          title="Expand"
-        >
-          <ArrowRightFromLine size={14} className={COLLAPSE_ROTATION[collapseDirection || 'right']} />
-        </button>
-        <div className={`flex gap-0 overflow-hidden ${isVerticalCollapse ? 'flex-row' : 'flex-col'}`}>
-          {group.tabs.map((tabId) => {
-            const def = panels[tabId]
-            if (!def) return null
-            return (
-              <button
-                key={tabId}
-                onClick={() => { onExpand(group.id); onTabActivate(group.id, tabId) }}
-                className="text-[11px] text-gray-400 hover:text-gray-200 hover:bg-white/5 truncate"
-                style={isVerticalCollapse
-                  ? { padding: '2px 8px' }
-                  : { writingMode: 'vertical-lr', textOrientation: 'mixed', padding: '8px 6px', borderBottom: '1px solid #1f2937' }
-                }
-              >
-                {def.title}
-              </button>
-            )
-          })}
-        </div>
+        {expandButton}
+        <div className="flex flex-col gap-0 overflow-hidden flex-1">{tabLabels}</div>
       </div>
     )
   }
