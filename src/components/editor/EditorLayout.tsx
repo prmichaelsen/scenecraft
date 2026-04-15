@@ -14,12 +14,13 @@ import { SettingsPanel } from './SettingsPanel'
 import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
 import { ExtensionsPanel } from './ExtensionsPanel'
+import { ChatPanel } from './ChatPanel'
 import { useRouter } from '@tanstack/react-router'
 import { ArrowRightFromLine } from 'lucide-react'
 import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
 import { CurrentTimeProvider } from './CurrentTimeContext'
-import { PreviewProvider } from './PreviewContext'
+import { PreviewProvider, usePreview } from './PreviewContext'
 import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
 import { PreviewDockPanel } from './PreviewPanel'
@@ -99,6 +100,7 @@ function BinDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
 
 function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
   const { selectedKeyframe, selectedTransition, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
+  const { setHoverPreviewUrl } = usePreview()
   const router = useRouter()
 
   if (selectedKeyframe) {
@@ -118,6 +120,7 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
           audioDescriptions={params.data.audioDescriptions}
           audioEvents={params.data.audioEvents}
           initialPromptRoster={params.data.promptRoster}
+          onHoverPreview={setHoverPreviewUrl}
         />
       </DockPanel>
     )
@@ -140,6 +143,7 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
           onDuplicateToNext={() => {}}
           onDuplicateToPrev={() => {}}
           onDataChange={() => { onTransitionDataChange?.(); router.invalidate() }}
+          onHoverPreview={setHoverPreviewUrl}
         />
       </DockPanel>
     )
@@ -154,6 +158,10 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
 
 function ExtensionsDockPanel() {
   return <DockPanel><ExtensionsPanel onClose={() => {}} /></DockPanel>
+}
+
+function ChatDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
+  return <DockPanel><ChatPanel projectName={params.data.projectName} onClose={() => {}} /></DockPanel>
 }
 
 function PlaceholderPanel({ params }: IDockviewPanelProps<{ label: string }>) {
@@ -310,6 +318,7 @@ const components = {
   bin: BinDockPanel,
   properties: PropertiesDockPanel,
   extensions: ExtensionsDockPanel,
+  chat: ChatDockPanel,
   placeholder: PlaceholderPanel,
 } satisfies Record<string, React.FunctionComponent<IDockviewPanelProps<any>>>
 
@@ -421,9 +430,9 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   // Col 4 bottom: Chat (split inside right sidebar)
   api.addPanel({
     id: 'chat',
-    component: 'placeholder',
+    component: 'chat',
     title: 'Chat',
-    params: { label: 'Chat (coming soon)' },
+    params: { data },
     position: { referencePanel: 'sections', direction: 'below' },
   })
 }
