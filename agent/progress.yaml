@@ -185,7 +185,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-6-git-version-control.md
     tasks_total: 15
-    tasks_completed: 6
+    tasks_completed: 7
     estimated_weeks: 6
     tasks:
       - id: task-29
@@ -235,8 +235,10 @@ milestones:
         actual_hours: null
       - id: task-34
         name: Frontend JWT auth flow
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-16T01:00:00Z
+        completed_date: 2026-04-16T01:30:00Z
+        actual_hours: 0.5
         file: agent/tasks/milestone-6-git-version-control/task-34-frontend-jwt-auth.md
         estimated_hours: 4
         actual_hours: null
