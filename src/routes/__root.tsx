@@ -1,6 +1,8 @@
 import { HeadContent, Scripts, createRootRoute, Outlet } from '@tanstack/react-router'
 import { ToastProvider, StandaloneToastContainer } from '@prmichaelsen/pretty-toasts/standalone'
+import { useEffect } from 'react'
 import appCss from '../styles.css?url'
+import { installAuthFetch } from '../lib/auth'
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -22,6 +24,9 @@ export const Route = createRootRoute({
 })
 
 function RootLayout() {
+  useEffect(() => {
+    installAuthFetch()
+  }, [])
   return (
     <RootDocument>
       <Outlet />
