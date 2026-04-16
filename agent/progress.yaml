@@ -308,6 +308,73 @@ milestones:
         estimated_hours: 8
         actual_hours: null
 
+  - id: milestone_7
+    name: Clip Trim, Rolling Edit, Time Remap, and Snap
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-7-clip-trim-and-snap.md
+    tasks_total: 8
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-44
+        name: Schema migration + undo triggers
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-44-schema-migration.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-45
+        name: Backend trim support
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-45-backend-trim-support.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-46
+        name: Frontend trim plumbing
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-46-frontend-trim-plumbing.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-47
+        name: Bin/duplicate/split trim propagation
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-47-bin-duplicate-split.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-48
+        name: Trim drag UI — right edge only
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-48-trim-drag-right.md
+        estimated_hours: 10
+        actual_hours: null
+      - id: task-49
+        name: Left-edge drag + modifier modes
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-49-left-edge-and-modifiers.md
+        estimated_hours: 10
+        actual_hours: null
+      - id: task-50
+        name: Snap toggle infrastructure
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-50-snap-toggle.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-51
+        name: Snap targets + feedback
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-51-snap-targets.md
+        estimated_hours: 5
+        actual_hours: null
+
   - id: milestone_4
     name: AI Assistant Chat
     status: not_started
@@ -618,6 +685,71 @@ tasks:
       milestone_id: milestone_5
       file: agent/tasks/milestone-5-websocket-state-sync/task-27-tier3-extended-entities.md
       estimated_hours: 4
+      actual_hours: null
+      started: null
+  milestone_7:
+    - id: task-44
+      name: Schema migration + undo triggers
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-44-schema-migration.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-45
+      name: Backend trim support
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-45-backend-trim-support.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-46
+      name: Frontend trim plumbing
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-46-frontend-trim-plumbing.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-47
+      name: Bin/duplicate/split trim propagation
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-47-bin-duplicate-split.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-48
+      name: Trim drag UI — right edge only
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-48-trim-drag-right.md
+      estimated_hours: 10
+      actual_hours: null
+      started: null
+    - id: task-49
+      name: Left-edge drag + modifier modes
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-49-left-edge-and-modifiers.md
+      estimated_hours: 10
+      actual_hours: null
+      started: null
+    - id: task-50
+      name: Snap toggle infrastructure
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-50-snap-toggle.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-51
+      name: Snap targets + feedback
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-51-snap-targets.md
+      estimated_hours: 5
       actual_hours: null
       started: null
   milestone_4:
