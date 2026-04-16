@@ -185,7 +185,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-6-git-version-control.md
     tasks_total: 15
-    tasks_completed: 4
+    tasks_completed: 5
     estimated_weeks: 6
     tasks:
       - id: task-29
@@ -247,8 +247,10 @@ milestones:
         actual_hours: null
       - id: task-36
         name: Content-addressed object store & commit engine
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-16T00:00:00Z
+        completed_date: 2026-04-16T00:30:00Z
+        actual_hours: 0.5
         file: agent/tasks/milestone-6-git-version-control/task-36-object-store-commit-engine.md
         estimated_hours: 8
         actual_hours: null
