@@ -203,7 +203,7 @@ The snap toggle is a global editor state that must exist before snap logic can b
 
 **Persistence**: localStorage key `scenecraft-snap-enabled`, value `'1'` (on) or `'0'` (off). Survives across browser sessions.
 
-**No conflict check**: `s` key is currently unbound in Timeline.tsx (confirmed via `src/lib/hotkeys.ts` review — no existing `s` binding). Future "split" shortcut (a common `s` in other editors) can use `shift+s` or `cmd+k` instead.
+**No conflict check**: `s` key is currently unbound in Timeline.tsx (confirmed via `src/lib/hotkeys.ts` review — no existing `s` binding). Future split-clip shortcut will use `cmd+k` / `ctrl+k` (matching Premiere Pro) to avoid stepping on `s` for snap.
 
 ---
 
@@ -407,7 +407,7 @@ Phase 2 and 3 UI changes ship without flags (new drag handles, no existing UI to
 
 ## Future Considerations
 
-- **Split tool** (cmd+k or similar) — slice a clip at the playhead. May conflict with `s` key; use `shift+s` or `cmd+k` when added.
+- **Split tool** — slice a clip at the playhead. Shortcut: `cmd+k` (Mac) / `ctrl+k` (Win), matching Premiere Pro's razor/add-edit binding. Avoids conflict with `s` for snap.
 - **Per-empty-tr `fill_mode`** (hold_prev / hold_next / black) — currently always black; user override later if needed.
 - **Drag-and-drop video assets onto timeline** — convert empty tr to content tr by dropping a bin video.
 - **Keyboard trim** (`[` / `]` at playhead) — trim to playhead shortcut.
