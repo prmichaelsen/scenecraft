@@ -145,24 +145,65 @@ All changes within a gesture are reversible (drag back to undo). Commits on mous
 
 ### Snap
 
-**Targets** (precomputed per-drag as sorted time array, binary search for nearest):
-- Other keyframe timestamps
-- Transition boundaries (same as kf timestamps)
-- 0:00 (start)
-- Playhead position
-- ~~Beat markers~~ (excluded)
-- ~~Section boundaries~~ (excluded)
-- ~~Ruler marks~~ (excluded)
+Snap is a drag-time alignment system that pulls the dragged position to nearby meaningful time markers. Applies to all drag modes (trim / rolling / ripple / time remap / keyframe drag).
 
-**Threshold**: 8 pixels (fixed regardless of zoom).
+**Targets** (precomputed once at drag-start as a sorted time array, binary-searched for nearest on each mouse-move):
+- Other keyframe timestamps (including the from/to kfs of all trs)
+- Transition boundaries (these are the same kfs, listed separately here for clarity — a tr's `from_kf.timestamp` and `to_kf.timestamp` are snap candidates)
+- 0:00 (timeline origin)
+- Playhead position (current `currentTime`)
+- ~~Beat markers~~ — NOT a snap target (opt-out; may enable as future preference)
+- ~~Section boundaries~~ — NOT a snap target
+- ~~Ruler marks~~ — NOT a snap target (too noisy, every second would snap)
 
-**Feedback**: vertical blue line at snap target + sticky cursor (drag position holds until threshold exceeded).
+The dragged node itself is excluded from the target set (can't snap to your own position).
 
-**Toggle**:
-- `s` key when not focused on text input (check `document.activeElement.tagName !== 'INPUT'|'TEXTAREA'`)
-- Toolbar button with magnet icon next to Transform (T) button
-- State persists to localStorage (`scenecraft-snap-enabled`)
-- Default: ON
+**Threshold**: 8 pixels (fixed regardless of zoom level). At any zoom, "within 8px visually" triggers a snap. Time equivalent: `8 / px_per_second` at current zoom.
+
+**Snap math** (per mouse-move frame during drag):
+```
+for each target in targets:
+  target_px = target * px_per_second
+  if abs(mouse_px - target_px) <= 8:
+    snap to target (use target value instead of mouse value)
+    record snapped_target for visual feedback
+    break
+```
+
+**Visual feedback** (both applied simultaneously):
+1. **Vertical blue line** — rendered at the snap target's x-coordinate during the drag, so the user sees which specific target they're snapping to
+2. **Sticky cursor** — the dragged handle stays locked to the snap target until the cursor moves more than 8px away, giving tactile "click-in" feel
+
+**Performance**:
+- Snap targets precomputed at drag-start, not re-computed on every mouse-move
+- Sorted array + binary search for nearest = O(log n) lookup per frame
+- Handles 1000+ targets without performance impact
+
+**Toggle behavior** (must be implemented for snap to be usable):
+
+The snap toggle is a global editor state that must exist before snap logic can be gated behind it. Implementation:
+
+1. **Snap state store**: new React context or store holding a single boolean `snapEnabled`
+   - Initial value: read from `localStorage.getItem('scenecraft-snap-enabled')`; default to `true` if absent
+   - Setter: updates state AND writes to localStorage
+2. **Keyboard handler** (Timeline.tsx or a dedicated hotkeys hook):
+   - Listen for `keydown` with `key === 's'` (case-insensitive)
+   - Bail early if any modifier is held (`ctrlKey/metaKey/shiftKey/altKey`)
+   - Bail early if `document.activeElement.tagName` is `INPUT`, `TEXTAREA`, or has `contentEditable='true'`
+   - Call the snap toggle setter, show a brief toast ("Snap: On" / "Snap: Off")
+3. **Toolbar button**: new button in the main toolbar area (next to the Transform T button at `Timeline.tsx:1969-1976`)
+   - Uses a magnet icon (lucide `Magnet` component)
+   - Pressed/active style when `snapEnabled === true`
+   - `onClick` calls the same setter
+   - `title` attribute: "Snap (S)"
+4. **Drag integration**: every drag handler reads `snapEnabled` from the store. If false, skip snap logic entirely (no target computation, no feedback, normal drag).
+5. **Cursor hint during drag**: if snap is OFF, show no snap feedback. If ON, show blue line when snapping is active.
+
+**Default state**: ON (conservative — users opt out for fine control, consistent with Premiere/Resolve).
+
+**Persistence**: localStorage key `scenecraft-snap-enabled`, value `'1'` (on) or `'0'` (off). Survives across browser sessions.
+
+**No conflict check**: `s` key is currently unbound in Timeline.tsx (confirmed via `src/lib/hotkeys.ts` review — no existing `s` binding). Future "split" shortcut (a common `s` in other editors) can use `shift+s` or `cmd+k` instead.
 
 ---
 
@@ -209,9 +250,17 @@ All changes within a gesture are reversible (drag back to undo). Commits on mous
 1. **Modifier handlers**: shift+drag (ripple), cmd+drag (time remap)
 2. **Left-edge trim**: `[>` zone + modifiers (mirror of right edge)
 3. **Rolling edit**: `<|>` zone (plain drag)
-4. **Snap targets**: precompute sorted array of snap candidates per drag
-5. **Snap threshold + feedback**: 8px hit-test, blue line overlay, sticky drag
-6. **Snap toggle**: `s` key handler, magnet toolbar button, localStorage persistence
+4. **Snap toggle infrastructure** (prerequisite for snap logic):
+   - Snap state store/context holding `snapEnabled: boolean`
+   - Initial value from `localStorage['scenecraft-snap-enabled']`, default `true`
+   - Setter updates state + persists to localStorage
+   - `s` key handler (gated on no modifiers, no text-input focus)
+   - Magnet toolbar button next to Transform T button (`Timeline.tsx:1969-1976` area)
+   - Toast feedback on toggle ("Snap: On" / "Snap: Off")
+5. **Snap target computation**: at drag-start, build sorted array of all snap candidates (kfs, tr boundaries, 0:00, playhead) excluding the dragged node
+6. **Snap hit-testing**: on each mouse-move during drag, if `snapEnabled`, binary-search for nearest target within 8px; if found, replace mouse value with target value
+7. **Snap visual feedback**: blue vertical line rendered at snapped target's x-coordinate; sticky cursor behavior until 8px threshold exceeded
+8. **Integration with drag handlers**: every drag handler (trim/rolling/ripple/remap/kf-drag) checks `snapEnabled` before running snap logic — if off, normal drag with no feedback
 
 ---
 
