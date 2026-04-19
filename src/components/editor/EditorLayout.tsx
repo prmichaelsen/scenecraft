@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useCallback, useImperativeHandle, forwardRef, useState, useEffect } from 'react'
+import { createContext, useContext, useRef, useCallback, useImperativeHandle, forwardRef, useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react'
 import {
   DockviewReact, DockviewDefaultTab,
   type DockviewReadyEvent, type DockviewApi,
@@ -15,9 +15,10 @@ import { NarrativeSectionPanel } from './NarrativeSectionPanel'
 import { BinPanel } from './BinPanel'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { ChatPanel } from './ChatPanel'
+import { MCPPanel } from './MCPPanel'
 import { useRouter } from '@tanstack/react-router'
 import { ArrowRightFromLine } from 'lucide-react'
-import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews } from '@/lib/workspace-client'
+import { saveWorkspaceView, fetchWorkspaceView, fetchWorkspaceViews, deleteWorkspaceView } from '@/lib/workspace-client'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
 import { CurrentTimeProvider } from './CurrentTimeContext'
 import { PreviewProvider, usePreview } from './PreviewContext'
@@ -161,14 +162,27 @@ function ExtensionsDockPanel() {
   return <DockPanel><ExtensionsPanel onClose={() => {}} /></DockPanel>
 }
 
-function ChatDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
-  return <DockPanel><ChatPanel projectName={params.data.projectName} onClose={() => {}} /></DockPanel>
+function ChatDockPanel({ params }: IDockviewPanelProps<{ data?: EditorData; label?: string }>) {
+  // Saved layouts from before chat was a real component may arrive with no data.
+  const projectName = params?.data?.projectName
+  if (!projectName) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-gray-900">
+        {params?.label || 'Chat unavailable — reset layout'}
+      </div>
+    )
+  }
+  return <DockPanel><ChatPanel projectName={projectName} onClose={() => {}} /></DockPanel>
 }
 
-function PlaceholderPanel({ params }: IDockviewPanelProps<{ label: string }>) {
+function MCPDockPanel() {
+  return <DockPanel><MCPPanel onClose={() => {}} /></DockPanel>
+}
+
+function PlaceholderPanel({ params }: IDockviewPanelProps<{ label?: string }>) {
   return (
     <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-gray-900">
-      {params.label}
+      {params?.label ?? ''}
     </div>
   )
 }
@@ -196,6 +210,7 @@ const ADDABLE_PANELS = [
   { id: 'settings', component: 'settings', title: 'Settings' },
   { id: 'properties', component: 'placeholder', title: 'Properties' },
   { id: 'extensions', component: 'extensions', title: 'Extensions' },
+  { id: 'mcp', component: 'mcp', title: 'MCP' },
 ] as const
 
 // Track collapsed state + saved pre-collapse dims per group
@@ -320,6 +335,7 @@ const components = {
   properties: PropertiesDockPanel,
   extensions: ExtensionsDockPanel,
   chat: ChatDockPanel,
+  mcp: MCPDockPanel,
   placeholder: PlaceholderPanel,
 } satisfies Record<string, React.FunctionComponent<IDockviewPanelProps<any>>>
 
@@ -438,6 +454,51 @@ function buildDefaultLayout(api: DockviewApi, data: EditorData) {
   })
 }
 
+// --- Error Boundary ---
+//
+// dockview's layout restore + panel rendering can throw if a saved _autosave
+// references a panel whose component or expected params have changed since
+// the layout was saved. Without a boundary that error propagates up and
+// renders the whole editor blank. On catch we clear the bad _autosave
+// server-side and soft-reload so the next mount gets the default layout.
+
+type ErrorBoundaryProps = { projectName: string; children: ReactNode }
+type ErrorBoundaryState = { error: Error | null; clearing: boolean }
+
+class LayoutErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null, clearing: false }
+
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[EditorLayout] panel render crashed:', error, info.componentStack)
+    if (this.state.clearing) return
+    this.setState({ clearing: true })
+    deleteWorkspaceView(this.props.projectName, '_autosave')
+      .catch(() => {})
+      .finally(() => {
+        // Soft reload so dockview remounts cleanly with the default layout.
+        if (typeof window !== 'undefined') window.location.reload()
+      })
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="h-full flex items-center justify-center bg-gray-900 text-gray-400 text-sm">
+          <div className="text-center space-y-2">
+            <div>Layout failed to render — resetting to default…</div>
+            <div className="text-[10px] text-gray-600 font-mono max-w-md truncate">{this.state.error.message}</div>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // --- EditorLayout Component ---
 
 export type EditorLayoutHandle = {
@@ -509,13 +570,15 @@ export const EditorLayout = forwardRef<EditorLayoutHandle, EditorLayoutProps>(fu
     <PreviewProvider>
     <EditorStateProvider>
     <EditorLayoutContext.Provider value={{ api: apiRef.current }}>
-      <DockviewReact
-        components={components}
-        defaultTabComponent={CustomTab}
-        rightHeaderActionsComponent={GroupActions}
-        onReady={onReady}
-        className="h-full"
-      />
+      <LayoutErrorBoundary projectName={data.projectName}>
+        <DockviewReact
+          components={components}
+          defaultTabComponent={CustomTab}
+          rightHeaderActionsComponent={GroupActions}
+          onReady={onReady}
+          className="h-full"
+        />
+      </LayoutErrorBoundary>
     </EditorLayoutContext.Provider>
     </EditorStateProvider>
     </PreviewProvider>

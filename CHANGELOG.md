@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0] - 2026-04-19
+
+### Added
+- MCP integrations panel — dockview sibling panel listing OAuth-backed services (Remember today) with Connect / Disconnect, live token expiry, refresh-token status, and inline errors
+- `MCP` tab in the default chat panel group so the connection UI is reachable without opening the add-panel menu
+- `validateLayout` helper in `@/components/panel-layout` — sanitises a candidate `LayoutNode` tree against the current panel registry; drops unknown tab IDs and rejects malformed splits/groups
+
+### Fixed
+- Editor no longer crashes on mount when `_autosave_v3` contains a malformed node. `EditorPanelLayout` now validates saved layouts; invalid saves are discarded and overwritten with the default layout. Prevents "Cannot read properties of undefined (reading '0')" in `PanelLayout` tree traversal.
+
+### Changed
+- Remember connect/disconnect moved out of the chat input footer into the MCP panel
+- `ChatDockPanel` and `PlaceholderPanel` defensively handle missing `params` from legacy dockview saves
+- `EditorLayout` (dockview variant, currently unused) wraps `DockviewReact` in a `LayoutErrorBoundary` that clears a corrupt `_autosave` and soft-reloads
+
 ## [0.8.3] - 2026-04-18
 
 ### Added

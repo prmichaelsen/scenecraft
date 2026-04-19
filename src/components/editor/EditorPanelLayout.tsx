@@ -1,7 +1,7 @@
 import { useRef, useCallback, useEffect, forwardRef, useImperativeHandle, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData } from '@/routes/project/$name/editor'
-import { PanelLayout, type LayoutNode, type PanelRegistry } from '@/components/panel-layout'
+import { PanelLayout, validateLayout, type LayoutNode, type PanelRegistry } from '@/components/panel-layout'
 import { CurrentTimeProvider } from './CurrentTimeContext'
 import { PreviewProvider } from './PreviewContext'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
@@ -18,6 +18,7 @@ import { ExtensionsPanel } from './ExtensionsPanel'
 import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
 import { ChatPanel } from './ChatPanel'
+import { MCPPanel } from './MCPPanel'
 import { saveWorkspaceView, fetchWorkspaceView } from '@/lib/workspace-client'
 
 // --- Panel wrapper ---
@@ -157,6 +158,10 @@ function ChatPanelComponent() {
   return <Panel><ChatPanel projectName={data.projectName} onClose={() => {}} /></Panel>
 }
 
+function MCPPanelComponent() {
+  return <Panel><MCPPanel onClose={() => {}} /></Panel>
+}
+
 // --- Panel registry ---
 
 const panels: PanelRegistry = {
@@ -170,6 +175,7 @@ const panels: PanelRegistry = {
   extensions:  { component: ExtensionsPanelComponent, title: 'Extensions' },
   sections:    { component: SectionsPanelComponent, title: 'Sections' },
   chat:        { component: ChatPanelComponent, title: 'Chat' },
+  mcp:         { component: MCPPanelComponent, title: 'MCP' },
 }
 
 // --- Default layout ---
@@ -208,7 +214,7 @@ const defaultLayout: LayoutNode = {
           ratio: 0.6,
           children: [
             { type: 'group', id: 'sidebar-group', tabs: ['sections'], activeTab: 'sections' },
-            { type: 'group', id: 'chat-group', tabs: ['chat'], activeTab: 'chat' },
+            { type: 'group', id: 'chat-group', tabs: ['chat', 'mcp'], activeTab: 'chat' },
           ],
         },
       ],
@@ -232,15 +238,26 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
   const loadedRef = useRef(false)
   const [initialLayout, setInitialLayout] = useState<LayoutNode>(defaultLayout)
 
-  // Load saved layout on mount
+  // Load saved layout on mount. Saved layouts from older schemas or with
+  // tabs referring to removed panels would crash the tree-traversal inside
+  // PanelLayout (e.g. `children[0]` on an undefined split node), so the
+  // saved tree is sanitised by validateLayout. If it fails validation, we
+  // fall back to the default layout and discard the stale save.
   useEffect(() => {
     if (loadedRef.current) return
     loadedRef.current = true
-    fetchWorkspaceView(data.projectName, '_autosave_v3').then((saved) => {
-      if (saved && typeof saved === 'object') {
-        setInitialLayout(saved as LayoutNode)
-      }
-    }).catch(() => {})
+    fetchWorkspaceView(data.projectName, '_autosave_v3')
+      .then((saved) => {
+        if (!saved) return
+        const validated = validateLayout(saved, panels)
+        if (validated) {
+          setInitialLayout(validated)
+        } else {
+          console.warn('[EditorPanelLayout] saved _autosave_v3 failed validation, resetting to default')
+          saveWorkspaceView(data.projectName, '_autosave_v3', defaultLayout).catch(() => {})
+        }
+      })
+      .catch(() => {})
   }, [data.projectName])
 
   useImperativeHandle(ref, () => ({

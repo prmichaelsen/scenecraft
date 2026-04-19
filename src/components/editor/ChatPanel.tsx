@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { ChatWebSocket, fetchChatHistory, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
-import { fetchOAuthStatus, startOAuthFlow, openOAuthPopup, disconnectOAuth, type OAuthStatus } from '@/lib/oauth-client'
 
 type ChatPanelProps = {
   projectName: string
@@ -245,86 +244,10 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
           <span className={`text-[9px] ${connected ? 'text-green-600' : 'text-gray-600'}`}>
             {connected ? 'Connected' : 'Disconnected'}
           </span>
-          <RememberConnectButton />
           <span className="text-[9px] text-gray-600">Shift+Enter to send</span>
         </div>
       </div>
     </div>
-  )
-}
-
-// --- Remember Connection Button ---
-
-function RememberConnectButton() {
-  const [status, setStatus] = useState<OAuthStatus | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const refresh = useCallback(async () => {
-    try {
-      setStatus(await fetchOAuthStatus('remember'))
-    } catch {
-      setStatus({ connected: false })
-    }
-  }, [])
-
-  useEffect(() => { refresh() }, [refresh])
-
-  const handleConnect = useCallback(async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const url = await startOAuthFlow('remember')
-      const result = await openOAuthPopup(url)
-      if (!result.success) {
-        setError(result.message || 'Connection failed')
-      }
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }, [refresh])
-
-  const handleDisconnect = useCallback(async () => {
-    if (!confirm('Disconnect Remember? You can reconnect anytime.')) return
-    setBusy(true)
-    setError(null)
-    try {
-      await disconnectOAuth('remember')
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }, [refresh])
-
-  if (!status) return null
-
-  const label = status.connected ? '✓ Remember' : 'Connect Remember'
-  const title = error
-    ? error
-    : status.connected
-      ? `Connected. Token expires ${new Date(status.expires_at).toLocaleString()}. Click to disconnect.`
-      : 'Connect your Remember memory'
-
-  return (
-    <button
-      onClick={status.connected ? handleDisconnect : handleConnect}
-      disabled={busy}
-      title={title}
-      className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
-        error
-          ? 'text-red-400 hover:text-red-300 bg-red-900/20'
-          : status.connected
-            ? 'text-green-500/80 hover:text-green-400'
-            : 'text-blue-400 hover:text-blue-300'
-      } ${busy ? 'opacity-60' : ''}`}
-    >
-      {busy ? '...' : label}
-    </button>
   )
 }
 
