@@ -49,7 +49,15 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
       case 'tool_result':
         setStreamingBlocks(prev => prev.map(b =>
           b.type === 'tool_use' && b.id === msg.toolResult.id
-            ? { ...b, status: msg.toolResult.isError ? 'error' : 'success' } as StreamingBlock
+            ? { ...b, status: msg.toolResult.isError ? 'error' : 'success', progress: undefined } as StreamingBlock
+            : b
+        ))
+        break
+
+      case 'tool_progress':
+        setStreamingBlocks(prev => prev.map(b =>
+          b.type === 'tool_use' && b.id === msg.toolProgress.id
+            ? { ...b, progress: msg.toolProgress } as StreamingBlock
             : b
         ))
         break
@@ -403,7 +411,7 @@ function StreamingMessage({ blocks, onElicitationResponse }: {
             )
           }
           if (block.type === 'tool_use') {
-            return <ToolCallBadge key={block.id} name={block.name} status={block.status} />
+            return <ToolCallBadge key={block.id} name={block.name} status={block.status} progress={block.progress} />
           }
           if (block.type === 'elicitation') {
             return (
@@ -483,7 +491,11 @@ function ElicitationCard({ request, resolution, onRespond }: {
 
 // --- Tool Call Badge ---
 
-function ToolCallBadge({ name, status }: { name: string; status: 'pending' | 'success' | 'error' }) {
+function ToolCallBadge({ name, status, progress }: {
+  name: string
+  status: 'pending' | 'success' | 'error'
+  progress?: { pct: number; message: string }
+}) {
   const colors = {
     pending: 'bg-blue-900/20 text-blue-400 border-blue-800/30',
     success: 'bg-green-900/20 text-green-400 border-green-800/30',
@@ -499,6 +511,11 @@ function ToolCallBadge({ name, status }: { name: string; status: 'pending' | 'su
     <span className={`inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded border ${colors[status]}`}>
       <span className={status === 'pending' ? 'animate-spin' : ''}>{icons[status]}</span>
       <span className="font-mono">{name}</span>
+      {status === 'pending' && progress && (
+        <span className="text-blue-300/80 font-mono">
+          · {Math.round(progress.pct * 100)}% {progress.message}
+        </span>
+      )}
     </span>
   )
 }

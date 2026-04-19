@@ -466,11 +466,12 @@ milestones:
         actual_hours: null
       - id: task-56
         name: Creative generation tools (generate_keyframe_candidates, generate_transition_candidates)
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-18T04:30:00Z
         file: agent/tasks/milestone-4-ai-assistant-chat/task-56-creative-generation-tools.md
         estimated_hours: 10
         actual_hours: null
+        notes: "Core flow wired: kickoff helpers in chat_generation.py, tool_progress WS events, elicitation cost gate, end-to-end tests pass with mocked Imagen/Veo. Remaining: job cancellation on chat disconnect, MVP validation against real API."
 
 tasks:
   milestone_1:

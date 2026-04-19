@@ -12,10 +12,18 @@ export type ElicitationRequest = {
   schema?: Record<string, unknown>
 }
 
+export type ToolProgress = {
+  id: string
+  phase: string
+  pct: number
+  message: string
+}
+
 export type ServerMessage =
   | { type: 'chunk'; content: string }
   | { type: 'tool_call'; toolCall: { id: string; name: string; input: Record<string, unknown> } }
   | { type: 'tool_result'; toolResult: { id: string; output: unknown; isError?: boolean }; durationMs?: number }
+  | { type: 'tool_progress'; toolProgress: ToolProgress }
   | { type: 'message'; message: PersistedMessage }
   | { type: 'status'; statusMessage?: string }
   | { type: 'elicitation'; elicitation: ElicitationRequest }
@@ -52,7 +60,7 @@ export type ContentBlock =
 
 export type StreamingBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; status: 'pending' | 'success' | 'error' }
+  | { type: 'tool_use'; id: string; name: string; status: 'pending' | 'success' | 'error'; progress?: ToolProgress }
   | { type: 'elicitation'; elicitation: ElicitationRequest; resolution: 'pending' | 'accepted' | 'declined' }
 
 // --- WebSocket Chat Client ---
