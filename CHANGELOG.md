@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3] - 2026-04-18
+
+### Added
+- Wire real ChatPanel into EditorPanelLayout (replaces "Chat (coming soon)" placeholder in v2 layout)
+
+### Fixed
+- Chat: user messages no longer double-render — server echo of optimistic user message replaces the local placeholder instead of appending
+
 ## [0.8.2] - 2026-04-12
 
 ### Fixed

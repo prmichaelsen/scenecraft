@@ -54,7 +54,20 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
         break
 
       case 'message':
-        setMessages(prev => [...prev, msg.message])
+        setMessages(prev => {
+          if (msg.message.role === 'user' && prev.length > 0) {
+            const last = prev[prev.length - 1]
+            if (
+              last.role === 'user' &&
+              typeof last.content === 'string' &&
+              typeof msg.message.content === 'string' &&
+              last.content === msg.message.content
+            ) {
+              return [...prev.slice(0, -1), msg.message]
+            }
+          }
+          return [...prev, msg.message]
+        })
         setStreamingBlocks([])
         scrollToBottom()
         break

@@ -17,6 +17,7 @@ import { BinPanel } from './BinPanel'
 import { ExtensionsPanel } from './ExtensionsPanel'
 import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
+import { ChatPanel } from './ChatPanel'
 import { saveWorkspaceView, fetchWorkspaceView } from '@/lib/workspace-client'
 
 // --- Panel wrapper ---
@@ -151,8 +152,9 @@ function ExtensionsPanelComponent() {
   return <Panel><ExtensionsPanel onClose={() => {}} /></Panel>
 }
 
-function ChatPlaceholder() {
-  return <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-[#111827]">Chat (coming soon)</div>
+function ChatPanelComponent() {
+  const data = useEditorData()
+  return <Panel><ChatPanel projectName={data.projectName} onClose={() => {}} /></Panel>
 }
 
 // --- Panel registry ---
@@ -167,7 +169,7 @@ const panels: PanelRegistry = {
   settings:    { component: SettingsPanelComponent, title: 'Settings' },
   extensions:  { component: ExtensionsPanelComponent, title: 'Extensions' },
   sections:    { component: SectionsPanelComponent, title: 'Sections' },
-  chat:        { component: ChatPlaceholder, title: 'Chat' },
+  chat:        { component: ChatPanelComponent, title: 'Chat' },
 }
 
 // --- Default layout ---
