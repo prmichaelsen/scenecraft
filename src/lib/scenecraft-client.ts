@@ -712,7 +712,17 @@ export async function postImport(project: string, sourcePath: string, timestamp?
   }>
 }
 
-export async function postSelectTransitions(project: string, selections: Record<string, number>) {
+/**
+ * selections map values:
+ *   - string (UUID): pool_segment_id — preferred; stable under merges and candidate insertion
+ *   - number: legacy 1-based variant rank — backend resolves against candidate list
+ *   - null: deselect
+ * Keys: "tr_NNN_slot_N" or "tr_NNN" (shorthand for slot 0)
+ */
+export async function postSelectTransitions(
+  project: string,
+  selections: Record<string, string | number | null>,
+) {
   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/select-transitions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -422,7 +422,7 @@ export function TransitionPanel({
               <SectionDescription transition={tr} audioDescriptions={audioDescriptions} keyframes={keyframes} />
             </>
           ) : tab === 'candidates' ? (
-            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} onHoverVideo={onHoverVideo} sectionDescription={sectionDescription} initialPromptRoster={initialPromptRoster} />
+            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} onHoverVideo={onHoverVideo} sectionDescription={sectionDescription} initialPromptRoster={initialPromptRoster} onDataChange={onDataChange} />
           ) : tab === 'browse' ? (
             <BrowseTab transition={tr} projectName={projectName} onAssigned={() => {
               transition.hasSelectedVideo = true
@@ -918,19 +918,26 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; onHoverVideo?: (state: import('./PreviewContext').HoverVideoState) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
+function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, sectionDescription, initialPromptRoster, onDataChange }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; onHoverVideo?: (state: import('./PreviewContext').HoverVideoState) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[]; onDataChange?: () => void }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:video`
   const job = useJobState(entityKey)
 
   const [selecting, setSelecting] = useState(false)
-  const [candidates, setCandidates] = useState(() => {
-    console.log(`[CandidatesTab] init ${transition.id}: ${transition.candidates.length} candidates`, transition.candidates)
-    return transition.candidates
+  const [candidateDetails, setCandidateDetails] = useState(() => transition.candidateDetails || [])
+  // Display-only mirror of paths — sorted same as candidateDetails (by added_at)
+  const candidates = candidateDetails.map((d) => d.poolPath)
+  // selected is now a pool_segment_id (UUID) — use string type. Keep legacy int support on read.
+  const [selectedSegId, setSelectedSegId] = useState<string | null>(() => {
+    const sel = transition.selected
+    if (typeof sel === 'string' && sel) return sel
+    if (typeof sel === 'number' && sel > 0) {
+      // Legacy rank → resolve against candidateDetails if possible
+      const details = transition.candidateDetails || []
+      return details[sel - 1]?.id ?? null
+    }
+    return null
   })
-  const [selectedVariant, setSelectedVariant] = useState<number | null>(
-    typeof transition.selected === 'number' ? transition.selected : null
-  )
   const [showModal, setShowModal] = useState(false)
 
   // Video generation duration — closest of [4, 6, 8] to transition duration
@@ -967,22 +974,18 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
   }, [transition.id])
 
   useEffect(() => {
-    setCandidates(transition.candidates)
-  }, [transition.id, transition.candidates])
+    setCandidateDetails(transition.candidateDetails || [])
+  }, [transition.id, transition.candidateDetails])
 
-  // Apply completed job result (works even if panel was unmounted during generation)
+  // Apply completed job result. The pool model needs full candidateDetails (with
+  // pool_segment_ids) for selection, so trigger a route invalidation to refetch
+  // rather than trying to patch local state from just the paths returned in the job result.
   useEffect(() => {
     if (job?.status === 'completed' && job.result) {
       console.log('[CandidatesTab] job completed, result:', job.result)
-      const res = job.result as { candidates?: Record<string, string[]> }
-      const newCandidates = res?.candidates?.['slot_0'] || Object.values(res?.candidates || {})[0] || []
-      console.log('[CandidatesTab] extracted candidates:', newCandidates)
-      if (newCandidates.length > 0) {
-        setCandidates(newCandidates)
-        transition.candidates = newCandidates
-      }
       jobCtx.consumeResult(entityKey)
       autoSave(projectName, `Generated ${transition.id} video candidates`)
+      onDataChange?.()
     }
   }, [job?.status, job?.result])
 
@@ -1005,11 +1008,9 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
       if (result.jobId) {
         jobCtx.startJob(entityKey, result.jobId)
       } else {
-        const newCandidates = result.candidates?.['slot_0'] || Object.values(result.candidates || {})[0] || []
-        if (newCandidates.length > 0) {
-          setCandidates(newCandidates)
-          transition.candidates = newCandidates
-        }
+        // Synchronous generation completed — refresh route data to pick up the
+        // new pool_segments + tr_candidates rows with their IDs.
+        onDataChange?.()
       }
     } catch (e) {
       console.error('Generate transition candidates failed:', e)
@@ -1017,32 +1018,32 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
     }
   }, [projectName, transition, jobCtx, entityKey, generationCount, generationDuration, endFrameMode, generateAudio, ingredientPaths, negativePrompt, seed])
 
-  const handleSelect = useCallback(async (variantIndex: number) => {
+  const handleSelect = useCallback(async (segId: string) => {
     setSelecting(true)
     const selectionKey = `${transition.id}_slot_0`
-    const isDeselect = selectedVariant === variantIndex
+    const isDeselect = selectedSegId === segId
     try {
       await selectTransitions({
-        data: { projectName, selections: { [selectionKey]: isDeselect ? null as unknown as number : variantIndex } },
+        data: { projectName, selections: { [selectionKey]: isDeselect ? null : segId } },
       })
-      const oldVariant = selectedVariant ?? 'none'
-      invalidateEntry(`tr:${transition.id}:v${oldVariant}`)
+      const oldSeg = selectedSegId ?? 'none'
+      invalidateEntry(`tr:${transition.id}:${oldSeg}`)
       if (isDeselect) {
-        setSelectedVariant(null)
+        setSelectedSegId(null)
         transition.selected = null
         transition.hasSelectedVideo = false
         autoSave(projectName, `Deselected ${transition.id}`)
       } else {
-        invalidateEntry(`tr:${transition.id}:v${variantIndex}`)
-        setSelectedVariant(variantIndex)
-        transition.selected = variantIndex
+        invalidateEntry(`tr:${transition.id}:${segId}`)
+        setSelectedSegId(segId)
+        transition.selected = segId
         transition.hasSelectedVideo = true
-        autoSave(projectName, `Selected ${transition.id} v${variantIndex}`)
+        autoSave(projectName, `Selected ${transition.id} ${segId.slice(0, 8)}`)
       }
     } finally {
       setSelecting(false)
     }
-  }, [projectName, transition.id, selectedVariant])
+  }, [projectName, transition.id, selectedSegId, transition])
 
   return (
     <div className="p-2 space-y-3">
@@ -1227,19 +1228,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
           {generating ? (jobStatus || 'Generating with Veo...') : jobFailed ? `Failed: ${jobStatus}` : candidates.length > 0 ? 'Generate More' : 'Generate Video'}
         </button>
         <button
-          onClick={async () => {
-            try {
-              const { fetchDirectoryListing } = await import('@/lib/scenecraft-client')
-              const files = await fetchDirectoryListing(projectName, `transition_candidates/${transition.id}/slot_0`)
-              const newCandidates = files
-                .filter((f: { name: string; isDirectory: boolean }) => !f.isDirectory && f.name.endsWith('.mp4'))
-                .map((f: { name: string }) => `transition_candidates/${transition.id}/slot_0/${f.name}`)
-                .sort()
-              console.log('[CandidatesTab] refresh got', newCandidates.length, 'candidates')
-              setCandidates(newCandidates)
-              transition.candidates = newCandidates
-            } catch (e) { console.error('Refresh failed:', e) }
-          }}
+          onClick={() => onDataChange?.()}
           className="ml-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors px-1"
           title="Refresh candidates from server"
         >
@@ -1259,41 +1248,47 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
         <CandidateModal
           title={`${transition.id} — Video Candidates`}
           groups={{ videos: candidates }}
-          selectedMap={{ videos: selectedVariant }}
+          // Derive a 1-based rank from the selected pool_segment_id for the modal's
+          // numeric-index selectedMap contract. Render-only — backend stores segId.
+          selectedMap={{
+            videos: (() => {
+              if (!selectedSegId) return null
+              const idx = candidateDetails.findIndex((d) => d.id === selectedSegId)
+              return idx >= 0 ? idx + 1 : null
+            })(),
+          }}
           disabled={selecting}
           projectName={projectName}
           mediaType="video"
-          onSelect={(_groupKey, variantIndex) => handleSelect(variantIndex)}
+          onSelect={(_groupKey, variantIndex) => {
+            const seg = candidateDetails[variantIndex - 1]
+            if (seg) handleSelect(seg.id)
+          }}
           onClose={() => setShowModal(false)}
         />,
         document.body,
       )}
 
       {/* Candidates grid */}
-      {candidates.length === 0 && !generating ? (
+      {candidateDetails.length === 0 && !generating ? (
         <div className="text-center text-sm text-gray-600 py-4">No video candidates yet.</div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          {[...candidates].sort((a, b) => {
-            const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
-            const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
-            return na - nb
-          }).map((videoPath) => {
-            const filename = videoPath.split('/').pop() || ''
-            const variantNum = parseInt(filename.match(/v(\d+)\./)?.[1] || '0', 10)
-            const label = filename || `v${variantNum}`
-            const isSelected = selectedVariant === variantNum
+          {candidateDetails.map((detail, idx) => {
+            const variantNum = idx + 1
+            const label = detail.label || `v${variantNum}`
+            const isSelected = selectedSegId === detail.id
             return (
               <LazyVideoCard
-                key={videoPath}
-                videoPath={videoPath}
+                key={detail.id}
+                videoPath={detail.poolPath}
                 projectName={projectName}
                 label={label}
                 isSelected={isSelected}
                 disabled={selecting}
-                onSelect={() => handleSelect(variantNum)}
+                onSelect={() => handleSelect(detail.id)}
                 onMouseEnter={() => {
-                  const url = scenecraftFileUrl(projectName, videoPath)
+                  const url = scenecraftFileUrl(projectName, detail.poolPath)
                   onHoverPreview?.(url)
                   onHoverVideo?.({ url, scrubProgress: null })
                 }}
@@ -1302,24 +1297,24 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
                   onHoverVideo?.(null)
                 }}
                 onScrub={(progress) => {
-                  const url = scenecraftFileUrl(projectName, videoPath)
+                  const url = scenecraftFileUrl(projectName, detail.poolPath)
                   onHoverVideo?.({ url, scrubProgress: progress })
                 }}
                 onBench={async () => {
                   const { postAddToBench } = await import('@/lib/scenecraft-client')
-                  await postAddToBench(projectName, 'transition', undefined, videoPath)
+                  await postAddToBench(projectName, 'transition', undefined, detail.poolPath)
                 }}
                 onPool={async () => {
                   const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                   await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sourcePath: videoPath, type: 'transition' }),
+                    body: JSON.stringify({ sourcePath: detail.poolPath, type: 'transition' }),
                   })
                 }}
                 onExtend={async () => {
                   try {
-                    const result = await extendVideo({ data: { projectName, transitionId: transition.id, videoPath } })
+                    const result = await extendVideo({ data: { projectName, transitionId: transition.id, videoPath: detail.poolPath } })
                     if (result.jobId) {
                       jobCtx.startJob(`tr:${transition.id}:extend`, result.jobId)
                     }

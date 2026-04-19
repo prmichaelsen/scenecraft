@@ -85,6 +85,16 @@ export type Section = {
   label: string
 }
 
+export type CandidateDetail = {
+  id: string             // pool_segment_id — stable identifier; use this for selection
+  poolPath: string       // "pool/segments/cand_<uuid>.mp4"
+  kind: 'generated' | 'imported'
+  label: string          // user-editable display name (falls back to originalFilename)
+  createdBy: string
+  durationSeconds: number | null
+  addedAt: string        // drives v1/v2/v3 display order (ordered ASC by added_at)
+}
+
 export type Transition = {
   id: string
   from: string
@@ -93,9 +103,10 @@ export type Transition = {
   action: string
   useGlobalPrompt: boolean
   includeSectionDesc: boolean
-  candidates: string[]  // ["path/v1.mp4", "path/v2.mp4", ...]
+  candidates: string[]  // ["path/v1.mp4", "path/v2.mp4", ...] — kept for render compatibility
+  candidateDetails: CandidateDetail[]  // authoritative list with stable pool_segment_id
   hasSelectedVideo: boolean
-  selected: number | string | null  // variant number (1-based), imported path, or null
+  selected: number | string | null  // pool_segment_id (preferred) or legacy variant rank
   remap: { method: string; target_duration: number; curve_points?: [number, number, number?][] }
   trackId: string
   label: string
@@ -214,22 +225,42 @@ const getEditorData = createServerFn({ method: 'GET' })
         refinementPrompt: (kf.refinementPrompt as string) || '',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
-        // Flatten slot-based candidates to a simple list
-        const rawCandidates = tr.candidates
-        let candidates: string[] = []
-        if (Array.isArray(rawCandidates)) {
-          candidates = rawCandidates as string[]
-        } else if (rawCandidates && typeof rawCandidates === 'object') {
-          // Legacy slot format: { slot_0: ["v1.mp4", ...] } → flatten
-          const slotMap = rawCandidates as Record<string, string[]>
-          candidates = slotMap['slot_0'] || Object.values(slotMap)[0] || []
-          // Sort numerically by variant number (v1, v2, ..., v10, v11)
-          candidates.sort((a, b) => {
-            const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
-            const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
-            return na - nb
-          })
+        // Candidate detail list (pool model) is the source of truth — backend orders by added_at.
+        const rawDetails = tr.candidateDetails
+        let candidateDetails: CandidateDetail[] = []
+        if (rawDetails && typeof rawDetails === 'object') {
+          const detailMap = rawDetails as Record<string, Array<Record<string, unknown>>>
+          const slot0 = detailMap['slot_0'] || Object.values(detailMap)[0] || []
+          candidateDetails = slot0.map((d) => ({
+            id: (d.id as string) || '',
+            poolPath: (d.poolPath as string) || '',
+            kind: ((d.kind as string) === 'imported' ? 'imported' : 'generated') as 'generated' | 'imported',
+            label: (d.label as string) || '',
+            createdBy: (d.createdBy as string) || '',
+            durationSeconds: (d.durationSeconds as number) ?? null,
+            addedAt: (d.addedAt as string) || '',
+          })).filter((d) => d.id)
         }
+
+        // Keep candidates[] as pool paths in the same order as candidateDetails — the render
+        // layer uses this for <video src> URLs. Fall back to the raw candidates dict for
+        // projects pre-migration that haven't been re-generated yet.
+        const rawCandidates = tr.candidates
+        let candidates: string[] = candidateDetails.map((d) => d.poolPath)
+        if (candidates.length === 0) {
+          if (Array.isArray(rawCandidates)) {
+            candidates = rawCandidates as string[]
+          } else if (rawCandidates && typeof rawCandidates === 'object') {
+            const slotMap = rawCandidates as Record<string, string[]>
+            candidates = slotMap['slot_0'] || Object.values(slotMap)[0] || []
+            candidates.sort((a, b) => {
+              const na = parseInt(a.match(/v(\d+)\./)?.[1] || '0', 10)
+              const nb = parseInt(b.match(/v(\d+)\./)?.[1] || '0', 10)
+              return na - nb
+            })
+          }
+        }
+
         const rawSelected = tr.selected
         let selected: number | string | null = null
         if (Array.isArray(rawSelected)) {
@@ -248,6 +279,7 @@ const getEditorData = createServerFn({ method: 'GET' })
           action: (tr.action as string) || '',
           useGlobalPrompt: tr.useGlobalPrompt !== false,
           includeSectionDesc: tr.includeSectionDesc !== false,
+          candidateDetails,
           candidates,
           hasSelectedVideo,
           selected,
@@ -344,10 +376,28 @@ export const getTimelineData = createServerFn({ method: 'GET' })
         refinementPrompt: (kf.refinementPrompt as string) || '',
       })),
       transitions: (kfData.transitions || []).map((tr: Record<string, unknown>) => {
-        const candidates = Array.isArray(tr.candidates) ? tr.candidates as string[]
-          : typeof tr.candidates === 'object' && tr.candidates !== null
-            ? Object.values(tr.candidates as Record<string, string[]>).flat()
-            : []
+        const rawDetails = tr.candidateDetails
+        let candidateDetails: CandidateDetail[] = []
+        if (rawDetails && typeof rawDetails === 'object') {
+          const detailMap = rawDetails as Record<string, Array<Record<string, unknown>>>
+          const slot0 = detailMap['slot_0'] || Object.values(detailMap)[0] || []
+          candidateDetails = slot0.map((d) => ({
+            id: (d.id as string) || '',
+            poolPath: (d.poolPath as string) || '',
+            kind: ((d.kind as string) === 'imported' ? 'imported' : 'generated') as 'generated' | 'imported',
+            label: (d.label as string) || '',
+            createdBy: (d.createdBy as string) || '',
+            durationSeconds: (d.durationSeconds as number) ?? null,
+            addedAt: (d.addedAt as string) || '',
+          })).filter((d) => d.id)
+        }
+        let candidates = candidateDetails.map((d) => d.poolPath)
+        if (candidates.length === 0) {
+          candidates = Array.isArray(tr.candidates) ? tr.candidates as string[]
+            : typeof tr.candidates === 'object' && tr.candidates !== null
+              ? Object.values(tr.candidates as Record<string, string[]>).flat()
+              : []
+        }
         let selected: number | string | null = null
         const rawSelected = tr.selected
         if (Array.isArray(rawSelected)) {
@@ -360,6 +410,7 @@ export const getTimelineData = createServerFn({ method: 'GET' })
         return {
           id: tr.id as string,
           from: tr.from as string,
+          candidateDetails,
           to: tr.to as string,
           durationSeconds: tr.durationSeconds as number,
           action: (tr.action as string) || '',
@@ -603,7 +654,7 @@ export const updateTransitionRemap = createServerFn({ method: 'POST' })
   })
 
 export const selectTransitions = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; selections: Record<string, number> }) => input)
+  .inputValidator((input: { projectName: string; selections: Record<string, string | number | null> }) => input)
   .handler(async ({ data }) => {
     return postSelectTransitions(data.projectName, data.selections)
   })
