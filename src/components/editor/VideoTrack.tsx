@@ -73,31 +73,6 @@ export const VideoTrack = memo(function VideoTrack({
     }
   }, [keyframes, duration])
 
-  const handleBodyMouseDown = useCallback((e: React.MouseEvent, kf: KeyframeWithTime) => {
-    // Don't start body drag if clicking on the edge handle
-    if ((e.target as HTMLElement).closest('[data-edge-handle]')) return
-    e.stopPropagation()
-    e.preventDefault()
-    const sortedKfs = [...keyframes].sort((a, b) => a.timeSeconds - b.timeSeconds)
-    const idx = sortedKfs.findIndex((k) => k.id === kf.id)
-    const prevKf = idx > 0 ? sortedKfs[idx - 1] : null
-    const nextKf = idx < sortedKfs.length - 1 ? sortedKfs[idx + 1] : null
-    let minTime = prevKf ? prevKf.timeSeconds + 0.1 : 0
-    let maxTime = nextKf ? nextKf.timeSeconds - 0.1 : duration
-    if (minTime > kf.timeSeconds) minTime = Math.max(0, kf.timeSeconds - 30)
-    if (maxTime < kf.timeSeconds) maxTime = kf.timeSeconds + 30
-    dragState.current = {
-      dragging: true,
-      type: 'edge',
-      keyframeId: kf.id,
-      startX: e.clientX,
-      startTime: kf.timeSeconds,
-      minTime,
-      maxTime,
-      didMove: false,
-    }
-  }, [keyframes, duration])
-
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       const ds = dragState.current
@@ -155,7 +130,6 @@ export const VideoTrack = memo(function VideoTrack({
             key={kf.id}
             className={`absolute top-0 h-full group ${dropTarget === kf.id ? 'bg-green-500/20 ring-1 ring-green-500' : ''} ${isSelected ? 'bg-blue-500/10' : ''} ${isMultiSelected ? 'bg-teal-500/30 ring-1 ring-teal-500/50' : ''} ${isDraggingBody ? 'opacity-80 z-40' : ''}`}
             style={{ left: x, width }}
-            onMouseDown={(e) => handleBodyMouseDown(e, kf)}
             onClick={(e) => {
               if (didDrag.current) { didDrag.current = false; return }
               e.stopPropagation()

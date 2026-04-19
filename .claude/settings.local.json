@@ -58,7 +58,28 @@
       "Bash(.venv/bin/python -m pytest tests/test_candidate_pool.py tests/test_keyframes.py tests/test_vcs_bootstrap.py tests/test_vcs_auth.py tests/test_vcs_cli.py tests/test_vcs_objects.py tests/test_vcs_sessions.py --no-header -q)",
       "Bash(.venv/bin/python -c \"from scenecraft.api_server import make_handler; print\\('ok'\\)\")",
       "Bash(.venv/bin/python -m pytest tests/test_candidate_pool_endpoints.py -v --no-header -q)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(gcloud secrets *)",
+      "Bash(curl -s -H \"xi-api-key: sk_dc2d40cff022eda36aaa34704ee6e4f09eba8e3a3457fd9d\" https://api.elevenlabs.io/v1/voices)",
+      "Bash(export SYNC_API_KEY=\"sk-HNt52of_Q4qqjwgqLL_vBw.MWlFxd5ocaaW0S9d4dUVajWFwAnrnjXl\")",
+      "Bash(export ELEVENLABS_VOICE_ID=\"JBFqnCBsd6RMkjVDRZzb\")",
+      "Bash(.venv/bin/python -m pytest tests/test_candidate_pool_endpoints.py::test_import_creates_pool_segments_row -v --no-header -q)",
+      "Bash(gcloud projects *)",
+      "Bash(.venv/bin/python -m pytest tests/test_candidate_pool.py tests/test_candidate_pool_endpoints.py tests/test_keyframes.py tests/test_vcs_bootstrap.py tests/test_vcs_auth.py tests/test_vcs_cli.py tests/test_vcs_objects.py tests/test_vcs_sessions.py tests/test_migrations.py --no-header -q)",
+      "Bash(curl -s -F \"file=@/mnt/storage/prmichaelsen/beatlab_work/beyond_the_veil_v2/selected_transitions/tr_5856_slot_0.mp4\" https://file.io)",
+      "Bash(curl -s -m 3 http://localhost:8890/api/projects)",
+      "Bash(git *)",
+      "Bash(curl -s -m 30 --upload-file /mnt/storage/prmichaelsen/beatlab_work/beyond_the_veil_v2/selected_transitions/tr_5856_slot_0.mp4 https://bashupload.com/test.mp4)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/scenecraft/chat.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(gcloud auth *)",
+      "Bash(gcloud config *)",
+      "Bash(curl -sL \"https://sync.so/docs/api-reference\" -o /tmp/sync-api2.html)",
+      "Bash(curl -sL \"https://sync.so/docs/api-reference/openapi.json\" -o /tmp/sync-openapi.json)",
+      "Bash(curl -sL \"https://sync.so/api/fern-docs/resolve-api\" -o /tmp/sync-fern.json)",
+      "Bash(curl -s -m 3 http://localhost:8888/api/projects)",
+      "Bash(cp /tmp/sync_lipsync_output.mp4 /mnt/storage/prmichaelsen/beatlab_work/test/sync_lipsync_output.mp4)",
+      "Bash(curl -sI -m 3 \"http://localhost:8888/api/projects/test/files/sync_lipsync_output.mp4\")",
+      "Bash(.venv/bin/python -m pytest tests/test_vcs_cli.py::test_init_command tests/test_vcs_cli.py::test_org_members -v --no-header)"
     ]
   }
 }

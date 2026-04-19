@@ -15,11 +15,13 @@ export async function fetchWorkspaceView(project: string, name: string): Promise
 }
 
 export async function saveWorkspaceView(project: string, name: string, layout: unknown): Promise<void> {
-  await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/workspace-views/${encodeURIComponent(name)}`, {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/workspace-views/${encodeURIComponent(name)}`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ layout }),
   })
+  if (!res.ok) throw new Error(`saveWorkspaceView: ${res.status} ${await res.text()}`)
 }
 
 export async function deleteWorkspaceView(project: string, name: string): Promise<void> {

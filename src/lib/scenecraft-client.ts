@@ -231,10 +231,120 @@ export async function fetchBin(project: string) {
 }
 
 export type PoolEntry = {
-  name: string
-  path: string
-  size: number
+  // Legacy shape (keyframes still scan filesystem) OR pool_segments row (segments)
+  name?: string             // filename on disk (legacy)
+  path: string              // "pool/segments/<name>.mp4"
+  size?: number             // byte size (legacy)
   tags?: string[]
+
+  // New fields from pool_segments table (segments only)
+  id?: string               // pool_segment_id (UUID)
+  kind?: 'generated' | 'imported'
+  label?: string            // user-editable display name
+  originalFilename?: string // preserved for imports; null for generated
+  originalFilepath?: string // preserved for imports
+  createdBy?: string
+  createdAt?: string
+  durationSeconds?: number | null
+  width?: number | null
+  height?: number | null
+  byteSize?: number | null
+  generationParams?: Record<string, unknown> | null
+}
+
+export type PoolImportResponse = {
+  success: boolean
+  poolSegmentId: string
+  poolPath: string
+  originalFilename: string
+  originalFilepath: string
+  durationSeconds: number | null
+}
+
+export async function postPoolImport(project: string, sourcePath: string, label?: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourcePath, label }),
+  })
+  if (!res.ok) throw new Error(`Failed to import: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<PoolImportResponse>
+}
+
+/**
+ * Upload a browser File (drag-drop or file picker) into the pool.
+ * Creates a pool_segments row with kind='imported'.
+ */
+export async function postPoolUpload(
+  project: string,
+  file: File,
+  opts?: { label?: string; originalFilepath?: string },
+) {
+  const fd = new FormData()
+  fd.append('file', file, file.name)
+  if (opts?.label) fd.append('label', opts.label)
+  // The browser can't reveal the full absolute path for privacy reasons, but we
+  // keep this plumbing in place so the caller can pass through any client-known
+  // source path (e.g., from file-system-access-API handles).
+  if (opts?.originalFilepath) fd.append('originalFilepath', opts.originalFilepath)
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/upload`, {
+    method: 'POST',
+    body: fd,
+  })
+  if (!res.ok) throw new Error(`Failed to upload: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<PoolImportResponse>
+}
+
+export async function postPoolRename(project: string, poolSegmentId: string, label: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ poolSegmentId, label }),
+  })
+  if (!res.ok) throw new Error(`Failed to rename: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function postPoolTag(project: string, poolSegmentId: string, tag: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/tag`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ poolSegmentId, tag }),
+  })
+  if (!res.ok) throw new Error(`Failed to tag: ${res.status}`)
+  return res.json()
+}
+
+export async function postPoolUntag(project: string, poolSegmentId: string, tag: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/untag`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ poolSegmentId, tag }),
+  })
+  if (!res.ok) throw new Error(`Failed to untag: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchPoolTags(project: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/tags`)
+  if (!res.ok) return { tags: [] }
+  return res.json() as Promise<{ tags: Array<{ tag: string; count: number }> }>
+}
+
+export async function postPoolGc(project: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/gc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) throw new Error(`Failed to run GC: ${res.status}`)
+  return res.json() as Promise<{ success: boolean; deleted: number; freedBytes: number }>
+}
+
+export async function fetchPoolGcPreview(project: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/pool/gc-preview`)
+  if (!res.ok) return { wouldDelete: 0, segments: [] }
+  return res.json() as Promise<{ wouldDelete: number; segments: Array<{ id: string; poolPath: string; label: string; byteSize: number; createdAt: string }> }>
 }
 
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'difference' | 'add' | 'soft-light' | 'chroma-key'

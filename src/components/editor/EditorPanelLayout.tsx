@@ -246,7 +246,7 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
   useImperativeHandle(ref, () => ({
     resetLayout() {
       setInitialLayout({ ...defaultLayout })
-      saveWorkspaceView(data.projectName, '_autosave_v3', defaultLayout).catch(() => {})
+      saveWorkspaceView(data.projectName, '_autosave_v3', defaultLayout).catch((e) => console.error('saveWorkspaceView failed', e))
     },
   }), [data.projectName])
 
@@ -255,8 +255,24 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
     // Debounced auto-save
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      saveWorkspaceView(data.projectName, '_autosave_v3', layout).catch(() => {})
-    }, 2000)
+      saveWorkspaceView(data.projectName, '_autosave_v3', layout).catch((e) => console.error('saveWorkspaceView failed', e))
+    }, 500)
+  }, [data.projectName])
+
+  // Flush pending save on navigation / tab close
+  useEffect(() => {
+    const flush = () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+        saveWorkspaceView(data.projectName, '_autosave_v3', layoutRef.current).catch((e) => console.error('saveWorkspaceView (flush) failed', e))
+      }
+    }
+    window.addEventListener('beforeunload', flush)
+    return () => {
+      flush()
+      window.removeEventListener('beforeunload', flush)
+    }
   }, [data.projectName])
 
   return (

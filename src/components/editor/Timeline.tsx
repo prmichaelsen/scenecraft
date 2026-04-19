@@ -2564,10 +2564,21 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
             {/* Drag-select rectangle */}
             {dragSelectRect && (
-              <div
-                className="absolute border border-blue-500/50 bg-blue-500/10 pointer-events-none z-40"
-                style={{ left: dragSelectRect.x, top: dragSelectRect.y, width: dragSelectRect.w, height: dragSelectRect.h }}
-              />
+              <>
+                <div
+                  className="absolute border border-blue-500/50 bg-blue-500/10 pointer-events-none z-40"
+                  style={{ left: dragSelectRect.x, top: dragSelectRect.y, width: dragSelectRect.w, height: dragSelectRect.h }}
+                />
+                {/* Full-height boundary lines showing time extents */}
+                <div
+                  className="absolute w-px bg-blue-400 pointer-events-none z-40"
+                  style={{ left: dragSelectRect.x, top: 0, bottom: 0 }}
+                />
+                <div
+                  className="absolute w-px bg-blue-400 pointer-events-none z-40"
+                  style={{ left: dragSelectRect.x + dragSelectRect.w, top: 0, bottom: 0 }}
+                />
+              </>
             )}
 
             {/* Playhead overlay */}

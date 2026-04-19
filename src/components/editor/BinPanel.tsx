@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { VirtuosoGrid } from 'react-virtuoso'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { scenecraftFileUrl, scenecraftThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, type PoolEntry, type UnselectedCandidate } from '@/lib/scenecraft-client'
+import { scenecraftFileUrl, scenecraftThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, postPoolUpload, postPoolTag, postPoolUntag, type PoolEntry, type UnselectedCandidate } from '@/lib/scenecraft-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/scenecraft-client'
 import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 
@@ -94,6 +94,11 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
   const [videoCandidates, setVideoCandidates] = useState<import('@/lib/scenecraft-client').VideoCandidate[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates' | 'videos' | 'ingredients'>('keyframes')
+
+  // Upload state for pool drag-drop / file-picker
+  const [uploading, setUploading] = useState<{ total: number; done: number; currentName: string } | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [kfSubTab, setKfSubTab] = useState<'active' | 'bin'>('active')
   const [trSubTab, setTrSubTab] = useState<'active' | 'bin'>('active')
   const scrollPositions = useRef<Record<string, number>>(
@@ -151,6 +156,30 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
     setWatchedFolders((prev) => prev.filter((p) => p !== folderPath))
   }, [projectName])
 
+  // Upload one or more files into the pool. Filters to video types only (per
+  // pool/segments contract — the import endpoint can only store video files).
+  const handleUploadFiles = useCallback(async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList).filter(
+      (f) => f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(f.name),
+    )
+    if (files.length === 0) return
+    setUploading({ total: files.length, done: 0, currentName: files[0].name })
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        setUploading({ total: files.length, done: i, currentName: f.name })
+        try {
+          await postPoolUpload(projectName, f, { label: f.name })
+        } catch (e) {
+          console.error(`Upload failed for ${f.name}:`, e)
+        }
+      }
+    } finally {
+      setUploading(null)
+      loadBin()  // refresh to show newly imported segments
+    }
+  }, [projectName, loadBin])
+
   // Auto-refresh bin when folder watcher imports new files
   useEffect(() => {
     return socket.subscribeAll((msg) => {
@@ -197,20 +226,48 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       return aTs - bTs
     })
   }
-  const sortByName = <T extends { name: string }>(items: T[]) => {
-    if (sortBy === 'recent') return [...items].sort((a, b) => b.name.localeCompare(a.name))
-    if (sortBy === 'oldest') return [...items].sort((a, b) => a.name.localeCompare(b.name))
+  const sortByName = <T extends PoolEntry>(items: T[]) => {
+    const nameOf = (e: T) => e.label || e.originalFilename || e.name || e.path || ''
+    const createdAtOf = (e: T) => e.createdAt || ''
+    if (sortBy === 'recent') {
+      // Prefer DB createdAt for pool_segments; fall back to reverse-alpha for legacy
+      return [...items].sort((a, b) => {
+        const aC = createdAtOf(a), bC = createdAtOf(b)
+        if (aC && bC) return bC.localeCompare(aC)
+        return nameOf(b).localeCompare(nameOf(a))
+      })
+    }
+    if (sortBy === 'oldest') {
+      return [...items].sort((a, b) => {
+        const aC = createdAtOf(a), bC = createdAtOf(b)
+        if (aC && bC) return aC.localeCompare(bC)
+        return nameOf(a).localeCompare(nameOf(b))
+      })
+    }
     return items
   }
   const [poolTagFilter, setPoolTagFilter] = useState('')
 
   const handleUpdatePoolTags = useCallback(async (entry: PoolEntry, newTags: string[]) => {
+    const oldTags = new Set(entry.tags || [])
+    const nextTags = new Set(newTags)
     entry.tags = newTags
     // Update in both lists
     setPoolKeyframes((prev) => prev.map((e) => e.path === entry.path ? { ...e, tags: newTags } : e))
     setPoolSegments((prev) => prev.map((e) => e.path === entry.path ? { ...e, tags: newTags } : e))
     try {
-      await postUpdatePoolTags(projectName, entry.path, newTags)
+      if (entry.id) {
+        // New pool_segments row — diff old/new and emit per-tag add/remove calls
+        const toAdd = [...nextTags].filter((t) => !oldTags.has(t))
+        const toRemove = [...oldTags].filter((t) => !nextTags.has(t))
+        await Promise.all([
+          ...toAdd.map((t) => postPoolTag(projectName, entry.id!, t)),
+          ...toRemove.map((t) => postPoolUntag(projectName, entry.id!, t)),
+        ])
+      } else {
+        // Legacy keyframe pool entry — still scanned from filesystem
+        await postUpdatePoolTags(projectName, entry.path, newTags)
+      }
     } catch (e) {
       console.error('Failed to update pool tags:', e)
     }
@@ -583,10 +640,82 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
             />
           )
         ) : tab === 'pool' ? (
-          /* Pool tab */
-          poolCount === 0 ? (
-            <div className="p-4 text-center text-sm text-gray-600">Pool is empty</div>
-          ) : (
+          /* Pool tab — container is always drop-target; import bar always visible */
+          <div
+            className={`relative ${dragOver ? 'ring-2 ring-inset ring-blue-500/60 bg-blue-900/10' : ''}`}
+            onDragEnter={(e) => {
+              // Only engage for file drops, not internal tree drags
+              if (Array.from(e.dataTransfer.types).includes('Files')) {
+                e.preventDefault()
+                setDragOver(true)
+              }
+            }}
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer.types).includes('Files')) {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+              }
+            }}
+            onDragLeave={(e) => {
+              // Only clear when leaving the panel itself, not child elements
+              if (e.currentTarget === e.target) setDragOver(false)
+            }}
+            onDrop={(e) => {
+              if (!Array.from(e.dataTransfer.types).includes('Files')) return
+              e.preventDefault()
+              setDragOver(false)
+              if (e.dataTransfer.files.length > 0) {
+                handleUploadFiles(e.dataTransfer.files)
+              }
+            }}
+          >
+            {/* Import bar */}
+            <div className="flex items-center gap-2 px-2 py-2 border-b border-gray-800">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!!uploading}
+                className="text-[11px] px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white transition-colors"
+                title="Choose video files to add to the pool"
+              >
+                + Import videos
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*,.mp4,.mov,.webm,.mkv,.avi,.m4v"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) handleUploadFiles(e.target.files)
+                  e.target.value = ''  // allow picking the same file again
+                }}
+              />
+              <span className="text-[10px] text-gray-500">
+                or drop files anywhere in this pane
+              </span>
+              {uploading && (
+                <span className="ml-auto text-[10px] text-blue-300">
+                  Uploading {uploading.done + 1}/{uploading.total}: {uploading.currentName}
+                </span>
+              )}
+            </div>
+
+            {dragOver && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                <div className="bg-blue-600/90 text-white text-sm px-4 py-2 rounded shadow-lg">
+                  Drop to import into pool
+                </div>
+              </div>
+            )}
+
+            {poolCount === 0 ? (
+              <div className="p-8 text-center">
+                <div className="text-sm text-gray-500 mb-1">Pool is empty</div>
+                <div className="text-[11px] text-gray-600">
+                  Drop video files here or use + Import videos to add them
+                </div>
+              </div>
+            ) : (
             <div className="space-y-3 p-2">
               {/* Tag filter */}
               {allPoolTags.length > 0 && (
@@ -615,10 +744,12 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                   </div>
                   <div className="grid grid-cols-3 gap-1">
                     {sortByName(filterByTag(poolKeyframes)).map((entry) => {
-                      const isSelected = poolSelection?.type === 'keyframe' && poolSelection.entry.name === entry.name
+                      const entryKey = entry.id || entry.path
+                      const isSelected = poolSelection?.type === 'keyframe' && (poolSelection.entry.id || poolSelection.entry.path) === entryKey
+                      const displayName = poolItemDisplayName(entry)
                       return (
                         <PoolItemWithTags
-                          key={entry.name}
+                          key={entryKey}
                           entry={entry}
                           isSelected={isSelected}
                           onSelect={() => onPoolSelect(isSelected ? null : { type: 'keyframe', entry })}
@@ -633,7 +764,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                         >
                           <img
                             src={scenecraftFileUrl(projectName, entry.path)}
-                            alt={entry.name}
+                            alt={displayName}
                             className="w-full aspect-video object-cover"
                             loading="lazy"
                             draggable={false}
@@ -650,20 +781,22 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                     Video Segments ({filterByTag(poolSegments).length})
                   </div>
                   <div className="grid grid-cols-2 gap-1">
-                    {sortByName(filterByTag(poolSegments)).map((entry) => (
-                      <PoolVideoCard
-                        key={entry.name}
-                        entry={entry}
-                        projectName={projectName}
-                        isSelected={poolSelection?.type === 'segment' && poolSelection.entry.name === entry.name}
-                        onSelect={() => onPoolSelect(
-                          poolSelection?.type === 'segment' && poolSelection.entry.name === entry.name
-                            ? null : { type: 'segment', entry }
-                        )}
-                        onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
-                        draggable
-                      />
-                    ))}
+                    {sortByName(filterByTag(poolSegments)).map((entry) => {
+                      const entryKey = entry.id || entry.path
+                      const selectedKey = poolSelection?.entry.id || poolSelection?.entry.path
+                      const isSelected = poolSelection?.type === 'segment' && selectedKey === entryKey
+                      return (
+                        <PoolVideoCard
+                          key={entryKey}
+                          entry={entry}
+                          projectName={projectName}
+                          isSelected={isSelected}
+                          onSelect={() => onPoolSelect(isSelected ? null : { type: 'segment', entry })}
+                          onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
+                          draggable
+                        />
+                      )
+                    })}
                   </div>
                 </div>
               )}
@@ -675,7 +808,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                 </div>
               )}
             </div>
-          )
+            )}
+          </div>
         ) : (
           /* Ingredients tab */
           <IngredientsTab projectName={projectName} activeKeyframes={activeKeyframes} poolSelection={poolSelection} />
@@ -720,7 +854,7 @@ function IngredientsTab({ projectName, activeKeyframes, poolSelection }: { proje
     setPromoting(true)
     try {
       const { postPromoteToIngredient } = await import('@/lib/scenecraft-client')
-      await postPromoteToIngredient(projectName, 'pool', poolSelection.entry.path, poolSelection.entry.name)
+      await postPromoteToIngredient(projectName, 'pool', poolSelection.entry.path, poolItemDisplayName(poolSelection.entry))
       await loadIngredients()
     } catch (e) {
       console.error('Promote pool to ingredient failed:', e)
@@ -996,11 +1130,32 @@ function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children,
     >
       {children}
       <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">
-        <div className="text-[7px] text-gray-300 truncate">{entry.name}</div>
+        <div className="text-[7px] text-gray-300 truncate" title={poolItemTooltip(entry)}>
+          {poolItemDisplayName(entry)}
+          {entry.kind === 'imported' && <span className="ml-0.5 text-blue-300">●</span>}
+        </div>
         <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />
       </div>
     </div>
   )
+}
+
+function poolItemDisplayName(entry: PoolEntry): string {
+  return entry.label || entry.originalFilename || entry.name || (entry.path?.split('/').pop() ?? '')
+}
+
+function poolItemTooltip(entry: PoolEntry): string {
+  const parts: string[] = []
+  const name = poolItemDisplayName(entry)
+  if (name) parts.push(name)
+  if (entry.originalFilename && entry.originalFilename !== name) {
+    parts.push(`original: ${entry.originalFilename}`)
+  }
+  if (entry.originalFilepath) parts.push(`from: ${entry.originalFilepath}`)
+  if (entry.createdBy) parts.push(`by: ${entry.createdBy}`)
+  if (entry.kind) parts.push(entry.kind)
+  if (entry.durationSeconds != null) parts.push(`${entry.durationSeconds.toFixed(2)}s`)
+  return parts.join(' · ')
 }
 
 function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags, draggable }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void; onUpdateTags?: (tags: string[]) => void; draggable?: boolean }) {
@@ -1064,11 +1219,16 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags,
         />
       ) : (
         <div className="w-full aspect-video flex items-center justify-center">
-          <span className="text-[9px] text-gray-500 font-mono">{loading ? '...' : entry.name.replace(/\.\w+$/, '')}</span>
+          <span className="text-[9px] text-gray-500 font-mono">
+            {loading ? '...' : poolItemDisplayName(entry).replace(/\.\w+$/, '')}
+          </span>
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5">
-        <div className="text-[7px] text-gray-300 truncate">{entry.name}</div>
+        <div className="text-[7px] text-gray-300 truncate" title={poolItemTooltip(entry)}>
+          {poolItemDisplayName(entry)}
+          {entry.kind === 'imported' && <span className="ml-0.5 text-blue-300">●</span>}
+        </div>
         {onUpdateTags && <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />}
       </div>
     </div>
