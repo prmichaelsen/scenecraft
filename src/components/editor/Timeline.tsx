@@ -498,7 +498,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   setPreviewResolution(canvasWidth, canvasHeight)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Drag-select state
-  const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; active: boolean } | null>(null)
+  const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; metaKey: boolean; trackId: string | null; active: boolean; armed: boolean } | null>(null)
   const [dragSelectRect, setDragSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const localSeekRef = useRef<((time: number) => void) | null>(null)
   const seekFnRef = ctxTime ? ctxTime.seekRef : localSeekRef
@@ -1191,7 +1191,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Drag-select: hold+drag on track area to range-select keyframes
   // Hold 150ms to enter drag-select mode, then 5px movement activates the rectangle
   const dragSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const handleDragSelectDown = useCallback((e: React.MouseEvent) => {
+  const handleDragSelectDown = useCallback((e: React.MouseEvent, trackId?: string) => {
     if (e.button !== 0) return
     const scrollEl = scrollRef.current
     if (!scrollEl) return
@@ -1199,9 +1199,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const startX = e.clientX - rect.left + scrollEl.scrollLeft
     const startY = e.clientY - rect.top + scrollEl.scrollTop
     const shiftKey = e.shiftKey
+    const metaKey = e.metaKey || e.ctrlKey
 
     // Set up pending drag-select — activated after hold timer
-    const pending = { startX, startY, shiftKey, active: false, armed: false }
+    const pending = { startX, startY, shiftKey, metaKey, trackId: trackId || null, active: false, armed: false }
     dragSelectRef.current = pending
 
     // After 150ms hold, arm the drag-select (mouse moves will now activate it)
@@ -1237,7 +1238,31 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const timeFrom = x / pxPerSec
       const timeTo = (x + w) / pxPerSec
 
-      if (ds.shiftKey) {
+      if (ds.metaKey) {
+        // Cmd-drag: select clips (keyframes + transitions) fully contained in the time range
+        // Cmd+Shift-drag: same, but restricted to the dragged track
+        const trackFilter = ds.shiftKey && ds.trackId
+          ? (tid: string) => tid === ds.trackId
+          : () => true
+        const kfIds = new Set(
+          keyframes
+            .filter((kf) => trackFilter(kf.trackId) && kf.timeSeconds >= timeFrom && kf.timeSeconds <= timeTo)
+            .map((kf) => kf.id)
+        )
+        const trIds = new Set(
+          localTransitions
+            .filter((tr) => {
+              if (!trackFilter(tr.trackId)) return false
+              const fromKf = kfMap.get(tr.from)
+              const toKf = kfMap.get(tr.to)
+              if (!fromKf || !toKf) return false
+              return fromKf.timeSeconds >= timeFrom && toKf.timeSeconds <= timeTo
+            })
+            .map((tr) => tr.id)
+        )
+        setSelectedKeyframeIds(kfIds)
+        setSelectedTransitionIds(trIds)
+      } else if (ds.shiftKey) {
         // Shift+drag: current track only
         const trackKfs = trackKeyframes.get(selectedTrackId) || []
         const ids = new Set(trackKfs.filter((kf) => kf.timeSeconds >= timeFrom && kf.timeSeconds <= timeTo).map((kf) => kf.id))
@@ -1263,7 +1288,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       document.removeEventListener('mousemove', handleDragSelectMove)
       document.removeEventListener('mouseup', handleDragSelectUp)
     }
-  }, [pxPerSec, keyframes, selectedTrackId, trackKeyframes])
+  }, [pxPerSec, keyframes, selectedTrackId, trackKeyframes, localTransitions, kfMap])
 
   const handleAddEffect = useCallback((time: number) => {
     closeAllPanels()
@@ -2364,7 +2389,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                   <div
                     className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''}`}
                     style={{ height: videoTrackHeight }}
-                    onMouseDown={(e) => handleDragSelectDown(e)}
+                    onMouseDown={(e) => handleDragSelectDown(e, track.id)}
                     onClick={(e) => { if (dragSelectRef.current?.active || dragSelectRect) return; setSelectedTrackId(track.id); handleTrackClick(e) }}
                     onDragOver={(e) => {
                       if (e.dataTransfer.types.includes('application/x-scenecraft-bin-kf')) {
