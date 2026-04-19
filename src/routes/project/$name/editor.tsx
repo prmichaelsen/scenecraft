@@ -93,6 +93,28 @@ export type CandidateDetail = {
   createdBy: string
   durationSeconds: number | null
   addedAt: string        // drives v1/v2/v3 display order (ordered ASC by added_at)
+  generationParams?: GenerationParams | null  // present for kind='generated'; preserved for "reuse settings"
+}
+
+export type GenerationParams = {
+  provider?: string
+  model?: string
+  prompt?: string
+  negative_prompt?: string
+  seed?: number | null
+  ingredients?: {
+    from_keyframe_id?: string
+    to_keyframe_id?: string
+    motion_prompt?: string
+    action?: string
+    ingredient_paths?: string[]
+  }
+  params?: {
+    duration_target?: number
+    generate_audio?: boolean
+    no_end_frame?: boolean
+    use_next_tr_frame?: boolean
+  }
 }
 
 export type Transition = {
@@ -239,6 +261,7 @@ const getEditorData = createServerFn({ method: 'GET' })
             createdBy: (d.createdBy as string) || '',
             durationSeconds: (d.durationSeconds as number) ?? null,
             addedAt: (d.addedAt as string) || '',
+            generationParams: (d.generationParams as GenerationParams) ?? null,
           })).filter((d) => d.id)
         }
 
@@ -389,6 +412,7 @@ export const getTimelineData = createServerFn({ method: 'GET' })
             createdBy: (d.createdBy as string) || '',
             durationSeconds: (d.durationSeconds as number) ?? null,
             addedAt: (d.addedAt as string) || '',
+            generationParams: (d.generationParams as GenerationParams) ?? null,
           })).filter((d) => d.id)
         }
         let candidates = candidateDetails.map((d) => d.poolPath)

@@ -1304,6 +1304,45 @@ function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, 
                   const { postAddToBench } = await import('@/lib/scenecraft-client')
                   await postAddToBench(projectName, 'transition', undefined, detail.poolPath)
                 }}
+                onReuseSettings={detail.generationParams ? () => {
+                  // Load the generation params back into the form state so the
+                  // user can tweak + regenerate with the same recipe. Applies
+                  // prompt/action, ingredients, negative prompt, seed, duration,
+                  // end-frame mode, and audio toggle.
+                  const gp = detail.generationParams!
+                  const ing = gp.ingredients || {}
+                  const params = gp.params || {}
+                  if (ing.action) {
+                    ;(transition as { action?: string }).action = ing.action
+                  }
+                  if (Array.isArray(ing.ingredient_paths)) {
+                    setIngredientPaths(ing.ingredient_paths)
+                  }
+                  if (gp.negative_prompt !== undefined) {
+                    setNegativePrompt(gp.negative_prompt || '')
+                  }
+                  if (gp.seed !== undefined && gp.seed !== null) {
+                    setSeed(gp.seed)
+                  }
+                  if (typeof params.duration_target === 'number') {
+                    // Snap to the nearest DURATION_OPTIONS value
+                    const d = params.duration_target
+                    const closest = DURATION_OPTIONS.reduce((best, opt) =>
+                      Math.abs(opt - d) < Math.abs(best - d) ? opt : best, DURATION_OPTIONS[0])
+                    setGenerationDuration(closest)
+                  }
+                  if (params.generate_audio !== undefined) {
+                    setGenerateAudio(!!params.generate_audio)
+                  }
+                  if (params.no_end_frame) {
+                    setEndFrameMode('none')
+                  } else if (params.use_next_tr_frame) {
+                    setEndFrameMode('next-tr')
+                  } else {
+                    setEndFrameMode('keyframe')
+                  }
+                  onDataChange?.()
+                } : undefined}
                 onPool={async () => {
                   const url = `${import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'}/api/projects/${encodeURIComponent(projectName)}/pool/add`
                   await fetch(url, {
@@ -1451,11 +1490,12 @@ function ModalVideoCard({ videoPath, projectName }: { videoPath: string; project
 
 const videoBlobCache = new Map<string, string>() // url -> blob URL
 
-function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave, onScrub, onBench, onPool, onExtend }: {
+function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave, onScrub, onBench, onPool, onExtend, onReuseSettings }: {
   videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
   onMouseEnter?: () => void; onMouseLeave?: () => void
   onScrub?: (progress: number | null) => void
   onBench?: () => void; onPool?: () => void; onExtend?: () => void
+  onReuseSettings?: () => void
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [loading, setLoading] = useState(false)
@@ -1570,6 +1610,15 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
                 title="Extend video +7s"
               >
                 +7s
+              </button>
+            )}
+            {onReuseSettings && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onReuseSettings() }}
+                className="text-[8px] text-amber-400/70 hover:text-amber-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Reuse settings (load the generation prompt, seed, and ingredients into the form)"
+              >
+                reuse
               </button>
             )}
             {onPool && (
@@ -3078,17 +3127,21 @@ function BrowseTab({ transition, projectName, onAssigned }: { transition: Transi
             Pool ({filteredSegments.length})
           </div>
           <div className="grid grid-cols-2 gap-1">
-            {filteredSegments.map((entry) => (
+            {filteredSegments.map((entry) => {
+              const displayLabel = entry.label || entry.originalFilename || entry.name || (entry.path?.split('/').pop() ?? '')
+              const cardKey = entry.id || entry.path
+              return (
               <BrowseVideoCard
-                key={entry.name}
+                key={cardKey}
                 path={entry.path}
-                label={entry.name}
+                label={displayLabel}
                 tags={entry.tags}
                 projectName={projectName}
                 disabled={assigning}
                 onAssign={() => handleAssign(entry.path)}
               />
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
