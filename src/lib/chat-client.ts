@@ -2,12 +2,23 @@ const SCENECRAFT_WS_URL = import.meta.env.VITE_SCENECRAFT_WS_URL || 'ws://localh
 
 // --- Types ---
 
+export type ElicitationRequest = {
+  id: string
+  tool_use_id: string
+  tool_name: string
+  title: string
+  message: string
+  summary_items?: string[]
+  schema?: Record<string, unknown>
+}
+
 export type ServerMessage =
   | { type: 'chunk'; content: string }
   | { type: 'tool_call'; toolCall: { id: string; name: string; input: Record<string, unknown> } }
   | { type: 'tool_result'; toolResult: { id: string; output: unknown; isError?: boolean }; durationMs?: number }
   | { type: 'message'; message: PersistedMessage }
   | { type: 'status'; statusMessage?: string }
+  | { type: 'elicitation'; elicitation: ElicitationRequest }
   | { type: 'complete' }
   | { type: 'error'; error: string }
 
@@ -15,11 +26,22 @@ export type ClientMessage =
   | { type: 'message'; content: string; images?: string[] }
   | { type: 'elicitation_response'; id: string; action: 'accept' | 'decline'; content?: Record<string, unknown> }
 
+export type ToolCallRecord = {
+  id: string
+  name: string
+  input?: Record<string, unknown>
+  output?: unknown
+  is_error?: boolean
+  cancelled?: boolean
+  duration_ms?: number
+}
+
 export type PersistedMessage = {
   id: number
   role: 'user' | 'assistant' | 'system'
   content: string | ContentBlock[]
   images?: string[]
+  tool_calls?: ToolCallRecord[]
   created_at: string
 }
 
@@ -31,6 +53,7 @@ export type ContentBlock =
 export type StreamingBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; status: 'pending' | 'success' | 'error' }
+  | { type: 'elicitation'; elicitation: ElicitationRequest; resolution: 'pending' | 'accepted' | 'declined' }
 
 // --- WebSocket Chat Client ---
 

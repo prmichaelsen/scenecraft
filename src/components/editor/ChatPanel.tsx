@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ChatWebSocket, fetchChatHistory, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock } from '@/lib/chat-client'
+import { ChatWebSocket, fetchChatHistory, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
+import { fetchOAuthStatus, startOAuthFlow, openOAuthPopup, disconnectOAuth, type OAuthStatus } from '@/lib/oauth-client'
 
 type ChatPanelProps = {
   projectName: string
@@ -51,6 +52,13 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
             ? { ...b, status: msg.toolResult.isError ? 'error' : 'success' } as StreamingBlock
             : b
         ))
+        break
+
+      case 'elicitation':
+        setStreamingBlocks(prev => [...prev, {
+          type: 'elicitation', elicitation: msg.elicitation, resolution: 'pending',
+        }])
+        scrollToBottom()
         break
 
       case 'message':
@@ -113,6 +121,16 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
       wsRef.current = null
     }
   }, [projectName, handleMessage, scrollToBottom])
+
+  // Respond to an elicitation prompt
+  const respondElicitation = useCallback((elicitationId: string, action: 'accept' | 'decline') => {
+    wsRef.current?.send({ type: 'elicitation_response', id: elicitationId, action })
+    setStreamingBlocks(prev => prev.map(b =>
+      b.type === 'elicitation' && b.elicitation.id === elicitationId
+        ? { ...b, resolution: action === 'accept' ? 'accepted' : 'declined' } as StreamingBlock
+        : b
+    ))
+  }, [])
 
   // Send message
   const handleSend = useCallback(() => {
@@ -186,7 +204,7 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
               return <TypingIndicator key="typing" />
             }
             if (item.type === 'streaming') {
-              return <StreamingMessage key="streaming" blocks={item.blocks} />
+              return <StreamingMessage key="streaming" blocks={item.blocks} onElicitationResponse={respondElicitation} />
             }
             return <MessageBubble key={item.message.id || i} message={item.message} />
           })
@@ -215,14 +233,90 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
             Send
           </button>
         </div>
-        <div className="flex items-center justify-between mt-1">
+        <div className="flex items-center justify-between mt-1 gap-2">
           <span className={`text-[9px] ${connected ? 'text-green-600' : 'text-gray-600'}`}>
             {connected ? 'Connected' : 'Disconnected'}
           </span>
+          <RememberConnectButton />
           <span className="text-[9px] text-gray-600">Shift+Enter to send</span>
         </div>
       </div>
     </div>
+  )
+}
+
+// --- Remember Connection Button ---
+
+function RememberConnectButton() {
+  const [status, setStatus] = useState<OAuthStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await fetchOAuthStatus('remember'))
+    } catch {
+      setStatus({ connected: false })
+    }
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  const handleConnect = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const url = await startOAuthFlow('remember')
+      const result = await openOAuthPopup(url)
+      if (!result.success) {
+        setError(result.message || 'Connection failed')
+      }
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [refresh])
+
+  const handleDisconnect = useCallback(async () => {
+    if (!confirm('Disconnect Remember? You can reconnect anytime.')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await disconnectOAuth('remember')
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [refresh])
+
+  if (!status) return null
+
+  const label = status.connected ? '✓ Remember' : 'Connect Remember'
+  const title = error
+    ? error
+    : status.connected
+      ? `Connected. Token expires ${new Date(status.expires_at).toLocaleString()}. Click to disconnect.`
+      : 'Connect your Remember memory'
+
+  return (
+    <button
+      onClick={status.connected ? handleDisconnect : handleConnect}
+      disabled={busy}
+      title={title}
+      className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
+        error
+          ? 'text-red-400 hover:text-red-300 bg-red-900/20'
+          : status.connected
+            ? 'text-green-500/80 hover:text-green-400'
+            : 'text-blue-400 hover:text-blue-300'
+      } ${busy ? 'opacity-60' : ''}`}
+    >
+      {busy ? '...' : label}
+    </button>
   )
 }
 
@@ -241,7 +335,7 @@ function MessageBubble({ message }: { message: PersistedMessage }) {
             ? 'bg-red-900/20 text-red-300 border border-red-800/30'
             : 'bg-gray-800/60 text-gray-300'
       }`}>
-        <MessageContent content={message.content} />
+        <MessageContent content={message.content} toolCalls={message.tool_calls} />
         <div className={`text-[9px] mt-1 ${isUser ? 'text-blue-400/50' : 'text-gray-600'}`}>
           {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
@@ -252,13 +346,18 @@ function MessageBubble({ message }: { message: PersistedMessage }) {
 
 // --- Message Content Renderer ---
 
-function MessageContent({ content }: { content: string | ContentBlock[] }) {
+function MessageContent({ content, toolCalls }: { content: string | ContentBlock[]; toolCalls?: ToolCallRecord[] }) {
   if (typeof content === 'string') {
     return (
       <div className="prose prose-invert prose-sm max-w-none [&_p]:my-1 [&_pre]:my-1 [&_code]:text-[11px] [&_code]:bg-gray-900 [&_code]:px-1 [&_code]:rounded">
         <ReactMarkdown>{content}</ReactMarkdown>
       </div>
     )
+  }
+
+  const tcById = new Map<string, ToolCallRecord>()
+  for (const tc of toolCalls || []) {
+    if (tc.id) tcById.set(tc.id, tc)
   }
 
   return (
@@ -272,10 +371,12 @@ function MessageContent({ content }: { content: string | ContentBlock[] }) {
           )
         }
         if (block.type === 'tool_use') {
-          return <ToolCallBadge key={block.id} name={block.name} status="success" />
+          const tc = tcById.get(block.id)
+          const status: 'pending' | 'success' | 'error' = tc?.is_error ? 'error' : 'success'
+          return <ToolCallBadge key={block.id} name={block.name} status={status} />
         }
         if (block.type === 'tool_result') {
-          return null // tool results are shown via badges
+          return null
         }
         return null
       })}
@@ -285,10 +386,14 @@ function MessageContent({ content }: { content: string | ContentBlock[] }) {
 
 // --- Streaming Message ---
 
-function StreamingMessage({ blocks }: { blocks: StreamingBlock[] }) {
+function StreamingMessage({ blocks, onElicitationResponse }: {
+  blocks: StreamingBlock[]
+  onElicitationResponse: (id: string, action: 'accept' | 'decline') => void
+}) {
+  const hasPendingElicitation = blocks.some(b => b.type === 'elicitation' && b.resolution === 'pending')
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-lg px-3 py-2 bg-gray-800/60 text-gray-300 space-y-2">
+      <div className="max-w-[85%] w-full rounded-lg px-3 py-2 bg-gray-800/60 text-gray-300 space-y-2">
         {blocks.map((block, i) => {
           if (block.type === 'text') {
             return (
@@ -300,9 +405,77 @@ function StreamingMessage({ blocks }: { blocks: StreamingBlock[] }) {
           if (block.type === 'tool_use') {
             return <ToolCallBadge key={block.id} name={block.name} status={block.status} />
           }
+          if (block.type === 'elicitation') {
+            return (
+              <ElicitationCard
+                key={block.elicitation.id}
+                request={block.elicitation}
+                resolution={block.resolution}
+                onRespond={onElicitationResponse}
+              />
+            )
+          }
           return null
         })}
-        <span className="inline-block w-2 h-4 bg-gray-500 animate-pulse rounded-sm ml-0.5" />
+        {!hasPendingElicitation && <span className="inline-block w-2 h-4 bg-gray-500 animate-pulse rounded-sm ml-0.5" />}
+      </div>
+    </div>
+  )
+}
+
+// --- Elicitation Card ---
+
+function ElicitationCard({ request, resolution, onRespond }: {
+  request: ElicitationRequest
+  resolution: 'pending' | 'accepted' | 'declined'
+  onRespond: (id: string, action: 'accept' | 'decline') => void
+}) {
+  const pending = resolution === 'pending'
+  const accepted = resolution === 'accepted'
+
+  return (
+    <div className={`border rounded-md p-2.5 my-1 space-y-1.5 transition-opacity ${
+      pending
+        ? 'border-amber-700/60 bg-amber-900/10'
+        : accepted
+          ? 'border-green-800/40 bg-green-900/10 opacity-75'
+          : 'border-gray-700 bg-gray-900/40 opacity-60'
+    }`}>
+      <div className="flex items-start gap-2">
+        <span className="text-amber-400 text-sm leading-tight">🔧</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] font-medium text-gray-200 leading-tight">{request.title}</div>
+          <div className="text-[10px] text-gray-400 mt-0.5">{request.message}</div>
+        </div>
+      </div>
+      {request.summary_items && request.summary_items.length > 0 && (
+        <ul className="text-[10px] text-gray-400 font-mono space-y-0.5 pl-5 border-l border-gray-700/60 ml-1">
+          {request.summary_items.map((s, i) => (
+            <li key={i} className="truncate">{s}</li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center justify-end gap-1.5 pt-0.5">
+        {pending ? (
+          <>
+            <button
+              onClick={() => onRespond(request.id, 'decline')}
+              className="text-[10px] px-2 py-0.5 rounded text-gray-300 bg-gray-800 hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onRespond(request.id, 'accept')}
+              className="text-[10px] px-2 py-0.5 rounded text-white bg-amber-700 hover:bg-amber-600"
+            >
+              Confirm
+            </button>
+          </>
+        ) : (
+          <span className={`text-[10px] ${accepted ? 'text-green-500' : 'text-gray-500'}`}>
+            {accepted ? '✓ Confirmed' : 'Cancelled'}
+          </span>
+        )}
       </div>
     </div>
   )

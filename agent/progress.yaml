@@ -378,42 +378,57 @@ milestones:
 
   - id: milestone_4
     name: AI Assistant Chat
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-15
     completed: null
     file: agent/milestones/milestone-4-ai-assistant-chat.md
-    tasks_total: 6
-    tasks_completed: 0
+    tasks_total: 7
+    tasks_completed: 5
     estimated_weeks: 4
     tasks:
       - id: task-15
         name: Backend chat endpoint and DB storage
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-15T00:00:00Z
+        completed_date: 2026-04-15T00:00:00Z
         file: agent/tasks/milestone-4-ai-assistant-chat/task-14-backend-chat-endpoint.md
         estimated_hours: 10
         actual_hours: null
       - id: task-16
         name: Frontend ChatPanel with streaming
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-15T00:00:00Z
+        completed_date: 2026-04-15T00:00:00Z
         file: agent/tasks/milestone-4-ai-assistant-chat/task-15-frontend-chat-panel.md
         estimated_hours: 10
         actual_hours: null
       - id: task-17
         name: Tool calling and badges
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-16T00:00:00Z
+        completed_date: 2026-04-16T00:00:00Z
         file: agent/tasks/milestone-4-ai-assistant-chat/task-16-tool-calling.md
         estimated_hours: 12
         actual_hours: null
+        notes: "sql_query tool + streamed tool_call/tool_result events implemented; Remember MCP tools wired via task-52"
+      - id: task-52
+        name: OAuth client + MCP bridge for Remember
+        status: completed
+        started: 2026-04-16T00:00:00Z
+        completed_date: 2026-04-16T00:00:00Z
+        file: agent/tasks/milestone-4-ai-assistant-chat/task-52-oauth-mcp-remember.md
+        estimated_hours: 11
+        actual_hours: null
+        notes: "Core OAuth + PKCE flow + MCP bridge to remember-mcp-server. Follow-ups: reconnect-on-401, token encryption, more services"
       - id: task-18
         name: Elicitation confirmation UI
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-16T00:00:00Z
+        completed_date: 2026-04-16T00:00:00Z
         file: agent/tasks/milestone-4-ai-assistant-chat/task-17-elicitation-ui.md
         estimated_hours: 6
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "Destructive-tool detection (delete/remove/publish/...) triggers an inline card with summary + Confirm/Cancel. Awaits user response before calling the tool; decline surfaces as 'cancelled by user' tool error."
       - id: task-19
         name: Image handling and vision
         status: not_started
@@ -757,36 +772,49 @@ tasks:
   milestone_4:
     - id: task-15
       name: Backend chat endpoint and DB storage
-      status: not_started
+      status: completed
       milestone_id: milestone_4
       file: agent/tasks/milestone-4-ai-assistant-chat/task-14-backend-chat-endpoint.md
       estimated_hours: 10
       actual_hours: null
-      started: null
+      started: 2026-04-15T00:00:00Z
+      completed_date: 2026-04-15T00:00:00Z
     - id: task-16
       name: Frontend ChatPanel with streaming
-      status: not_started
+      status: completed
       milestone_id: milestone_4
       file: agent/tasks/milestone-4-ai-assistant-chat/task-15-frontend-chat-panel.md
       estimated_hours: 10
       actual_hours: null
-      started: null
+      started: 2026-04-15T00:00:00Z
+      completed_date: 2026-04-15T00:00:00Z
     - id: task-17
       name: Tool calling and badges
-      status: not_started
+      status: completed
       milestone_id: milestone_4
       file: agent/tasks/milestone-4-ai-assistant-chat/task-16-tool-calling.md
       estimated_hours: 12
       actual_hours: null
-      started: null
+      started: 2026-04-16T00:00:00Z
+      completed_date: 2026-04-16T00:00:00Z
+    - id: task-52
+      name: OAuth client + MCP bridge for Remember
+      status: completed
+      milestone_id: milestone_4
+      file: agent/tasks/milestone-4-ai-assistant-chat/task-52-oauth-mcp-remember.md
+      estimated_hours: 11
+      actual_hours: null
+      started: 2026-04-16T00:00:00Z
+      completed_date: 2026-04-16T00:00:00Z
     - id: task-18
       name: Elicitation confirmation UI
-      status: not_started
+      status: completed
       milestone_id: milestone_4
       file: agent/tasks/milestone-4-ai-assistant-chat/task-17-elicitation-ui.md
       estimated_hours: 6
-      actual_hours: null
-      started: null
+      actual_hours: 0.5
+      started: 2026-04-16T00:00:00Z
+      completed_date: 2026-04-16T00:00:00Z
     - id: task-19
       name: Image handling and vision
       status: not_started
@@ -865,6 +893,11 @@ progress:
   overall: 75
 
 recent_work:
+  - "M4 Task 18: Elicitation confirmation UI — destructive-tool detection (delete/publish/retract/moderate/restore_checkpoint) pauses on elicitation event; inline card in streaming chat with Confirm/Cancel; decline surfaces as a tool error, accept resumes tool call"
+  - "M4 Task 52: OAuth 2.0 + PKCE client, Remember MCP bridge — agentbase.me client registration, ~/.scenecraft/oauth-tokens.db, /oauth/callback, MCPBridge merging remember_* tools into Claude's tool list"
+  - "M4 Task 17: Chat tool calling — sql_query read-only tool, streamed tool_call/tool_result events, multi-turn tool loop"
+  - "M4 Task 16: Frontend ChatPanel — streaming chunks, tool call badges, typing indicator, WebSocket client with reconnect"
+  - "M4 Task 15: Backend chat WebSocket at /ws/chat/{project} — per-user chat_messages table, Anthropic async streaming, project context system prompt"
   - "M3 Task 28: GitHub extension search & install UI — ExtensionsPanel with browse/installed tabs, extension-client.ts API, dockview registration"
   - "M3 Task 10: Frontend plugin API types & placeholders — plugin-api.ts, EffectEditor/Timeline/Settings wiring"
   - "M2 Task 3: Installed dockview-react, created EditorLayout shell with 4-column default layout"
