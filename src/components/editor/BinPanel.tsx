@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from 'react'
 import { VirtuosoGrid } from 'react-virtuoso'
 import { getBin, restoreKeyframe, restoreTransition } from '@/routes/project/$name/editor'
-import { scenecraftFileUrl, scenecraftThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, postPoolUpload, postPoolTag, postPoolUntag, type PoolEntry, type UnselectedCandidate } from '@/lib/scenecraft-client'
+import { scenecraftFileUrl, scenecraftThumbUrl, fetchWatchedFolders, postUnwatchFolder, fetchPool, postUpdatePoolTags, fetchUnselectedCandidates, fetchVideoCandidates, postPoolUpload, postPoolTag, postPoolUntag, postPoolRename, type PoolEntry, type UnselectedCandidate } from '@/lib/scenecraft-client'
 import type { BinEntry, TransitionBinEntry } from '@/lib/scenecraft-client'
 import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 
@@ -272,6 +272,27 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
       console.error('Failed to update pool tags:', e)
     }
   }, [projectName])
+
+  /**
+   * Inline-rename a pool segment. Optimistically updates the local list, then
+   * persists via POST /api/projects/:name/pool/rename. Only applies to entries
+   * backed by a pool_segments row (entry.id present) — legacy filesystem
+   * keyframes have no stable id to rename by.
+   */
+  const handleRenamePoolSegment = useCallback(async (entry: PoolEntry, newLabel: string) => {
+    if (!entry.id) return
+    // Optimistic: update the entry and list state so the UI reflects immediately.
+    entry.label = newLabel
+    setPoolSegments((prev) => prev.map((e) => e.id === entry.id ? { ...e, label: newLabel } : e))
+    setPoolKeyframes((prev) => prev.map((e) => e.id === entry.id ? { ...e, label: newLabel } : e))
+    try {
+      await postPoolRename(projectName, entry.id, newLabel)
+    } catch (e) {
+      console.error('Failed to rename pool segment:', e)
+      // Reload to reconcile with server truth on failure
+      loadBin()
+    }
+  }, [projectName, loadBin])
 
   const allPoolTags = useMemo(() => {
     const tags = new Set<string>()
@@ -754,6 +775,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           isSelected={isSelected}
                           onSelect={() => onPoolSelect(isSelected ? null : { type: 'keyframe', entry })}
                           onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
+                          onRename={(label) => handleRenamePoolSegment(entry, label)}
                           draggable
                           onDragStart={(e) => {
                             e.dataTransfer.setData('application/x-scenecraft-pool-path', entry.path)
@@ -793,6 +815,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                           isSelected={isSelected}
                           onSelect={() => onPoolSelect(isSelected ? null : { type: 'segment', entry })}
                           onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
+                          onRename={(label) => handleRenamePoolSegment(entry, label)}
                           draggable
                         />
                       )
@@ -1116,8 +1139,8 @@ function PoolTagEditor({ tags, onUpdateTags }: { tags: string[]; onUpdateTags: (
   )
 }
 
-function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children, draggable: isDraggable, onDragStart, onMouseEnter, onMouseLeave }: {
-  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; children: ReactNode; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void; onMouseEnter?: () => void; onMouseLeave?: () => void
+function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, onRename, children, draggable: isDraggable, onDragStart, onMouseEnter, onMouseLeave }: {
+  entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags: (tags: string[]) => void; onRename?: (newLabel: string) => void | Promise<void>; children: ReactNode; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void; onMouseEnter?: () => void; onMouseLeave?: () => void
 }) {
   return (
     <div
@@ -1130,9 +1153,8 @@ function PoolItemWithTags({ entry, isSelected, onSelect, onUpdateTags, children,
     >
       {children}
       <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5">
-        <div className="text-[7px] text-gray-300 truncate" title={poolItemTooltip(entry)}>
-          {poolItemDisplayName(entry)}
-          {entry.kind === 'imported' && <span className="ml-0.5 text-blue-300">●</span>}
+        <div className="text-[7px] text-gray-300">
+          <EditablePoolLabel entry={entry} onRename={onRename} />
         </div>
         <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />
       </div>
@@ -1158,7 +1180,67 @@ function poolItemTooltip(entry: PoolEntry): string {
   return parts.join(' · ')
 }
 
-function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags, draggable }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void; onUpdateTags?: (tags: string[]) => void; draggable?: boolean }) {
+/**
+ * Inline-editable label for pool items. Click to edit, Enter to save, Escape to cancel.
+ * Falls back to a plain span when the entry has no id (legacy filesystem pool entries).
+ */
+function EditablePoolLabel({ entry, onRename }: { entry: PoolEntry; onRename?: (newLabel: string) => void | Promise<void> }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(poolItemDisplayName(entry))
+  useEffect(() => { setDraft(poolItemDisplayName(entry)) }, [entry.id, entry.label, entry.name])
+
+  const canEdit = !!entry.id && !!onRename
+
+  if (!editing) {
+    return (
+      <span
+        className={`truncate ${canEdit ? 'hover:bg-white/10 rounded px-0.5' : ''}`}
+        title={poolItemTooltip(entry)}
+        onDoubleClick={(e) => {
+          if (!canEdit) return
+          e.stopPropagation()
+          setEditing(true)
+        }}
+      >
+        {poolItemDisplayName(entry)}
+        {entry.kind === 'imported' && <span className="ml-0.5 text-blue-300">●</span>}
+      </span>
+    )
+  }
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      autoFocus
+      onChange={(e) => setDraft(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={async (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          const trimmed = draft.trim()
+          if (trimmed && trimmed !== poolItemDisplayName(entry)) {
+            await onRename?.(trimmed)
+          }
+          setEditing(false)
+        } else if (e.key === 'Escape') {
+          setDraft(poolItemDisplayName(entry))
+          setEditing(false)
+        }
+      }}
+      onBlur={async () => {
+        const trimmed = draft.trim()
+        if (trimmed && trimmed !== poolItemDisplayName(entry)) {
+          await onRename?.(trimmed)
+        }
+        setEditing(false)
+      }}
+      className="w-full text-[7px] text-gray-100 bg-gray-900 border border-blue-500 rounded px-1 py-0 font-sans outline-none"
+    />
+  )
+}
+
+function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags, onRename, draggable }: { entry: PoolEntry; projectName: string; isSelected: boolean; onSelect: () => void; onUpdateTags?: (tags: string[]) => void; onRename?: (newLabel: string) => void | Promise<void>; draggable?: boolean }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => poolBlobCache.get(entry.path) ?? null)
   const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
@@ -1225,9 +1307,8 @@ function PoolVideoCard({ entry, projectName, isSelected, onSelect, onUpdateTags,
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5">
-        <div className="text-[7px] text-gray-300 truncate" title={poolItemTooltip(entry)}>
-          {poolItemDisplayName(entry)}
-          {entry.kind === 'imported' && <span className="ml-0.5 text-blue-300">●</span>}
+        <div className="text-[7px] text-gray-300">
+          <EditablePoolLabel entry={entry} onRename={onRename} />
         </div>
         {onUpdateTags && <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />}
       </div>
