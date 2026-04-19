@@ -8,7 +8,7 @@
 
 ## Overview
 
-An AI assistant chat panel docked in the editor's bottom-right (dockview panel) that can reason about the project, execute actions via tool calling, stream responses, handle image uploads for vision, and connect to external MCP servers. The assistant sees project context (keyframes, transitions, effects, audio intelligence) and can modify the project through the same REST endpoints the UI uses.
+An AI assistant chat panel docked in the editor's bottom-right (dockview panel) that can reason about the project, execute actions via tool calling, stream responses, handle image uploads for vision, and connect to external MCP servers. The assistant sees project context (keyframes, transitions) and can modify the project through the same REST endpoints the UI uses.
 
 ---
 
@@ -54,8 +54,7 @@ An AI assistant chat panel docked in the editor's bottom-right (dockview panel) 
 A standard dockview panel component (already registered as a placeholder). Contains:
 
 1. **MessageList** — react-virtuoso (already a dep, `^4.18.4`) for virtualized scrolling
-   - User messages: right-aligned, gray background
-   - Assistant messages: left-aligned, rendered via ReactMarkdown + rehype-sanitize
+   - Both user and assistant messages: left-aligned, rendered via ReactMarkdown + rehype-sanitize (user messages visually distinguished by subtle background/label, not alignment)
    - Tool call badges inline: pending (blue spinner), success (green check), error (red X)
    - Elicitation widgets: rich inline cards with summary + confirm/cancel buttons
    - Typing indicator: bouncing dots ("Agent is thinking")
@@ -157,8 +156,6 @@ On each message send, the system prompt includes a structured project summary:
 Project: "{name}" | {fps}fps | {resolution}
 Keyframes: {count} across {trackCount} tracks
 Transitions: {count} ({withVideo} have video)
-Effects: {count} active, {suppressionCount} suppressions
-Audio: {audioFile || "none"} | {eventCount} intelligence events
 Playhead: {currentTime}s
 Selected: {selectedKeyframe?.id || selectedTransition?.id || "none"}
 Sections: {sectionCount} narrative sections
@@ -173,14 +170,11 @@ All beatlab REST endpoints exposed as Claude tools. Generic parameterized tools 
 **Generic tools:**
 - `update_curve` — `{ transition_id, curve_type: "opacity"|"saturation"|"red"|"green"|"blue"|"hue_shift"|"invert"|"black", points: [[x,y]...] }`
 - `update_transform_curve` — `{ transition_id, axis: "x"|"y"|"z", points: [[x,y]...] }`
-- `sql_query` — `{ sql: "SELECT ..." }` — execute arbitrary read-only SQL against project.db. The assistant can craft its own queries for ad-hoc analysis (e.g., "find transitions longer than 5 seconds", "count keyframes per section", "list effects with intensity > 0.9"). Enforced read-only: rejects any statement that isn't SELECT. Returns rows as JSON array.
+- `sql_query` — `{ sql: "SELECT ..." }` — execute arbitrary read-only SQL against project.db. The assistant can craft its own queries for ad-hoc analysis (e.g., "find transitions longer than 5 seconds", "count keyframes per section"). Enforced read-only: rejects any statement that isn't SELECT. Returns rows as JSON array.
 
 **Endpoint tools (auto-generated from REST API):**
 - `get_keyframes`, `add_keyframe`, `delete_keyframe`, `update_keyframe_prompt`, `update_keyframe_timestamp`
 - `get_transitions`, `delete_transition`, `split_transition`, `update_transition_action`
-- `get_effects`, `update_effects`, `add_effect`, `delete_effect`
-- `add_marker`, `update_marker`, `remove_marker`
-- `get_audio_intelligence`, `get_descriptions`
 - `assign_keyframe_image`, `assign_pool_video`
 - `generate_keyframe_candidates`, `generate_transition_candidates`
 - `checkpoint`, `get_checkpoints`, `restore_checkpoint`
@@ -299,7 +293,7 @@ Server's `ANTHROPIC_API_KEY` environment variable (same key used for image gener
 | Panel placement | Dockview panel, bottom-right default | Standard panel in layout system, can be moved |
 | Input component | Plain textarea + file drop/paste | agentbase.me pattern — simple, proven, no TipTap overhead |
 | Send key | Shift+Enter sends, Enter is newline | User preference — matches code editor behavior |
-| Message rendering | ReactMarkdown + rehype-sanitize | Rich output (code blocks, images, lists) with XSS protection |
+| Message rendering | ReactMarkdown + rehype-sanitize for both user and assistant, all left-aligned | Consistent rendering (code blocks, images, lists) with XSS protection; left-alignment for both keeps long messages readable and avoids chat-bubble styling |
 | Typing indicator | Bouncing dots + tool call badges | agentbase.me pattern (TypingIndicator + ToolCallBadge) |
 | Confirmation UI | Rich inline elicitation cards | Summary + affected items preview + confirm/cancel buttons |
 

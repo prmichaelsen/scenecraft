@@ -93,7 +93,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
   const [unselectedCandidates, setUnselectedCandidates] = useState<UnselectedCandidate[]>([])
   const [videoCandidates, setVideoCandidates] = useState<import('@/lib/scenecraft-client').VideoCandidate[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates' | 'videos'>('keyframes')
+  const [tab, setTab] = useState<'keyframes' | 'transitions' | 'pool' | 'candidates' | 'videos' | 'ingredients'>('keyframes')
   const [kfSubTab, setKfSubTab] = useState<'active' | 'bin'>('active')
   const [trSubTab, setTrSubTab] = useState<'active' | 'bin'>('active')
   const scrollPositions = useRef<Record<string, number>>(
@@ -276,11 +276,11 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
 
       {/* Tabs */}
       <div className="flex border-b border-gray-800 shrink-0">
-        {(['keyframes', 'transitions', 'pool', 'candidates', 'videos'] as const).map((t) => {
+        {(['keyframes', 'transitions', 'pool', 'candidates', 'videos', 'ingredients'] as const).map((t) => {
           const candCount = unselectedCandidates.length
           const vidCount = videoCandidates.length
-          const label = t === 'keyframes' ? `KFs${allKfCount > 0 ? ` (${allKfCount})` : ''}` : t === 'transitions' ? `TRs${allTrCount > 0 ? ` (${allTrCount})` : ''}` : t === 'pool' ? `Pool${poolCount > 0 ? ` (${poolCount})` : ''}` : t === 'candidates' ? `Cands${candCount > 0 ? ` (${candCount})` : ''}` : `Vids${vidCount > 0 ? ` (${vidCount})` : ''}`
-          const color = t === 'keyframes' ? 'blue' : t === 'transitions' ? 'orange' : t === 'pool' ? 'green' : t === 'candidates' ? 'purple' : 'cyan'
+          const label = t === 'keyframes' ? `KFs${allKfCount > 0 ? ` (${allKfCount})` : ''}` : t === 'transitions' ? `TRs${allTrCount > 0 ? ` (${allTrCount})` : ''}` : t === 'pool' ? `Pool${poolCount > 0 ? ` (${poolCount})` : ''}` : t === 'candidates' ? `Cands${candCount > 0 ? ` (${candCount})` : ''}` : t === 'videos' ? `Vids${vidCount > 0 ? ` (${vidCount})` : ''}` : 'Ingr'
+          const color = t === 'keyframes' ? 'blue' : t === 'transitions' ? 'orange' : t === 'pool' ? 'green' : t === 'candidates' ? 'purple' : t === 'videos' ? 'cyan' : 'amber'
           return (
             <button
               key={t}
@@ -582,7 +582,7 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               style={{ height: '100%' }}
             />
           )
-        ) : (
+        ) : tab === 'pool' ? (
           /* Pool tab */
           poolCount === 0 ? (
             <div className="p-4 text-center text-sm text-gray-600">Pool is empty</div>
@@ -676,9 +676,138 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               )}
             </div>
           )
+        ) : (
+          /* Ingredients tab */
+          <IngredientsTab projectName={projectName} activeKeyframes={activeKeyframes} poolSelection={poolSelection} />
         )}
       </div>
       </div>
+    </div>
+  )
+}
+
+function IngredientsTab({ projectName, activeKeyframes, poolSelection }: { projectName: string; activeKeyframes: ActiveKeyframe[]; poolSelection: PoolSelection | null }) {
+  const [ingredients, setIngredients] = useState<import('@/lib/scenecraft-client').Ingredient[]>([])
+  const [loading, setLoading] = useState(true)
+  const [promoting, setPromoting] = useState(false)
+
+  const loadIngredients = useCallback(async () => {
+    try {
+      const { fetchIngredients } = await import('@/lib/scenecraft-client')
+      const list = await fetchIngredients(projectName)
+      setIngredients(list)
+    } catch { /* empty */ }
+    setLoading(false)
+  }, [projectName])
+
+  useEffect(() => { loadIngredients() }, [loadIngredients])
+
+  const handlePromoteKeyframe = useCallback(async (kfId: string) => {
+    setPromoting(true)
+    try {
+      const { postPromoteToIngredient } = await import('@/lib/scenecraft-client')
+      const sourcePath = `selected_keyframes/${kfId}.png`
+      await postPromoteToIngredient(projectName, 'keyframe', sourcePath, kfId)
+      await loadIngredients()
+    } catch (e) {
+      console.error('Promote keyframe to ingredient failed:', e)
+    }
+    setPromoting(false)
+  }, [projectName, loadIngredients])
+
+  const handlePromotePool = useCallback(async () => {
+    if (!poolSelection || poolSelection.type !== 'keyframe') return
+    setPromoting(true)
+    try {
+      const { postPromoteToIngredient } = await import('@/lib/scenecraft-client')
+      await postPromoteToIngredient(projectName, 'pool', poolSelection.entry.path, poolSelection.entry.name)
+      await loadIngredients()
+    } catch (e) {
+      console.error('Promote pool to ingredient failed:', e)
+    }
+    setPromoting(false)
+  }, [projectName, poolSelection, loadIngredients])
+
+  const handleRemove = useCallback(async (id: string) => {
+    try {
+      const { postRemoveIngredient } = await import('@/lib/scenecraft-client')
+      await postRemoveIngredient(projectName, id)
+      setIngredients((prev) => prev.filter((i) => i.id !== id))
+    } catch (e) {
+      console.error('Remove ingredient failed:', e)
+    }
+  }, [projectName])
+
+  if (loading) return <div className="p-4 text-center text-sm text-gray-600">Loading...</div>
+
+  return (
+    <div className="space-y-3 p-2">
+      {/* Promote actions */}
+      <div className="flex gap-1">
+        {poolSelection && poolSelection.type === 'keyframe' && (
+          <button
+            onClick={handlePromotePool}
+            disabled={promoting}
+            className="text-[10px] bg-amber-700 hover:bg-amber-600 disabled:bg-gray-700 text-white px-2 py-1 rounded transition-colors"
+          >
+            + Pool Selection
+          </button>
+        )}
+      </div>
+
+      {ingredients.length === 0 ? (
+        <div className="text-center text-sm text-gray-600 py-4">
+          <div>No ingredients yet.</div>
+          <div className="text-[10px] text-gray-500 mt-1">Promote keyframe images below or pool items to create ingredients.</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-1">
+          {ingredients.map((ing) => (
+            <div key={ing.id} className="relative group rounded overflow-hidden border border-gray-700">
+              <img
+                src={scenecraftFileUrl(projectName, ing.path)}
+                className="w-full aspect-square object-cover"
+                alt={ing.label}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5">
+                <div className="text-[8px] text-gray-300 truncate">{ing.label || ing.id}</div>
+                <div className="text-[7px] text-gray-500">{ing.sourceType}</div>
+              </div>
+              <button
+                onClick={() => handleRemove(ing.id)}
+                className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-600/80 text-white rounded-full text-[8px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              >&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Keyframes to promote */}
+      {activeKeyframes.filter((kf) => kf.hasSelectedImage).length > 0 && (
+        <div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Promote from Keyframes</div>
+          <div className="grid grid-cols-4 gap-1">
+            {activeKeyframes.filter((kf) => kf.hasSelectedImage).map((kf) => (
+              <button
+                key={kf.id}
+                onClick={() => handlePromoteKeyframe(kf.id)}
+                disabled={promoting}
+                className="relative rounded overflow-hidden border border-gray-700 hover:border-amber-500 transition-colors disabled:opacity-50"
+                title={`Promote ${kf.id} to ingredient`}
+              >
+                <img
+                  src={scenecraftFileUrl(projectName, `selected_keyframes/${kf.id}.png`)}
+                  className="w-full aspect-square object-cover"
+                  alt={kf.id}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[7px] text-gray-300 text-center py-0.5 truncate px-0.5">{kf.id}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

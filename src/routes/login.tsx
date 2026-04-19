@@ -15,7 +15,7 @@ function LoginPage() {
         <div className="bg-gray-950 border border-gray-800 rounded p-4 mb-4">
           <p className="text-gray-300 text-sm mb-3">SSH onto the scenecraft host and run:</p>
           <pre className="bg-black text-green-400 font-mono text-sm p-3 rounded overflow-x-auto">
-            <code>scenecraft vcs token</code>
+            <code>scenecraft token</code>
           </pre>
           <p className="text-gray-400 text-xs mt-3">
             The command prints a login URL. Open it in this browser to authenticate.
@@ -29,13 +29,13 @@ function LoginPage() {
             Forward the scenecraft port through SSH, then re-run the command with your local tunnel address:
           </p>
           <pre className="bg-black text-green-400 font-mono text-xs p-3 rounded overflow-x-auto">
-            <code>{'ssh -L 8890:localhost:8890 user@host\nscenecraft vcs token --host localhost:8890'}</code>
+            <code>{'ssh -L 8890:localhost:8890 user@host\nscenecraft token --host localhost:8890'}</code>
           </pre>
         </div>
 
         <div className="text-gray-500 text-xs">
           Not registered? Ask an admin to add your SSH public key:
-          <code className="ml-1 font-mono text-gray-400">scenecraft vcs user add &lt;name&gt; --pubkey ~/.ssh/id_ed25519.pub</code>
+          <code className="ml-1 font-mono text-gray-400">scenecraft user add &lt;name&gt; --pubkey ~/.ssh/id_ed25519.pub</code>
         </div>
 
         <div className="mt-6 text-center">

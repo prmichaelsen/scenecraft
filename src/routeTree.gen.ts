@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DemosIndexRouteImport } from './routes/demos/index'
 import { Route as ProjectNameRouteImport } from './routes/project/$name'
@@ -16,6 +17,11 @@ import { Route as DemosPanelsRouteImport } from './routes/demos/panels'
 import { Route as ProjectNameIndexRouteImport } from './routes/project/$name/index'
 import { Route as ProjectNameEditorRouteImport } from './routes/project/$name/editor'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -49,6 +55,7 @@ const ProjectNameEditorRoute = ProjectNameEditorRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/demos/panels': typeof DemosPanelsRoute
   '/project/$name': typeof ProjectNameRouteWithChildren
   '/demos/': typeof DemosIndexRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/demos/panels': typeof DemosPanelsRoute
   '/demos': typeof DemosIndexRoute
   '/project/$name/editor': typeof ProjectNameEditorRoute
@@ -65,6 +73,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/demos/panels': typeof DemosPanelsRoute
   '/project/$name': typeof ProjectNameRouteWithChildren
   '/demos/': typeof DemosIndexRoute
@@ -75,6 +84,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/login'
     | '/demos/panels'
     | '/project/$name'
     | '/demos/'
@@ -83,6 +93,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/login'
     | '/demos/panels'
     | '/demos'
     | '/project/$name/editor'
@@ -90,6 +101,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/login'
     | '/demos/panels'
     | '/project/$name'
     | '/demos/'
@@ -99,6 +111,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LoginRoute: typeof LoginRoute
   DemosPanelsRoute: typeof DemosPanelsRoute
   ProjectNameRoute: typeof ProjectNameRouteWithChildren
   DemosIndexRoute: typeof DemosIndexRoute
@@ -106,6 +119,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -167,6 +187,7 @@ const ProjectNameRouteWithChildren = ProjectNameRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LoginRoute: LoginRoute,
   DemosPanelsRoute: DemosPanelsRoute,
   ProjectNameRoute: ProjectNameRouteWithChildren,
   DemosIndexRoute: DemosIndexRoute,

@@ -22,7 +22,7 @@ Dockview panel component in `src/components/editor/ChatPanel.tsx`. Manages WebSo
 
 ### 2. Create MessageList
 
-react-virtuoso list rendering messages. User messages right-aligned, assistant messages left-aligned rendered via ReactMarkdown + rehype-sanitize. Load history from backend on mount.
+react-virtuoso list rendering messages. Both user and assistant messages left-aligned, rendered via ReactMarkdown + rehype-sanitize (user messages visually distinguished by subtle background/label, not alignment). Load history from backend on mount.
 
 ### 3. Create MessageInput
 

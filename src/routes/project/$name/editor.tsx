@@ -129,6 +129,9 @@ export type Transition = {
   anchorY: number | null
   hidden: boolean
   effects: TransitionEffect[]
+  ingredients: string[]
+  negativePrompt: string
+  seed: number | null
 }
 
 export type TransitionEffect = {
@@ -281,6 +284,9 @@ const getEditorData = createServerFn({ method: 'GET' })
           anchorY: tr.anchorY != null ? tr.anchorY as number : null,
           hidden: !!tr.hidden,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
+          ingredients: Array.isArray(tr.ingredients) ? tr.ingredients as string[] : [],
+          negativePrompt: (tr.negativePrompt as string) || '',
+          seed: tr.seed != null ? tr.seed as number : null,
         }
       }),
       audioFile: kfData.audioFile || null,
@@ -395,6 +401,9 @@ export const getTimelineData = createServerFn({ method: 'GET' })
           anchorY: tr.anchorY != null ? tr.anchorY as number : null,
           hidden: !!tr.hidden,
           effects: Array.isArray(tr.effects) ? tr.effects as TransitionEffect[] : [],
+          ingredients: Array.isArray(tr.ingredients) ? tr.ingredients as string[] : [],
+          negativePrompt: (tr.negativePrompt as string) || '',
+          seed: tr.seed != null ? tr.seed as number : null,
         }
       }),
     }
@@ -576,9 +585,9 @@ export const enhanceTransitionAction = createServerFn({ method: 'POST' })
   })
 
 export const updateTransitionAction = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean; includeSectionDesc?: boolean; slotActions?: string[] }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; action: string; useGlobalPrompt: boolean; includeSectionDesc?: boolean; slotActions?: string[]; negativePrompt?: string; seed?: number | null; ingredients?: string[] }) => input)
   .handler(async ({ data }) => {
-    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt, data.slotActions, data.includeSectionDesc)
+    return postUpdateTransitionAction(data.projectName, data.transitionId, data.action, data.useGlobalPrompt, data.slotActions, data.includeSectionDesc, data.negativePrompt, data.seed, data.ingredients)
   })
 
 export const updateMeta = createServerFn({ method: 'POST' })
@@ -600,17 +609,45 @@ export const selectTransitions = createServerFn({ method: 'POST' })
   })
 
 export const generateTransitionCandidates = createServerFn({ method: 'POST' })
-  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number; duration?: number; useNextTransitionFrame?: boolean; noEndFrame?: boolean }) => input)
+  .inputValidator((input: { projectName: string; transitionId: string; count?: number; slotIndex?: number; duration?: number; useNextTransitionFrame?: boolean; noEndFrame?: boolean; generateAudio?: boolean; ingredients?: string[]; negativePrompt?: string; seed?: number | null }) => input)
   .handler(async ({ data }) => {
-    console.log('[serverFn] generateTransitionCandidates:', data.projectName, data.transitionId, data.count, 'duration:', data.duration, 'useNextTrFrame:', data.useNextTransitionFrame, 'noEndFrame:', data.noEndFrame)
+    console.log('[serverFn] generateTransitionCandidates:', data.projectName, data.transitionId, data.count, 'duration:', data.duration, 'useNextTrFrame:', data.useNextTransitionFrame, 'noEndFrame:', data.noEndFrame, 'generateAudio:', data.generateAudio, 'ingredients:', data.ingredients?.length || 0)
     try {
-      const result = await postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex, data.duration, data.useNextTransitionFrame, data.noEndFrame)
+      const result = await postGenerateTransitionCandidates(data.projectName, data.transitionId, data.count, data.slotIndex, data.duration, data.useNextTransitionFrame, data.noEndFrame, data.generateAudio, data.ingredients, data.negativePrompt, data.seed)
       console.log('[serverFn] generateTransitionCandidates result:', JSON.stringify(result).slice(0, 200))
       return result
     } catch (e) {
       console.error('[serverFn] generateTransitionCandidates FAILED:', e)
       throw e
     }
+  })
+
+export const fetchProjectIngredients = createServerFn({ method: 'GET' })
+  .inputValidator((input: { projectName: string }) => input)
+  .handler(async ({ data }) => {
+    const { fetchIngredients } = await import('@/lib/scenecraft-client')
+    return fetchIngredients(data.projectName)
+  })
+
+export const promoteToIngredient = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; sourceType: 'keyframe' | 'pool'; sourcePath: string; label?: string }) => input)
+  .handler(async ({ data }) => {
+    const { postPromoteToIngredient } = await import('@/lib/scenecraft-client')
+    return postPromoteToIngredient(data.projectName, data.sourceType, data.sourcePath, data.label)
+  })
+
+export const removeIngredient = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; ingredientId: string }) => input)
+  .handler(async ({ data }) => {
+    const { postRemoveIngredient } = await import('@/lib/scenecraft-client')
+    return postRemoveIngredient(data.projectName, data.ingredientId)
+  })
+
+export const extendVideo = createServerFn({ method: 'POST' })
+  .inputValidator((input: { projectName: string; transitionId: string; videoPath: string }) => input)
+  .handler(async ({ data }) => {
+    const { postExtendVideo } = await import('@/lib/scenecraft-client')
+    return postExtendVideo(data.projectName, data.transitionId, data.videoPath)
   })
 
 export const deleteTransition = createServerFn({ method: 'POST' })

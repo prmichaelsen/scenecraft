@@ -59,26 +59,20 @@ const TrackHeader = memo(function TrackHeader({ track, isActive, scrollLeft, onS
       <div className="absolute top-0 h-full flex items-center gap-1.5 px-2 z-[5] bg-inherit" style={{ left: scrollLeft }}>
       <button
         onClick={(e) => { e.stopPropagation(); onUpdate({ enabled: !track.enabled }) }}
-        className={`text-[10px] w-4 h-4 flex items-center justify-center rounded ${track.enabled ? 'text-green-400' : 'text-gray-600'}`}
-        title={track.enabled ? 'Disable track' : 'Enable track'}
-      >{track.enabled ? '●' : '○'}</button>
+        className={`text-[10px] px-1 rounded font-medium ${track.enabled ? 'text-green-400 hover:text-green-300' : 'text-gray-600 hover:text-gray-500'}`}
+        title={track.enabled ? 'Mute track (still shown on timeline)' : 'Unmute track'}
+      >{track.enabled ? 'Mute' : 'Muted'}</button>
 
       <span className="text-[10px] text-gray-400 font-medium truncate">{track.name}</span>
 
       <button
         onClick={(e) => { e.stopPropagation(); onOpenSettings?.() }}
-        className="text-[10px] text-gray-500 hover:text-gray-300"
+        className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
         title="Track settings"
-      >⚙</button>
+      >Settings</button>
 
       {onMoveUp && <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>}
       {onMoveDown && <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>}
-
-      <button
-        onClick={(e) => { e.stopPropagation(); onUpdate({ hidden: true } as never) }}
-        className="text-[10px] text-gray-500 hover:text-gray-300"
-        title="Hide track"
-      >⊘</button>
       </div>
     </div>
   )
@@ -606,9 +600,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [aiAudioEvents, aiAudioOnsets, localRules])
 
   // Sort tracks by zOrder descending — highest z (top of compositor) at top of track list
-  const allTracks = [...data.tracks].sort((a, b) => b.zOrder - a.zOrder)
-  const sortedTracks = allTracks.filter((t) => !(t as Record<string, unknown>).hidden)
-  const hiddenTracks = allTracks.filter((t) => (t as Record<string, unknown>).hidden)
+  const sortedTracks = [...data.tracks].sort((a, b) => b.zOrder - a.zOrder)
   const trackKeyframes = new Map<string, KeyframeWithTime[]>()
   const trackTransitions = new Map<string, Transition[]>()
   for (const track of sortedTracks) {
@@ -855,13 +847,72 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     return { frameA, frameB: null, blendFactor: 0 }
   })()}, [activeTransition, activeTransitionFrom, activeTransitionTo, currentKeyframe, currentTime, keyframes, localTransitions, trEndingAt, trStartingAt])
 
+  // Play audio from the active transition's video (Veo-generated audio)
+  const transitionAudioRef = useRef<HTMLAudioElement | null>(null)
+  const transitionAudioTrId = useRef<string | null>(null)
+
+  useEffect(() => {
+    const trId = activeTransition?.id ?? null
+    const hasVideo = activeTransition?.hasSelectedVideo ?? false
+
+    // Transition changed — swap audio source
+    if (trId !== transitionAudioTrId.current) {
+      if (transitionAudioRef.current) {
+        transitionAudioRef.current.pause()
+        transitionAudioRef.current.src = ''
+        transitionAudioRef.current = null
+      }
+      transitionAudioTrId.current = trId
+      if (trId && hasVideo) {
+        const audio = new Audio(scenecraftFileUrl(data.projectName, `selected_transitions/${trId}_slot_0.mp4`))
+        audio.preload = 'auto'
+        transitionAudioRef.current = audio
+      }
+    }
+
+    const audio = transitionAudioRef.current
+    if (!audio) return
+
+    // Sync time: compute where we are within the transition
+    if (activeTransitionFrom && activeTransitionTo) {
+      const tStart = activeTransitionFrom.timeSeconds
+      const tEnd = activeTransitionTo.timeSeconds
+      const trDuration = tEnd - tStart
+      if (trDuration > 0) {
+        const offset = currentTime - tStart
+        // Only seek if drift > 0.3s to avoid constant seeks during smooth playback
+        if (Math.abs(audio.currentTime - offset) > 0.3) {
+          audio.currentTime = Math.max(0, Math.min(offset, audio.duration || trDuration))
+        }
+      }
+    }
+
+    // Play/pause in sync
+    if (isPlaying && audio.paused) {
+      audio.play().catch(() => {})
+    } else if (!isPlaying && !audio.paused) {
+      audio.pause()
+    }
+  }, [activeTransition, activeTransitionFrom, activeTransitionTo, currentTime, isPlaying, data.projectName])
+
+  // Cleanup transition audio on unmount
+  useEffect(() => {
+    return () => {
+      if (transitionAudioRef.current) {
+        transitionAudioRef.current.pause()
+        transitionAudioRef.current.src = ''
+        transitionAudioRef.current = null
+      }
+    }
+  }, [])
+
   // Compute per-track layers for multi-track compositing
   const trackLayers: import('./BeatEffectPreview').TrackLayer[] = useMemo(() => {return (() => {
     // Always build layers — compositor handles 1 or N tracks uniformly
     // Compositor: first layer with content becomes base, subsequent layers paint ON TOP.
     // Track 1 (zOrder 0) = base, Track 2 (zOrder 1) = overlaid on top. Ascending order.
     const layers = [...data.tracks]
-      .filter((t) => t.enabled && !(t as Record<string, unknown>).hidden)
+      .filter((t) => t.enabled)
       .sort((a, b) => a.zOrder - b.zOrder)
       .map((track) => {
       const tKfs = trackKeyframes.get(track.id) || []
@@ -2061,23 +2112,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             + Track
           </button>
 
-          {hiddenTracks.length > 0 && (
-            <select
-              value=""
-              onChange={(e) => {
-                if (e.target.value) {
-                  postUpdateTrack(data.projectName, e.target.value, { hidden: false } as never).then(() => router.invalidate())
-                }
-              }}
-              className="text-[10px] bg-gray-800 text-gray-500 rounded px-1 py-1 border-none focus:outline-none cursor-pointer"
-              title="Show hidden tracks"
-            >
-              <option value="">Show ({hiddenTracks.length})</option>
-              {hiddenTracks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          )}
-
-          <button
+<button
             onClick={() => { const was = showDownloadPreview; closeAllPanels(); if (!was) setShowDownloadPreview(true) }}
             className={`text-xs px-2 py-1 rounded transition-colors ${showDownloadPreview ? 'bg-green-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-green-400/70 hover:text-green-300'}`}
             title="Download preview as WebM"
@@ -2311,7 +2346,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       setTrackSettingsId(track.id)
                     }}
                     onMoveUp={trackIdx > 0 ? () => {
-                      // Swap z_order with the track above (higher z_order in descending list = previous index)
                       const above = sortedTracks[trackIdx - 1]
                       Promise.all([
                         postUpdateTrack(data.projectName, track.id, { z_order: above.zOrder } as never),

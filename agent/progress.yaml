@@ -310,25 +310,26 @@ milestones:
 
   - id: milestone_7
     name: Clip Trim, Rolling Edit, Time Remap, and Snap
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-16
     completed: null
     file: agent/milestones/milestone-7-clip-trim-and-snap.md
     tasks_total: 8
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 3
     tasks:
       - id: task-44
         name: Schema migration + undo triggers
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-16T00:00:00Z
+        completed_date: 2026-04-16T00:30:00Z
         file: agent/tasks/milestone-7-clip-trim-and-snap/task-44-schema-migration.md
         estimated_hours: 4
-        actual_hours: null
+        actual_hours: 0.5
       - id: task-45
         name: Backend trim support
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-16T02:00:00Z
         file: agent/tasks/milestone-7-clip-trim-and-snap/task-45-backend-trim-support.md
         estimated_hours: 5
         actual_hours: null
@@ -690,12 +691,13 @@ tasks:
   milestone_7:
     - id: task-44
       name: Schema migration + undo triggers
-      status: not_started
+      status: completed
       milestone_id: milestone_7
       file: agent/tasks/milestone-7-clip-trim-and-snap/task-44-schema-migration.md
       estimated_hours: 4
-      actual_hours: null
-      started: null
+      actual_hours: 0.5
+      started: 2026-04-16T00:00:00Z
+      completed_date: 2026-04-16T00:30:00Z
     - id: task-45
       name: Backend trim support
       status: not_started

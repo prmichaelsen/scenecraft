@@ -586,11 +586,11 @@ export async function postUpdateTransitionRemap(project: string, transitionId: s
   return res.json()
 }
 
-export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean, slotActions?: string[], includeSectionDesc?: boolean) {
+export async function postUpdateTransitionAction(project: string, transitionId: string, action: string, useGlobalPrompt: boolean, slotActions?: string[], includeSectionDesc?: boolean, negativePrompt?: string, seed?: number | null, ingredients?: string[]) {
   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, action, useGlobalPrompt, ...(slotActions && { slotActions }), ...(includeSectionDesc !== undefined && { includeSectionDesc }) }),
+    body: JSON.stringify({ transitionId, action, useGlobalPrompt, ...(slotActions && { slotActions }), ...(includeSectionDesc !== undefined && { includeSectionDesc }), ...(negativePrompt !== undefined && { negativePrompt }), ...(seed !== undefined && { seed }), ...(ingredients !== undefined && { ingredients }) }),
   })
   return res.json()
 }
@@ -611,11 +611,11 @@ export async function postUpdateMeta(project: string, fields: Record<string, str
   return res.json()
 }
 
-export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number, duration?: number, useNextTransitionFrame?: boolean, noEndFrame?: boolean) {
+export async function postGenerateTransitionCandidates(project: string, transitionId: string, count?: number, slotIndex?: number, duration?: number, useNextTransitionFrame?: boolean, noEndFrame?: boolean, generateAudio?: boolean, ingredients?: string[], negativePrompt?: string, seed?: number | null) {
   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/generate-transition-candidates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }), ...(useNextTransitionFrame && { useNextTransitionFrame: true }), ...(noEndFrame && { noEndFrame: true }) }),
+    body: JSON.stringify({ transitionId, count, ...(slotIndex != null && { slotIndex }), ...(duration != null && { duration }), ...(useNextTransitionFrame && { useNextTransitionFrame: true }), ...(noEndFrame && { noEndFrame: true }), ...(generateAudio && { generateAudio: true }), ...(ingredients && ingredients.length > 0 && { ingredients }), ...(negativePrompt && { negativePrompt }), ...(seed != null && { seed }) }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
@@ -937,5 +937,65 @@ export async function postSectionSettings(project: string, sectionLabel: string,
     body: JSON.stringify({ sectionLabel, ...settings }),
   })
   if (!res.ok) throw new Error(`Failed to save section settings: ${res.status}`)
+  return res.json()
+}
+
+// ── Ingredients ──
+
+export type Ingredient = {
+  id: string
+  path: string
+  label: string
+  addedAt: string
+  sourceType: 'keyframe' | 'pool' | 'upload'
+  sourceRef?: string
+}
+
+export async function fetchIngredients(project: string): Promise<Ingredient[]> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/ingredients`)
+  if (!res.ok) return []
+  const data = await res.json() as { ingredients: Ingredient[] }
+  return data.ingredients
+}
+
+export async function postPromoteToIngredient(project: string, sourceType: 'keyframe' | 'pool', sourcePath: string, label?: string): Promise<{ success: boolean; ingredient: Ingredient }> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/ingredients/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceType, sourcePath, ...(label && { label }) }),
+  })
+  if (!res.ok) throw new Error(`Failed to promote to ingredient: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function postRemoveIngredient(project: string, ingredientId: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/ingredients/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ingredientId }),
+  })
+  if (!res.ok) throw new Error(`Failed to remove ingredient: ${res.status}`)
+  return res.json()
+}
+
+export async function postUpdateIngredientLabel(project: string, ingredientId: string, label: string) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/ingredients/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ingredientId, label }),
+  })
+  if (!res.ok) throw new Error(`Failed to update ingredient: ${res.status}`)
+  return res.json()
+}
+
+// ── Video extension ──
+
+export async function postExtendVideo(project: string, transitionId: string, videoPath: string): Promise<{ jobId: string; transitionId: string }> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/extend-video`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transitionId, videoPath }),
+  })
+  if (!res.ok) throw new Error(`Failed to extend video: ${res.status} ${await res.text()}`)
   return res.json()
 }

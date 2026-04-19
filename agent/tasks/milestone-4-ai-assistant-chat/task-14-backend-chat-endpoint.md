@@ -45,10 +45,9 @@ Add `/ws/chat/{projectName}` WebSocket handler to the beatlab server (alongside 
 ### 4. Project Context System Prompt
 
 On each message, build a system prompt with project summary:
-- Project name, fps, resolution, audio file
+- Project name, fps, resolution
 - Keyframe count, transition count, track count
 - Current playhead position, selected KF/TR (sent by client in message payload)
-- Active effects, suppressions count
 - Narrative sections summary
 
 ### 5. Message History Management

@@ -7,12 +7,19 @@ export type BeatEffectPreviewHandle = {
 
 type CrossfadeData = { frameA: ImageBitmap | null; frameB: ImageBitmap | null; blendFactor: number }
 
+export type HoverVideoState = {
+  url: string
+  scrubProgress: number | null // null = auto-play, 0-1 = scrub position
+} | null
+
 type PreviewContextValue = {
   crossfadeData: CrossfadeData
   trackLayers: TrackLayer[]
   isTransitionLoading: boolean
   hoverPreviewUrl: string | null
   setHoverPreviewUrl: (url: string | null) => void
+  hoverVideo: HoverVideoState
+  setHoverVideo: (state: HoverVideoState) => void
   previewRef: MutableRefObject<BeatEffectPreviewHandle | null>
   // Called by Timeline to push computed preview data up
   updatePreview: (data: { crossfadeData: CrossfadeData; trackLayers: TrackLayer[]; isTransitionLoading: boolean }) => void
@@ -34,7 +41,9 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
   const [trackLayers, setTrackLayers] = useState<TrackLayer[]>(EMPTY_LAYERS)
   const [isTransitionLoading, setIsTransitionLoading] = useState(false)
   const [hoverPreviewUrl, setHoverPreviewUrlRaw] = useState<string | null>(null)
+  const [hoverVideo, setHoverVideoRaw] = useState<HoverVideoState>(null)
   const hoverClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoverVideoClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewRef = useRef<BeatEffectPreviewHandle | null>(null)
 
   const setHoverPreviewUrl = useCallback((url: string | null) => {
@@ -43,6 +52,15 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
       setHoverPreviewUrlRaw(url)
     } else {
       hoverClearTimer.current = setTimeout(() => setHoverPreviewUrlRaw(null), 100)
+    }
+  }, [])
+
+  const setHoverVideo = useCallback((state: HoverVideoState) => {
+    if (hoverVideoClearTimer.current) { clearTimeout(hoverVideoClearTimer.current); hoverVideoClearTimer.current = null }
+    if (state) {
+      setHoverVideoRaw(state)
+    } else {
+      hoverVideoClearTimer.current = setTimeout(() => setHoverVideoRaw(null), 100)
     }
   }, [])
 
@@ -59,6 +77,8 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
       isTransitionLoading,
       hoverPreviewUrl,
       setHoverPreviewUrl,
+      hoverVideo,
+      setHoverVideo,
       previewRef,
       updatePreview,
     }}>

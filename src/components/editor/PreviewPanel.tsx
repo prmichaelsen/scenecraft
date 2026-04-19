@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useEffect } from 'react'
 import { useCurrentTime } from './CurrentTimeContext'
 import { usePreview } from './PreviewContext'
 import { useEditorState } from './EditorStateContext'
@@ -10,9 +10,10 @@ import { useEditorData } from './EditorDataContext'
 export function PreviewPanel() {
   const data = useEditorData()
   const { currentTime, isPlaying } = useCurrentTime()
-  const { crossfadeData, trackLayers, isTransitionLoading, hoverPreviewUrl, previewRef } = usePreview()
+  const { crossfadeData, trackLayers, isTransitionLoading, hoverPreviewUrl, hoverVideo, previewRef } = usePreview()
   const { selectedTransition } = useEditorState()
   const containerRef = useRef<HTMLDivElement>(null)
+  const hoverVideoRef = useRef<HTMLVideoElement>(null)
 
   const keyframes = data.keyframes.map((kf) => ({
     ...kf,
@@ -28,16 +29,54 @@ export function PreviewPanel() {
   const canvasWidth = data.meta.resolution?.[0] || 1920
   const canvasHeight = data.meta.resolution?.[1] || 1080
 
+  // Sync hover video element with scrub/play state
+  useEffect(() => {
+    const video = hoverVideoRef.current
+    if (!video || !hoverVideo) return
+    if (video.src !== hoverVideo.url) {
+      video.src = hoverVideo.url
+      video.load()
+    }
+    if (hoverVideo.scrubProgress != null) {
+      // Scrub mode — pause and seek
+      video.pause()
+      const seekTo = (video.duration || 0) * hoverVideo.scrubProgress
+      if (isFinite(seekTo) && Math.abs(video.currentTime - seekTo) > 0.05) {
+        video.currentTime = seekTo
+      }
+    } else {
+      // Auto-play mode
+      if (video.paused) video.play().catch(() => {})
+    }
+  }, [hoverVideo])
+
   return (
     <div className="h-full w-full bg-gray-950 flex items-center justify-center overflow-hidden">
       <div ref={containerRef} className="h-full aspect-video bg-gray-800 rounded overflow-hidden relative">
-        {hoverPreviewUrl && (
+        {hoverVideo ? (
+          <div className="absolute inset-0 z-10">
+            <video
+              ref={hoverVideoRef}
+              className="w-full h-full object-cover"
+              loop
+              playsInline
+              preload="auto"
+            />
+            {/* Red scrub line */}
+            {hoverVideo.scrubProgress != null && (
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none"
+                style={{ left: `${hoverVideo.scrubProgress * 100}%` }}
+              />
+            )}
+          </div>
+        ) : hoverPreviewUrl ? (
           hoverPreviewUrl.endsWith('.mp4') ? (
             <video src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" autoPlay muted loop playsInline />
           ) : (
             <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
           )
-        )}
+        ) : null}
         {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
           <BeatEffectPreview
             ref={previewRef}

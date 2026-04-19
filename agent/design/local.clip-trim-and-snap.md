@@ -222,14 +222,26 @@ The snap toggle is a global editor state that must exist before snap logic can b
    - Preserve existing time-remap: `trim_out = probe_dur`, `timeline_duration = duration_seconds` (derived from kf spacing)
 3. **Render path** (`api_server.py:3551-3567`):
    - Replace `has_selected = img_path.exists()` with `has_selected = kf["selected"] is not None`
-   - Replace `video_time = progress * video_dur` with `video_time = trim_in + (progress * clip_duration)`
-4. **Variant selection hook**: when a variant is selected, ffprobe and cache `source_video_duration`
+   - Replace `video_time = progress * video_dur` with `video_time = trim_in + (progress * (trim_out - trim_in))`
+4. **Variant selection hook**: when a variant is selected, ffprobe and cache `source_video_duration`; clamp existing `trim_in`/`trim_out` to the new source length
 5. **Generation endpoints** (`api_server.py:4670`, `narrative.py`):
    - Skip transitions where `selected == '[]'` (empty trs)
    - Generation duration target becomes a request param, not persisted
 6. **Bin/pool copy** (`api_server.py:2915`): carry `trim_in`, `trim_out`, `source_video_duration` when copying a transition
-7. **Split/duplicate** (`api_server.py:3812, 3989, 2491`): compute new trim values when splitting a transition
-8. **Deprecate `duration_seconds`**: keep column for safety net, drop in follow-up migration after verification
+7. **Split as metadata-only** (`api_server.py:3812`):
+   - **No ffmpeg re-encoding, no file copies.** Split is pure DB work (junction-row clone).
+   - Create a new keyframe at the split point
+   - Duplicate the transition row into `tr1` (before) and `tr2` (after), soft-delete the original
+   - Clone `tr_candidates` junction rows: for every `(orig_id, slot, pool_path, rank, ...)` row, insert `(tr1_id, slot, pool_path, rank, ...)` and `(tr2_id, slot, pool_path, rank, ...)`. Both halves reference the same pool files by path.
+   - Both halves inherit `source_video_duration` and `selected` (same variant rank)
+   - Each half gets its own refreshed `selected_transitions/{id}_slot_N.mp4` cache copy via the existing variant-resolution path (the cache is a derived artifact, not the source of truth)
+   - **Divergence**: after split, each half is independent — regenerating or switching variant on one only affects its own junction rows and cache
+   - Compute split offset in **source coordinates**: `split_source_offset = orig_trim_in + split_progress × (orig_trim_out - orig_trim_in)`
+   - `tr1`: `trim_in = orig_trim_in`, `trim_out = split_source_offset`
+   - `tr2`: `trim_in = split_source_offset`, `trim_out = orig_trim_out`
+   - Extract the keyframe image at `split_source_offset` from the source pool video (single ffmpeg frame extract — not a re-encode) and set as the new kf's selected image
+8. **Duplicate transition** (`api_server.py:3989`): copy trim values as-is to the duplicate (new kf shifted by `clip_duration = trim_out - trim_in`)
+9. **Deprecate `duration_seconds`**: keep column for safety net, drop in follow-up migration after verification
 
 **Frontend changes** (`src/lib/scenecraft-client.ts`, `src/routes/project/$name/editor.tsx`):
 - Add `trimIn`, `trimOut`, `sourceVideoDuration` to the transition type
@@ -395,6 +407,16 @@ Phase 2 and 3 UI changes ship without flags (new drag handles, no existing UI to
 | Backfill | Probe videos for `source_video_duration`; set `trim_in=0`, `trim_out=probe_dur` | Preserves existing behavior; time-remap preserved via kf spacing |
 | `duration_seconds` | Deprecate, keep as safety net, drop later | Low-risk migration |
 
+### Split Semantics
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Split approach | Metadata-only (no re-encode, no file copies) | Fast, lossless, reversible; trim values control playback range |
+| Candidate handling | Clone junction rows from `tr_candidates` for both halves | Both halves reference the same pool files — no duplication |
+| Divergence model | Full — each half is an independent transition after split | User can swap variants or regenerate one half without affecting the other; their junction rows diverge naturally |
+| Prerequisite | Candidate pool migration must ship before M7 split work | See [local.candidate-pool-migration.md](local.candidate-pool-migration.md) — splits depend on pool + junction model |
+| Keyframe extract | Single ffmpeg frame at `split_source_offset` | Not a re-encode — just one frame for the new kf's image |
+
 ### Phasing
 
 | Phase | Scope | Blocking? |
@@ -420,3 +442,4 @@ Phase 2 and 3 UI changes ship without flags (new drag handles, no existing UI to
 **Recommendation**: Proceed to Phase 1 implementation (schema migration + backend trim support, flag-gated)  
 **Related Documents**:
 - [`clarification-4-clip-trim-and-snap.md`](../clarifications/clarification-4-clip-trim-and-snap.md) — source of decisions
+- [`local.candidate-pool-migration.md`](local.candidate-pool-migration.md) — future refactor eliminating per-tr candidate directories

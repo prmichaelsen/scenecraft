@@ -3,7 +3,7 @@
 **Milestone**: [M7 — Clip Trim and Snap](../../milestones/milestone-7-clip-trim-and-snap.md)  
 **Design**: [local.clip-trim-and-snap.md](../../design/local.clip-trim-and-snap.md)  
 **Estimated Hours**: 3-4  
-**Status**: Not Started  
+**Status**: Completed  
 **Dependencies**: None  
 
 ---

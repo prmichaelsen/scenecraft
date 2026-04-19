@@ -90,7 +90,7 @@ function BinPanelComponent() {
 function PropertiesPanelComponent() {
   const data = useEditorData()
   const { selectedKeyframe, selectedTransition, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
-  const { setHoverPreviewUrl } = usePreview()
+  const { setHoverPreviewUrl, setHoverVideo } = usePreview()
   const router = useRouter()
 
   if (selectedKeyframe) {
@@ -134,6 +134,7 @@ function PropertiesPanelComponent() {
           onDuplicateToPrev={() => {}}
           onDataChange={() => { onTransitionDataChange?.(); router.invalidate() }}
           onHoverPreview={setHoverPreviewUrl}
+          onHoverVideo={setHoverVideo}
         />
       </Panel>
     )

@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { RefreshCw } from 'lucide-react'
 import type { Transition } from '@/routes/project/$name/editor'
-import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTransitionAction, generateTransitionCandidates, selectTransitions } from '@/routes/project/$name/editor'
+import { updateTransitionAction, updateMeta, generateTransitionAction, enhanceTransitionAction, generateTransitionCandidates, selectTransitions, extendVideo, fetchProjectIngredients } from '@/routes/project/$name/editor'
 import { scenecraftFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdateTransitionRemap, type PoolEntry, type TransitionBinEntry } from '@/lib/scenecraft-client'
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
@@ -35,6 +36,7 @@ type TransitionPanelProps = {
   onDuplicateToPrev: () => void
   onDataChange: () => void
   onHoverPreview?: (url: string | null) => void
+  onHoverVideo?: (state: import('./PreviewContext').HoverVideoState) => void
   initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[]
 }
 
@@ -51,6 +53,7 @@ export function TransitionPanel({
   onDuplicateToPrev,
   onDataChange,
   onHoverPreview,
+  onHoverVideo,
   initialPromptRoster,
 }: TransitionPanelProps) {
   const [width, setWidth] = useState(() => {
@@ -419,7 +422,7 @@ export function TransitionPanel({
               <SectionDescription transition={tr} audioDescriptions={audioDescriptions} keyframes={keyframes} />
             </>
           ) : tab === 'candidates' ? (
-            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} sectionDescription={sectionDescription} initialPromptRoster={initialPromptRoster} />
+            <CandidatesTab transition={tr} projectName={projectName} onHoverPreview={onHoverPreview} onHoverVideo={onHoverVideo} sectionDescription={sectionDescription} initialPromptRoster={initialPromptRoster} />
           ) : tab === 'browse' ? (
             <BrowseTab transition={tr} projectName={projectName} onAssigned={() => {
               transition.hasSelectedVideo = true
@@ -780,6 +783,60 @@ function TransitionEffectsEditor({ transition, projectName }: { transition: Tran
   )
 }
 
+function IngredientPicker({ projectName, excludePaths, onSelect, onClose }: { projectName: string; excludePaths: string[]; onSelect: (path: string) => void; onClose: () => void }) {
+  const [ingredients, setIngredients] = useState<{ id: string; path: string; label: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    fetchProjectIngredients({ data: { projectName } })
+      .then((list) => setIngredients(list.map((i: { id: string; path: string; label: string }) => ({ id: i.id, path: i.path, label: i.label }))))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [projectName])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const available = ingredients.filter((i) => !excludePaths.includes(i.path))
+
+  return (
+    <div ref={ref} className="absolute top-full left-0 mt-1 z-50 bg-gray-800 border border-gray-700 rounded shadow-lg p-2 min-w-[160px] max-h-[200px] overflow-y-auto">
+      {loading ? (
+        <div className="text-[9px] text-gray-500 py-2 text-center">Loading...</div>
+      ) : available.length === 0 ? (
+        <div className="text-[9px] text-gray-500 py-2 text-center">
+          {ingredients.length === 0 ? 'No ingredients yet. Promote from BinPanel.' : 'All ingredients attached.'}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-1">
+          {available.map((ing) => (
+            <button
+              key={ing.id}
+              onClick={() => onSelect(ing.path)}
+              className="group relative"
+              title={ing.label || ing.path}
+            >
+              <img
+                src={scenecraftFileUrl(projectName, ing.path)}
+                className="w-12 h-12 rounded object-cover border border-gray-600 group-hover:border-orange-500 transition-colors"
+                alt={ing.label}
+                onError={(e) => { (e.target as HTMLImageElement).src = '' }}
+              />
+              {ing.label && <div className="text-[7px] text-gray-400 truncate mt-0.5">{ing.label}</div>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SectionDescription({ transition, audioDescriptions, keyframes }: { transition: Transition; audioDescriptions: AudioDescription[]; keyframes: KfWithTime[] }) {
   // Find the transition's midpoint time
   const fromKf = keyframes.find((k) => k.id === transition.from)
@@ -861,7 +918,7 @@ function TabBar({ tab, setTab, candidateCount }: { tab: string; setTab: (t: 'det
   )
 }
 
-function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
+function CandidatesTab({ transition, projectName, onHoverPreview, onHoverVideo, sectionDescription, initialPromptRoster }: { transition: Transition; projectName: string; onHoverPreview?: (url: string | null) => void; onHoverVideo?: (state: import('./PreviewContext').HoverVideoState) => void; sectionDescription: AudioDescription | null; initialPromptRoster?: import('@/lib/scenecraft-client').PromptRosterEntry[] }) {
   const jobCtx = useJobContext()
   const entityKey = `tr:${transition.id}:video`
   const job = useJobState(entityKey)
@@ -895,6 +952,19 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
     })
   }, [projectName])
   const [endFrameMode, setEndFrameMode] = useState<'keyframe' | 'next-tr' | 'none'>('keyframe')
+  const [generateAudio, setGenerateAudio] = useState(true)
+
+  // Veo advanced params
+  const [ingredientPaths, setIngredientPaths] = useState<string[]>(transition.ingredients || [])
+  const [negativePrompt, setNegativePrompt] = useState(transition.negativePrompt || '')
+  const [seed, setSeed] = useState<number | null>(transition.seed ?? null)
+  const [showIngredientPicker, setShowIngredientPicker] = useState(false)
+
+  useEffect(() => {
+    setIngredientPaths(transition.ingredients || [])
+    setNegativePrompt(transition.negativePrompt || '')
+    setSeed(transition.seed ?? null)
+  }, [transition.id])
 
   useEffect(() => {
     setCandidates(transition.candidates)
@@ -928,7 +998,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
 
     try {
       const result = await generateTransitionCandidates({
-        data: { projectName, transitionId: transition.id, count: generationCount, duration: generationDuration, ...(endFrameMode === 'next-tr' && { useNextTransitionFrame: true }), ...(endFrameMode === 'none' && { noEndFrame: true }) },
+        data: { projectName, transitionId: transition.id, count: generationCount, duration: generationDuration, ...(endFrameMode === 'next-tr' && { useNextTransitionFrame: true }), ...(endFrameMode === 'none' && { noEndFrame: true }), ...(generateAudio && { generateAudio: true }), ...(ingredientPaths.length > 0 && { ingredients: ingredientPaths }), ...(negativePrompt && { negativePrompt }), ...(seed != null && { seed }) },
       })
       console.log('[TransitionPanel] generate result:', result)
 
@@ -945,7 +1015,7 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
       console.error('Generate transition candidates failed:', e)
       alert(`Failed to generate: ${e}`)
     }
-  }, [projectName, transition, jobCtx, entityKey, generationCount, generationDuration, endFrameMode])
+  }, [projectName, transition, jobCtx, entityKey, generationCount, generationDuration, endFrameMode, generateAudio, ingredientPaths, negativePrompt, seed])
 
   const handleSelect = useCallback(async (variantIndex: number) => {
     setSelecting(true)
@@ -1027,6 +1097,126 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
         </div>
       </div>
 
+      {/* Audio toggle */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Audio</span>
+        <button
+          onClick={() => setGenerateAudio(!generateAudio)}
+          className={`text-[10px] py-1 px-3 rounded transition-colors ${generateAudio ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}
+        >
+          {generateAudio ? 'On' : 'Off'}
+        </button>
+      </div>
+
+      {/* Ingredients */}
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Ingr</span>
+          <div className="flex items-center gap-1 flex-1 min-w-0">
+            {ingredientPaths.map((path) => (
+              <div key={path} className="relative group shrink-0">
+                <img
+                  src={scenecraftFileUrl(projectName, path)}
+                  className="w-8 h-8 rounded object-cover border border-gray-700"
+                  alt=""
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <button
+                  onClick={() => {
+                    const next = ingredientPaths.filter((p) => p !== path)
+                    setIngredientPaths(next)
+                    transition.ingredients = next
+                    updateTransitionAction({ data: { projectName, transitionId: transition.id, action: transition.action, useGlobalPrompt: transition.useGlobalPrompt, ingredients: next } })
+                  }}
+                  className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-600 text-white rounded-full text-[8px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >&times;</button>
+              </div>
+            ))}
+            {ingredientPaths.length < 3 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowIngredientPicker(!showIngredientPicker)}
+                  className="w-8 h-8 rounded border border-dashed border-gray-600 text-gray-500 hover:border-orange-500 hover:text-orange-400 flex items-center justify-center text-sm transition-colors"
+                  title="Add ingredient (reference image)"
+                >+</button>
+                {showIngredientPicker && (
+                  <IngredientPicker
+                    projectName={projectName}
+                    excludePaths={ingredientPaths}
+                    onSelect={(path) => {
+                      const next = [...ingredientPaths, path]
+                      setIngredientPaths(next)
+                      transition.ingredients = next
+                      setShowIngredientPicker(false)
+                      updateTransitionAction({ data: { projectName, transitionId: transition.id, action: transition.action, useGlobalPrompt: transition.useGlobalPrompt, ingredients: next } })
+                    }}
+                    onClose={() => setShowIngredientPicker(false)}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+          <span className="text-[9px] text-gray-600 shrink-0">{ingredientPaths.length}/3</span>
+        </div>
+      </div>
+
+      {/* Negative prompt */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Neg</span>
+        <input
+          type="text"
+          value={negativePrompt}
+          onChange={(e) => setNegativePrompt(e.target.value)}
+          onBlur={() => {
+            transition.negativePrompt = negativePrompt
+            updateTransitionAction({ data: { projectName, transitionId: transition.id, action: transition.action, useGlobalPrompt: transition.useGlobalPrompt, negativePrompt } })
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          className="flex-1 bg-gray-800 text-[10px] text-gray-300 rounded px-2 py-1 border border-gray-700 focus:border-orange-500 focus:outline-none"
+          placeholder="Content to avoid..."
+        />
+      </div>
+
+      {/* Seed */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0 w-14">Seed</span>
+        <input
+          type="number"
+          value={seed ?? ''}
+          onChange={(e) => setSeed(e.target.value ? parseInt(e.target.value, 10) : null)}
+          onBlur={() => {
+            transition.seed = seed
+            updateTransitionAction({ data: { projectName, transitionId: transition.id, action: transition.action, useGlobalPrompt: transition.useGlobalPrompt, seed } })
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          className="flex-1 bg-gray-800 text-[10px] text-gray-300 rounded px-2 py-1 border border-gray-700 focus:border-orange-500 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          placeholder="Random"
+          min={0}
+          max={4294967295}
+        />
+        <button
+          onClick={() => {
+            const s = Math.floor(Math.random() * 4294967296)
+            setSeed(s)
+            transition.seed = s
+            updateTransitionAction({ data: { projectName, transitionId: transition.id, action: transition.action, useGlobalPrompt: transition.useGlobalPrompt, seed: s } })
+          }}
+          className="text-[10px] text-gray-400 hover:text-orange-400 transition-colors"
+          title="Randomize seed"
+        ><RefreshCw size={12} /></button>
+        {seed != null && (
+          <button
+            onClick={() => {
+              setSeed(null)
+              transition.seed = null
+              updateTransitionAction({ data: { projectName, transitionId: transition.id, action: transition.action, useGlobalPrompt: transition.useGlobalPrompt, seed: null } })
+            }}
+            className="text-[10px] text-gray-500 hover:text-red-400 transition-colors"
+            title="Clear seed"
+          >&times;</button>
+        )}
+      </div>
+
       {/* Generate button + refresh */}
       <div className="flex items-center justify-between">
         <button
@@ -1102,8 +1292,19 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
                 isSelected={isSelected}
                 disabled={selecting}
                 onSelect={() => handleSelect(variantNum)}
-                onMouseEnter={() => onHoverPreview?.(scenecraftFileUrl(projectName, videoPath))}
-                onMouseLeave={() => onHoverPreview?.(null)}
+                onMouseEnter={() => {
+                  const url = scenecraftFileUrl(projectName, videoPath)
+                  onHoverPreview?.(url)
+                  onHoverVideo?.({ url, scrubProgress: null })
+                }}
+                onMouseLeave={() => {
+                  onHoverPreview?.(null)
+                  onHoverVideo?.(null)
+                }}
+                onScrub={(progress) => {
+                  const url = scenecraftFileUrl(projectName, videoPath)
+                  onHoverVideo?.({ url, scrubProgress: progress })
+                }}
                 onBench={async () => {
                   const { postAddToBench } = await import('@/lib/scenecraft-client')
                   await postAddToBench(projectName, 'transition', undefined, videoPath)
@@ -1115,6 +1316,17 @@ function CandidatesTab({ transition, projectName, onHoverPreview, sectionDescrip
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ sourcePath: videoPath, type: 'transition' }),
                   })
+                }}
+                onExtend={async () => {
+                  try {
+                    const result = await extendVideo({ data: { projectName, transitionId: transition.id, videoPath } })
+                    if (result.jobId) {
+                      jobCtx.startJob(`tr:${transition.id}:extend`, result.jobId)
+                    }
+                  } catch (e) {
+                    console.error('Extend video failed:', e)
+                    alert(`Failed to extend: ${e}`)
+                  }
                 }}
               />
             )
@@ -1244,14 +1456,17 @@ function ModalVideoCard({ videoPath, projectName }: { videoPath: string; project
 
 const videoBlobCache = new Map<string, string>() // url -> blob URL
 
-function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave, onBench, onPool }: {
+function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, onSelect, onMouseEnter, onMouseLeave, onScrub, onBench, onPool, onExtend }: {
   videoPath: string; projectName: string; label: string; isSelected: boolean; disabled: boolean; onSelect: () => void
   onMouseEnter?: () => void; onMouseLeave?: () => void
-  onBench?: () => void; onPool?: () => void
+  onScrub?: (progress: number | null) => void
+  onBench?: () => void; onPool?: () => void; onExtend?: () => void
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(() => videoBlobCache.get(videoPath) ?? null)
   const [loading, setLoading] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [scrubProgress, setScrubProgress] = useState<number | null>(null)
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const url = scenecraftFileUrl(projectName, videoPath)
 
   // Download video once into a blob URL on first mount
@@ -1279,7 +1494,25 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
       onClick={onSelect}
       onMouseEnter={() => { setHovered(true); onMouseEnter?.() }}
-      onMouseLeave={() => { setHovered(false); onMouseLeave?.() }}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        const progress = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+        setScrubProgress(progress)
+        onScrub?.(progress)
+        // After 500ms idle, switch to auto-play
+        if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+        idleTimerRef.current = setTimeout(() => {
+          setScrubProgress(null)
+          onScrub?.(null)
+        }, 500)
+      }}
+      onMouseLeave={() => {
+        setHovered(false)
+        setScrubProgress(null)
+        if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null }
+        onScrub?.(null)
+        onMouseLeave?.()
+      }}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-scenecraft-pool-path', videoPath)
@@ -1298,20 +1531,34 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
       }}
     >
       {blobUrl ? (
-        <video
-          src={blobUrl}
-          className="w-full aspect-video object-cover"
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          autoPlay={hovered}
-          ref={(el) => {
-            if (!el) return
-            if (hovered) el.play().catch(() => {})
-            else { el.pause(); el.currentTime = 0 }
-          }}
-        />
+        <div className="relative w-full aspect-video">
+          <video
+            src={blobUrl}
+            className="w-full h-full object-cover"
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            autoPlay={hovered && scrubProgress == null}
+            ref={(el) => {
+              if (!el) return
+              if (!hovered) { el.pause(); el.currentTime = 0; return }
+              if (scrubProgress != null) {
+                el.pause()
+                const seekTo = (el.duration || 0) * scrubProgress
+                if (isFinite(seekTo)) el.currentTime = seekTo
+              } else {
+                el.play().catch(() => {})
+              }
+            }}
+          />
+          {scrubProgress != null && (
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none"
+              style={{ left: `${scrubProgress * 100}%` }}
+            />
+          )}
+        </div>
       ) : (
         <div className="w-full aspect-video bg-gray-800 flex items-center justify-center">
           <span className="text-[10px] text-gray-500 font-mono">{loading ? '...' : label}</span>
@@ -1321,6 +1568,15 @@ function LazyVideoCard({ videoPath, projectName, label, isSelected, disabled, on
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-gray-300 font-mono">{label}</span>
           <div className="flex items-center gap-1">
+            {onExtend && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onExtend() }}
+                className="text-[8px] text-amber-400/60 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Extend video +7s"
+              >
+                +7s
+              </button>
+            )}
             {onPool && (
               <button
                 onClick={(e) => { e.stopPropagation(); onPool() }}

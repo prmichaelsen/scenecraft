@@ -23,7 +23,7 @@ import { CurrentTimeProvider } from './CurrentTimeContext'
 import { PreviewProvider, usePreview } from './PreviewContext'
 import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
-import { PreviewDockPanel } from './PreviewPanel'
+import { PreviewPanel as PreviewDockPanel } from './PreviewPanel'
 
 // --- Editor Layout Context ---
 
@@ -100,7 +100,7 @@ function BinDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
 
 function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData }>) {
   const { selectedKeyframe, selectedTransition, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
-  const { setHoverPreviewUrl } = usePreview()
+  const { setHoverPreviewUrl, setHoverVideo } = usePreview()
   const router = useRouter()
 
   if (selectedKeyframe) {
@@ -144,6 +144,7 @@ function PropertiesDockPanel({ params }: IDockviewPanelProps<{ data: EditorData 
           onDuplicateToPrev={() => {}}
           onDataChange={() => { onTransitionDataChange?.(); router.invalidate() }}
           onHoverPreview={setHoverPreviewUrl}
+          onHoverVideo={setHoverVideo}
         />
       </DockPanel>
     )
