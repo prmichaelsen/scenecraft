@@ -477,6 +477,101 @@ milestones:
         actual_hours: null
         notes: "Core flow wired: kickoff helpers in chat_generation.py, tool_progress WS events, elicitation cost gate, end-to-end tests pass with mocked Imagen/Veo. Decision: jobs survive WS disconnect (user already paid). Remaining: real-API validation, blocked by billing."
 
+  - id: milestone_8
+    name: Characters & Lip-Sync
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-8-characters-and-lipsync.md
+    tasks_total: 12
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-57
+        name: Characters schema + migration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-57-characters-schema.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-58
+        name: Transition lipsyncs schema + active_lipsync_id column
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-58-lipsyncs-schema.md
+        estimated_hours: 2
+        actual_hours: null
+      - id: task-59
+        name: Character CRUD API + content-addressed ref image upload
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-59-character-crud-api.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-60
+        name: ElevenLabs voice list proxy + sample preview cache
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-60-elevenlabs-voice-proxy.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-61
+        name: Frontend Characters panel (dockview)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-61-characters-panel.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-62
+        name: Action-text character resolver + Veo ingredient wiring
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-62-action-text-resolver.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-63
+        name: Lipsync render module (WhisperX + S2S + Sync.so)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-63-lipsync-render-module.md
+        estimated_hours: 10
+        actual_hours: null
+      - id: task-64
+        name: Lipsync API endpoints + job manager integration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-64-lipsync-api.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-65
+        name: Frontend Lip-Sync tab in TransitionPanel
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-65-lipsync-tab.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-66
+        name: Stale lipsync detection + regenerate flow
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-66-stale-detection.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-67
+        name: VCS integration — diffable tables + merge conflicts
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-67-vcs-integration.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-68
+        name: Playback wiring for active lipsync variant
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-8-characters-and-lipsync/task-68-playback-wiring.md
+        estimated_hours: 4
+        actual_hours: null
+
 tasks:
   milestone_1:
     - id: task-1
