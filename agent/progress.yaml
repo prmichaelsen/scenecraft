@@ -445,25 +445,29 @@ milestones:
         actual_hours: null
       - id: task-53
         name: Structure & creation tools (add_keyframe, update_keyframe, update_transition)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-18T05:00:00Z
+        completed_date: 2026-04-18T05:15:00Z
+        actual_hours: 0.25
         file: agent/tasks/milestone-4-ai-assistant-chat/task-53-structure-creation-tools.md
         estimated_hours: 5
-        actual_hours: null
       - id: task-54
         name: Editing precision tools (split_transition, assign_keyframe_image, assign_pool_video)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-18T05:15:00Z
+        completed_date: 2026-04-18T05:35:00Z
+        actual_hours: 0.33
         file: agent/tasks/milestone-4-ai-assistant-chat/task-54-editing-precision-tools.md
         estimated_hours: 6
-        actual_hours: null
       - id: task-55
-        name: Checkpoint tools (checkpoint, restore_checkpoint)
-        status: not_started
-        started: null
+        name: Checkpoint tools (checkpoint, list_checkpoints, restore_checkpoint)
+        status: completed
+        started: 2026-04-18T05:35:00Z
+        completed_date: 2026-04-18T05:55:00Z
+        actual_hours: 0.33
         file: agent/tasks/milestone-4-ai-assistant-chat/task-55-checkpoint-tools.md
         estimated_hours: 4
-        actual_hours: null
+        notes: "Also migrated api_server checkpoint metadata off checkpoints.yaml onto a new `checkpoints` table in project.db (per No-YAML directive). One-shot yaml→DB migration on GET runs the first time."
       - id: task-56
         name: Creative generation tools (generate_keyframe_candidates, generate_transition_candidates)
         status: in_progress
@@ -471,7 +475,7 @@ milestones:
         file: agent/tasks/milestone-4-ai-assistant-chat/task-56-creative-generation-tools.md
         estimated_hours: 10
         actual_hours: null
-        notes: "Core flow wired: kickoff helpers in chat_generation.py, tool_progress WS events, elicitation cost gate, end-to-end tests pass with mocked Imagen/Veo. Remaining: job cancellation on chat disconnect, MVP validation against real API."
+        notes: "Core flow wired: kickoff helpers in chat_generation.py, tool_progress WS events, elicitation cost gate, end-to-end tests pass with mocked Imagen/Veo. Decision: jobs survive WS disconnect (user already paid). Remaining: real-API validation, blocked by billing."
 
 tasks:
   milestone_1:
