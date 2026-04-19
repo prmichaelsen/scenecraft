@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/scenecraft-client'
-import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, updateTransitionRemap, generateTransitionAction, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData, restoreKeyframe } from '@/routes/project/$name/editor'
+import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData, restoreKeyframe } from '@/routes/project/$name/editor'
 import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
@@ -400,7 +400,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedRuleSection, setSelectedRuleSection] = useState<RuleSection | null>(null)
   const [trackSettingsId, setTrackSettingsId] = useState<string | null>(null)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
-  const [dragOverrides, setDragOverrides] = useState<Record<string, number>>({})
+  const [dragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
   const [previewHeight, setPreviewHeight] = useState(DEFAULT_PREVIEW_HEIGHT)
   const [hoverPreviewUrl, setHoverPreviewUrlRaw] = useState<string | null>(null)
@@ -1395,80 +1395,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     setSelectedSuppressionId((prev) => prev === id ? null : id)
   }, [closeAllPanels])
 
-  // Keyframe boundary drag — updates local state during drag, persists to DB on release
-  // Tracks the original time of the dragged kf for computing multi-select deltas
-  const dragOriginalTime = useRef<number | null>(null)
-
-  const handleKeyframeDrag = useCallback((id: string, newTimeSeconds: number) => {
-    if (selectedKeyframeIds.has(id) && selectedKeyframeIds.size > 1) {
-      // Multi-drag: compute delta from original position, apply to all selected
-      const origKf = keyframes.find((k) => k.id === id)
-      const origTime = dragOriginalTime.current ?? origKf?.timeSeconds ?? newTimeSeconds
-      if (dragOriginalTime.current === null && origKf) {
-        dragOriginalTime.current = origKf.timeSeconds
-      }
-      const delta = newTimeSeconds - origTime
-      setDragOverrides((prev) => {
-        const next = { ...prev, [id]: newTimeSeconds }
-        for (const otherId of selectedKeyframeIds) {
-          if (otherId !== id) {
-            const otherKf = keyframes.find((k) => k.id === otherId)
-            if (otherKf) {
-              next[otherId] = Math.max(0, otherKf.timeSeconds + delta)
-            }
-          }
-        }
-        return next
-      })
-    } else {
-      setDragOverrides((prev) => ({ ...prev, [id]: newTimeSeconds }))
-    }
-  }, [selectedKeyframeIds, keyframes])
-
-  const handleKeyframeDragEnd = useCallback(async (id: string, newTimeSeconds: number) => {
-    console.log(`[Timeline] dragEnd ${id}: newTime=${newTimeSeconds.toFixed(2)}s effectiveDuration=${effectiveDuration.toFixed(2)}s`)
-    const isMultiDrag = selectedKeyframeIds.has(id) && selectedKeyframeIds.size > 1
-
-    // Clamp to valid range — prevents corrupted timestamps from drag bugs
-    const clamped = Math.max(0, Math.min(newTimeSeconds, effectiveDuration))
-    if (Math.abs(clamped - newTimeSeconds) > 0.5) {
-      console.warn(`[Timeline] Clamped drag for ${id}: ${newTimeSeconds.toFixed(2)}s → ${clamped.toFixed(2)}s (duration=${effectiveDuration.toFixed(2)}s)`)
-    }
-
-    // Collect all kfs to persist (multi-drag or single)
-    const updates: { id: string; timestamp: string }[] = []
-    if (isMultiDrag) {
-      const origKf = keyframes.find((k) => k.id === id)
-      const origTime = dragOriginalTime.current ?? origKf?.timeSeconds ?? clamped
-      const delta = clamped - origTime
-      for (const kfId of selectedKeyframeIds) {
-        const kf = keyframes.find((k) => k.id === kfId)
-        if (kf) {
-          const newTime = Math.max(0, Math.min(kf.timeSeconds + delta, effectiveDuration))
-          updates.push({ id: kfId, timestamp: secondsToTimestamp(newTime) })
-        }
-      }
-    } else {
-      updates.push({ id, timestamp: secondsToTimestamp(clamped) })
-    }
-
-    dragOriginalTime.current = null
-    setDragOverrides({})
-
-    // Update local data + persist
-    for (const u of updates) {
-      const kf = localKeyframes.find((k) => k.id === u.id)
-      if (kf) kf.timestamp = u.timestamp
-      try {
-        await updateKeyframeTimestamp({
-          data: { projectName: data.projectName, keyframeId: u.id, newTimestamp: u.timestamp },
-        })
-      } catch (err) {
-        console.error('[Timeline] Failed to persist keyframe timestamp:', u.id, u.timestamp, err)
-      }
-    }
-  }, [data, effectiveDuration, selectedKeyframeIds, keyframes])
-
   const handleAddKeyframe = useCallback(async () => {
     try {
       const timestamp = secondsToTimestamp(currentTimeRef.current)
@@ -1497,10 +1423,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       console.error('Failed to delete keyframe:', e)
     }
   }, [data.projectName, refreshTimeline])
-
-  const handleTransitionRemapChange = useCallback(async (transitionId: string, targetDuration: number) => {
-    await updateTransitionRemap({ data: { projectName: data.projectName, transitionId, targetDuration } })
-  }, [data.projectName])
 
   const handleDeleteTransition = useCallback(async (id: string) => {
     await deleteTransition({ data: { projectName: data.projectName, transitionId: id } })
@@ -2430,8 +2352,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       selectedIds={selectedKeyframeIds}
                       duration={effectiveDuration}
                       onKeyframeClick={handleKeyframeClick}
-                      onKeyframeDrag={handleKeyframeDrag}
-                      onKeyframeDragEnd={handleKeyframeDragEnd}
                       scrollRef={scrollRef}
                       scrollLeft={scrollLeft}
                       viewportWidth={viewportWidth}
@@ -2453,12 +2373,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       selectedId={selectedTransition?.id ?? null}
                       selectedIds={selectedTransitionIds}
                       duration={effectiveDuration}
+                      projectName={data.projectName}
                       onTransitionClick={handleTransitionClick}
-                      onBoundaryDrag={handleKeyframeDrag}
-                      onBoundaryDragEnd={handleKeyframeDragEnd}
-                      onRemapChange={handleTransitionRemapChange}
                       onRetryRender={handleRetryRender}
                       onDropVideo={handleDropVideoOnTransition}
+                      onTrimChange={refreshTimeline}
                       renderProgress={renderProgress}
                       scrollLeft={scrollLeft}
                       viewportWidth={viewportWidth}
@@ -2617,7 +2536,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               currentTime={currentTime}
               pxPerSec={pxPerSec}
               duration={effectiveDuration}
-              onSeek={(time) => seekFnRef.current?.(time)}
+              onSeek={(time) => { if (seekFnRef.current) seekFnRef.current(time); else setCurrentTime(time) }}
               audioElRef={audioElRef}
               scrollTop={scrollTop}
             />
