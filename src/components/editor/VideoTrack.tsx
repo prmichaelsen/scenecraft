@@ -91,6 +91,13 @@ export const VideoTrack = memo(function VideoTrack({
         const deltaX = e.clientX - ds.startX
         const newTime = Math.max(ds.minTime, Math.min(ds.maxTime, ds.startTime + deltaX / pxPerSec))
         onKeyframeDragEnd(ds.keyframeId, newTime)
+        // Swallow the synthetic click that would otherwise bubble to parent handlers
+        // (e.g., track onClick that seeks the playhead)
+        const stopClick = (ev: MouseEvent) => {
+          ev.stopPropagation()
+          document.removeEventListener('click', stopClick, true)
+        }
+        document.addEventListener('click', stopClick, true)
       }
       dragState.current = null
     }

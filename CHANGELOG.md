@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0] - 2026-04-19
+
+### Added
+- `m` keyboard shortcut places a marker at the current playhead time
+
+### Changed
+- Marker track now requires a double-click to add a marker (was single-click) — reduces accidental markers when grabbing the playhead
+
+### Fixed
+- Dragging a clip edge no longer reseeks the playhead to the release position — synthetic click events after edge drags are now swallowed on both video and transition tracks
+- Playhead scrub jitter: audio seek+play bursts during playhead drag are throttled to ~120 ms with a trailing-edge commit, so visual scrubbing stays smooth at 60 fps instead of stuttering under audio subsystem churn
+
 ## [0.9.0] - 2026-04-19
 
 ### Added

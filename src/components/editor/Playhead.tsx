@@ -14,6 +14,8 @@ export const Playhead = memo(function Playhead({ currentTime, pxPerSec, onSeek, 
   const isDragging = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const scrubTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastScrubTime = useRef(0)
+  const pendingScrubTime = useRef<number | null>(null)
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     isDragging.current = true
@@ -25,9 +27,26 @@ export const Playhead = memo(function Playhead({ currentTime, pxPerSec, onSeek, 
       audio.playbackRate = 0.5
       audio.volume = 0.6
     }
+    lastScrubTime.current = 0
+    pendingScrubTime.current = null
   }, [audioElRef])
 
   useEffect(() => {
+    // Throttle audio scrub bursts — audio seek+play is heavy and overwhelms the
+    // main thread when called on every mousemove, causing visible playhead jitter.
+    const SCRUB_INTERVAL_MS = 120
+
+    const fireScrub = (time: number) => {
+      const audio = audioElRef?.current
+      if (!audio) return
+      audio.currentTime = time
+      audio.play().catch(() => {})
+      if (scrubTimeout.current) clearTimeout(scrubTimeout.current)
+      scrubTimeout.current = setTimeout(() => { audio.pause() }, 80)
+      lastScrubTime.current = performance.now()
+      pendingScrubTime.current = null
+    }
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current || !containerRef.current) return
       const scrollParent = containerRef.current.closest('.overflow-x-auto')
@@ -37,13 +56,21 @@ export const Playhead = memo(function Playhead({ currentTime, pxPerSec, onSeek, 
       const time = Math.max(0, Math.min(duration, clickX / pxPerSec))
       onSeek(time)
 
-      // Scrub audio: play a short burst at the seek position
-      const audio = audioElRef?.current
-      if (audio) {
-        audio.currentTime = time
-        audio.play().catch(() => {})
-        if (scrubTimeout.current) clearTimeout(scrubTimeout.current)
-        scrubTimeout.current = setTimeout(() => { audio.pause() }, 80)
+      // Throttle audio: fire immediately if enough time has passed, else
+      // schedule a trailing burst so the user hears where they finally stopped.
+      const now = performance.now()
+      if (now - lastScrubTime.current >= SCRUB_INTERVAL_MS) {
+        fireScrub(time)
+      } else {
+        pendingScrubTime.current = time
+        if (!scrubTimeout.current) {
+          scrubTimeout.current = setTimeout(() => {
+            scrubTimeout.current = null
+            if (pendingScrubTime.current != null && isDragging.current) {
+              fireScrub(pendingScrubTime.current)
+            }
+          }, SCRUB_INTERVAL_MS - (now - lastScrubTime.current))
+        }
       }
     }
 
@@ -56,6 +83,7 @@ export const Playhead = memo(function Playhead({ currentTime, pxPerSec, onSeek, 
           audio.volume = 1
           if (scrubTimeout.current) { clearTimeout(scrubTimeout.current); scrubTimeout.current = null }
         }
+        pendingScrubTime.current = null
       }
     }
 

@@ -97,7 +97,7 @@ const MarkerTrack = memo(function MarkerTrack({ markers, pxPerSec, scrollLeft, v
   return (
     <div
       className="relative h-5 shrink-0 border-b border-gray-800 cursor-crosshair"
-      onClick={(e) => {
+      onDoubleClick={(e) => {
         const rect = e.currentTarget.getBoundingClientRect()
         const x = e.clientX - rect.left
         const time = x / pxPerSec
@@ -1706,6 +1706,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (matchesHotkey(e, 'selectAll') && selectedEffect) {
         handlePreventDefault(e, 'selectAll')
         setSelectedEffectIds(new Set(userEffects.map((fx) => fx.id)))
+      }
+
+      // Add marker at playhead (M)
+      if (e.key === 'm' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault()
+        const id = `m_${Date.now()}`
+        const t = Math.round(currentTimeRef.current * 100) / 100
+        setMarkers((prev) => [...prev, { id, time: t, label: '' }])
+        postAddMarker(data.projectName, id, t).catch(() => {})
       }
 
       // Undo (Ctrl+Z)

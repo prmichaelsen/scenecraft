@@ -67,6 +67,13 @@ export const TransitionTrack = memo(function TransitionTrack({
         // Compute new timeline duration and update remap
         const newDuration = Math.abs(newTime - dragState.current.otherKfTime)
         onRemapChange(dragState.current.transitionId, newDuration)
+        // Swallow the synthetic click that would otherwise bubble to parent handlers
+        // (e.g., track onClick that seeks the playhead)
+        const stopClick = (ce: MouseEvent) => {
+          ce.stopPropagation()
+          document.removeEventListener('click', stopClick, true)
+        }
+        document.addEventListener('click', stopClick, true)
       }
       dragState.current = null
       document.removeEventListener('mousemove', handleMouseMove)
