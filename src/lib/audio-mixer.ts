@@ -303,8 +303,19 @@ export function createAudioMixer(
 
   const activateClip = (clipNode: ClipNode, playhead: number): void => {
     if (!clipNode.audio) return
-    const { start_time, source_offset } = clipNode.clip
-    const sourcePosition = Math.max(0, source_offset + (playhead - start_time))
+    const { start_time } = clipNode.clip
+    const rate = clipNode.clip.playback_rate ?? 1
+    const effOffset = clipNode.clip.effective_source_offset ?? clipNode.clip.source_offset
+    const sourcePosition = Math.max(0, effOffset + (playhead - start_time) * rate)
+
+    // playbackRate drives linear time remap on linked clips.
+    // preservesPitch keeps dialogue natural at non-unity rates.
+    try {
+      clipNode.audio.playbackRate = rate
+      // preservesPitch is widely supported but not in older TS lib types
+      ;(clipNode.audio as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true
+    } catch { /* older browser — ignore */ }
+
     try {
       clipNode.audio.currentTime = sourcePosition
     } catch { /* readyState may not allow — retry on loadedmetadata */ }

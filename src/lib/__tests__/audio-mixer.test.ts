@@ -207,6 +207,85 @@ describe('createAudioMixer — activation by playhead', () => {
   })
 })
 
+describe('createAudioMixer — playback_rate + effective_source_offset (linear remap)', () => {
+  let opts: ReturnType<typeof makeOptions>
+  beforeEach(() => { opts = makeOptions() })
+
+  it('unlinked clip (rate defaults to 1, no offset shift)', () => {
+    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 10, end: 20 }])], opts)
+    m.seek(15)
+    m.play()
+    const el = opts.mockElements[0]
+    expect(el.playbackRate).toBe(1)
+    // currentTime = 0 + (15 - 10) * 1 = 5
+    expect(el.currentTime).toBeCloseTo(5, 3)
+  })
+
+  it('linked clip at 2× (kf_span=5s, source_span=10s) plays at rate 2', () => {
+    // Craft a clip object with the derived fields the backend would emit
+    const track: AudioTrack = {
+      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      volume_curve: [[0, 0], [1, 0]],
+      clips: [{
+        id: 'c1', track_id: 'a',
+        source_path: 'audio_staging/c1.m4a',
+        start_time: 10, end_time: 15, source_offset: 0,
+        volume_curve: [[0, 0], [1, 0]], muted: false,
+        remap: { method: 'linear', target_duration: 0 },
+        playback_rate: 2, effective_source_offset: 0,
+      }],
+    }
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(10)
+    m.play()
+    const el = opts.mockElements[0]
+    expect(el.playbackRate).toBe(2)
+    // At timeline 10 → clip start → source 0
+    expect(el.currentTime).toBe(0)
+  })
+
+  it('linked clip mid-playback: source position = effOffset + (t - start) * rate', () => {
+    const track: AudioTrack = {
+      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      volume_curve: [[0, 0], [1, 0]],
+      clips: [{
+        id: 'c1', track_id: 'a',
+        source_path: 'audio_staging/c1.m4a',
+        start_time: 10, end_time: 15, source_offset: 0,
+        volume_curve: [[0, 0], [1, 0]], muted: false,
+        remap: { method: 'linear', target_duration: 0 },
+        playback_rate: 2, effective_source_offset: 2, // trim_in = 2s
+      }],
+    }
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(12.5) // halfway through clip
+    m.play()
+    const el = opts.mockElements[0]
+    // source = 2 + (12.5 - 10) * 2 = 2 + 5 = 7
+    expect(el.currentTime).toBe(7)
+  })
+
+  it('activation applies preservesPitch=true so voices stay natural at non-unity rates', () => {
+    const track: AudioTrack = {
+      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      volume_curve: [[0, 0], [1, 0]],
+      clips: [{
+        id: 'c1', track_id: 'a',
+        source_path: 'audio_staging/c1.m4a',
+        start_time: 0, end_time: 1, source_offset: 0,
+        volume_curve: [[0, 0], [1, 0]], muted: false,
+        remap: { method: 'linear', target_duration: 0 },
+        playback_rate: 1.6,
+      }],
+    }
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(0)
+    m.play()
+    const el = opts.mockElements[0] as unknown as { preservesPitch?: boolean }
+    expect(el.preservesPitch).toBe(true)
+  })
+})
+
 describe('createAudioMixer — mute updates', () => {
   let opts: ReturnType<typeof makeOptions>
   beforeEach(() => { opts = makeOptions() })

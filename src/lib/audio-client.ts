@@ -26,6 +26,19 @@ export type AudioClip = {
   volume_curve: CurvePoint[]
   muted: boolean
   remap?: { method: string; target_duration: number }
+  /**
+   * Linear playback-rate factor derived from the linked transition's
+   * remap (if any). 1.0 for unlinked clips. `source_span / kf_span` when
+   * a transition link exists, so audio tracks the video's linear time
+   * remap. Computed server-side at query time; not stored.
+   */
+  playback_rate?: number
+  /**
+   * Source-file offset to start reading from, including the linked
+   * transition's `trim_in` (so the right slice of the source plays).
+   * Computed server-side; equals `source_offset` for unlinked clips.
+   */
+  effective_source_offset?: number
 }
 
 export type AudioClipLink = {
