@@ -1,26 +1,28 @@
 # Audio Isolation Plugin (First-Party MVP)
 
-**Concept**: First scenecraft plugin — an audio-isolation operation that strips background noise from an audio clip and leaves clean voices. Built *like* a plugin (own top-level dir, `plugin.yaml` manifest, narrow seam) but wired directly into the app so we can ship it without the full extension runtime.
+**Concept**: First scenecraft plugin — an audio-isolation operation that emits multiple stems (vocal + background) from a selected audio source, browsable and draggable from a dedicated panel. Built *like* a plugin (own top-level dir, `plugin.yaml` manifest, narrow seam) but wired directly into the app so we can ship it without the full extension runtime.
 **Created**: 2026-04-19
+**Revised**: 2026-04-21 (v2: multi-stem outputs, range input, Audio Isolations panel)
 **Status**: Design Specification
 
 ---
 
 ## Overview
 
-This design defines scenecraft's **first plugin** and, as a side effect, the minimum plugin scaffolding (contribution categories, host API, static registry) needed to support it. The plugin — `isolate-vocals` — is a one-button operation that takes an audio clip, runs the DeepFilterNet3 speech-enhancement model over it, and appends the cleaned audio as a new candidate on the original clip.
+This design defines scenecraft's first real plugin — `isolate-vocals` — and the minimum plugin scaffolding (contribution categories, host API, static registry) needed to host it. The plugin takes an audio source (an `audio_clip` or a video `transition`'s extracted audio), runs DeepFilterNet3 speech enhancement over the requested range (full source or a subset window), and emits two stems — `vocal` (DFN3 output) and `background` (source minus vocal) — as independent `pool_segments`. A new **Audio Isolations** panel shows all runs for the selected entity and lets the user drag any stem onto the timeline to create an audio_clip.
 
-Crucially, the plugin is *built as a plugin from day one*: its files live in their own top-level directory (`src/plugins/isolate-vocals/` in each repo), imports route through a narrow `plugin-api` host surface, and the plugin's `plugin.yaml` manifest documents the same declarative shape a future marketplace installer will consume. For MVP the manifest is static documentation and the registry is a hardcoded list — no dynamic loading, no sandboxing, no file-system scanning — but the seams are already in the right place so extracting the plugin into a separate repo later requires zero rewrite of plugin code.
+The plugin is built *as a plugin from day one*: its files live in their own top-level directory (`src/plugins/isolate-vocals/` in each repo), imports route through a narrow `plugin-api` host surface, and the `plugin.yaml` manifest documents exactly the declarative shape a future marketplace installer will consume. For MVP the manifest is static documentation and the registry is a hardcoded list — no dynamic loading, no sandboxing — but the seams are already in the right place, so extracting the plugin later requires zero rewrite of plugin code.
 
-This design also extends the contribution-points model (`local.contribution-points.md`) with two new categories required by this plugin: `operations` and `contextMenus`.
+This design supersedes the v1 design (single-output, candidate-auto-select). Per clarification-9, stems are independent pool_segments browsable in a panel rather than candidates that auto-attach to the source clip. The candidate pattern from clarification-8 / task-100 stays in the DB for future generated-audio features (TTS, music generation) but is NOT used by the isolate-vocals operation.
 
 ---
 
 ## Problem Statement
 
-- **User-level problem.** Users upload audio tracks with ambient noise (wind, HVAC, chatter, white noise) alongside the voice they actually want. Scenecraft has no way to remove it today — the workflow is "go to a different tool, fix it, re-import", which breaks the loop and discards timeline positioning.
-- **Plugin-architecture problem.** Scenecraft's plugin system is a design doc with a single placeholder path (M3 Contribution Points Phase 1) but no working plugin. Without one reference implementation, the contribution-point design is unvalidated and the seam between "app code" and "plugin code" has never been drawn in practice.
-- **Scope-vs-ship tension.** Building the full extension runtime (dynamic loading, sandboxing, activation events, marketplace install) is weeks of work that blocks any real plugin from shipping. We need a way to deliver the first plugin's value *now* while leaving the right grooves for the runtime to fill in later.
+- **User-level problem.** Users record audio (stand-up comedy, interviews, live events) where the target voice shares the acoustic environment with ambient noise: crowd chatter, HVAC, wind, applause. Cleaning it up is a full external-tool workflow today — export, take to a DAW or online service, re-import. Timeline position is lost; iteration is slow.
+- **Secondary need: creative flexibility.** A single denoise pass isn't always the right answer. Sometimes the user wants the *background* track (to layer under a voiceover, or mute it during dialogue and unmute it for ambience). Producing both stems from one run makes the background usable instead of discarded.
+- **Plugin-architecture problem.** scenecraft's plugin system is a design doc with a single placeholder path (M3 Contribution Points Phase 1) but no working plugin. Without a reference implementation, the contribution-point design is unvalidated and the seam between "app code" and "plugin code" has never been drawn in practice.
+- **Scope-vs-ship tension.** Building the full extension runtime (dynamic loading, sandboxing, activation events, marketplace install) is weeks of work that blocks any plugin from shipping. We need to deliver the first plugin's value *now* while leaving the right grooves for the runtime to fill in later.
 
 ---
 
@@ -28,113 +30,225 @@ This design also extends the contribution-points model (`local.contribution-poin
 
 ### Approach
 
-1. **Pick a tight, self-contained first plugin** — audio isolation via DeepFilterNet3 — that exercises the interesting surfaces (operation invocation, context menu, job progress, candidate output) without requiring new infrastructure.
+1. **Pick a tight, high-value first plugin** — audio isolation via DeepFilterNet3 — that exercises the interesting surfaces (operation invocation, panel-as-entry-point, job progress, multi-stem output, drag-to-timeline) without requiring new ML infrastructure beyond DFN3.
 2. **Build the plugin in its own directory with real boundaries** — `src/plugins/isolate-vocals/` in both repos, imports flow through a `plugin-api` module, the plugin never imports app internals directly.
-3. **Mock the extension runtime with a static registry** — a 30-line `PluginHost` class on each side, pre-populated with `[isolate_vocals]` at startup. Same shape as a real loader, just no filesystem or sandboxing.
-4. **Ship the manifest as documentation, not runtime config** — the `plugin.yaml` describes what the plugin contributes, but the static registry is what the app actually wires up. The manifest becomes load-bearing once the real loader exists.
-5. **Mirror the candidate pattern already used for keyframes and transitions** — the operation appends a new candidate to the source entity and auto-selects it. No new-track creation, no timeline reconciliation.
+3. **Mock the extension runtime with a static registry** — a ~30-line `PluginHost` class on each side, pre-populated with `[isolate_vocals]` at startup. Same shape as a real loader, just no filesystem scanning or sandboxing.
+4. **Ship the manifest as documentation, not runtime config** — `plugin.yaml` describes what the plugin contributes, but the static registry is what the app actually wires up. Manifest becomes load-bearing once the loader exists.
+5. **Emit multiple stems per run, grouped by an `audio_isolations` record** — stems are independent pool_segments. The Audio Isolations panel is the primary UX — it lists past runs for the selected entity, shows each stem with a waveform, and acts as the kickoff point for new runs.
+6. **Deliver both stems with a single model** — DFN3 outputs one clean-speech stream (`vocal`). `background = source − vocal` is a simple time-domain subtraction, giving users a real residual channel without requiring a separate source-separation model.
 
 ### Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  FRONTEND (scenecraft/src/)                                      │
-│  ┌─────────────────┐                                             │
-│  │ plugin-host.ts  │ ← static registry: [isolate_vocals]         │
-│  └────────┬────────┘                                             │
-│           │ reads                                                │
-│  ┌────────▼──────────────────┐   ┌─────────────────────────────┐ │
-│  │ plugins/isolate-vocals/   │   │  lib/plugin-api.ts          │ │
-│  │   plugin.yaml             │   │  (ctxMenu register, REST    │ │
-│  │   index.ts  (descriptor)  │◄──┤   client helpers, dialog    │ │
-│  │   IsolateVocalsDialog.tsx │   │   host, toast, etc.)        │ │
-│  │   isolate-vocals-client.ts│   └─────────────────────────────┘ │
-│  └───────────────────────────┘                                   │
-│           │ right-click menu wiring                              │
-│  ┌────────▼─────────────────────────────────────────────────┐    │
-│  │  AudioClipPanel.tsx + timeline audio-clip rendering      │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────┬───────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  FRONTEND (scenecraft/src/)                                          │
+│  ┌─────────────────┐                                                 │
+│  │ plugin-host.ts  │ ← static registry: [isolate_vocals]             │
+│  └────────┬────────┘                                                 │
+│           │ reads                                                    │
+│  ┌────────▼──────────────────┐   ┌─────────────────────────────────┐ │
+│  │ plugins/isolate-vocals/   │   │  lib/plugin-api.ts              │ │
+│  │   plugin.yaml             │   │  (registration helpers, WS job  │ │
+│  │   index.ts  (descriptor)  │◄──┤   client, dialog host, toast,   │ │
+│  │   IsolateVocalsRunForm    │   │   drag-payload helper, etc.)    │ │
+│  │   AudioIsolationsPanel    │   └─────────────────────────────────┘ │
+│  └───────────────────────────┘                                       │
+│           │ registers                                                │
+│  ┌────────▼─────────────────────────────────────────────────────┐    │
+│  │  AudioIsolationsPanel (dockview panel)                       │    │
+│  │   ├── context reads selected audio_clip / transition         │    │
+│  │   ├── inline Run form: range toggle + model + Run button     │    │
+│  │   └── run list → per-run stem rows → drag onto timeline      │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+└──────────┬───────────────────────────────────────────────────────────┘
            │ REST + WS
-┌──────────▼───────────────────────────────────────────────────────┐
-│  BACKEND (scenecraft-engine/src/scenecraft/)                     │
-│  ┌─────────────────┐                                             │
-│  │ plugin_host.py  │ ← static registry                           │
-│  └────────┬────────┘                                             │
-│           │ reads                                                │
-│  ┌────────▼──────────────────┐   ┌─────────────────────────────┐ │
-│  │ plugins/isolate_vocals/   │   │  plugin_api.py              │ │
-│  │   plugin.yaml             │   │  (DB helpers, JobManager,   │ │
-│  │   __init__.py             │◄──┤   REST register, audio      │ │
-│  │   isolate_vocals.py       │   │   extract helper, etc.)     │ │
-│  │   model.py (DeepFilterNet)│   └─────────────────────────────┘ │
-│  └───────────────────────────┘                                   │
-│           │ writes                                               │
-│  ┌────────▼─────────────────────────────────────────────────┐    │
-│  │  project.db:                                             │    │
-│  │    pool_segments (kind='generated', created_by='isolate-vocals')│
-│  │    audio_candidates (NEW junction)                       │    │
-│  │    audio_clips.selected (NEW column)                     │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────▼───────────────────────────────────────────────────────────┐
+│  BACKEND (scenecraft-engine/src/scenecraft/)                         │
+│  ┌─────────────────┐                                                 │
+│  │ plugin_host.py  │ ← static registry                               │
+│  └────────┬────────┘                                                 │
+│           │ reads                                                    │
+│  ┌────────▼──────────────────┐   ┌─────────────────────────────────┐ │
+│  │ plugins/isolate_vocals/   │   │  plugin_api.py                  │ │
+│  │   plugin.yaml             │   │  (DB helpers, JobManager,       │ │
+│  │   __init__.py             │◄──┤   REST register, audio extract  │ │
+│  │   isolate_vocals.py       │   │   helper, etc.)                 │ │
+│  │   model.py (DFN3)         │   └─────────────────────────────────┘ │
+│  └───────────────────────────┘                                       │
+│           │ writes                                                   │
+│  ┌────────▼──────────────────────────────────────────────────┐       │
+│  │  project.db:                                              │       │
+│  │    audio_isolations      (run metadata — one row per run) │       │
+│  │    isolation_stems       (junction: run × pool_segment)   │       │
+│  │    pool_segments         (each stem is an audio segment)  │       │
+│  └───────────────────────────────────────────────────────────┘       │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### New Contribution Categories
+### Contribution Categories (reminder from clarification-8)
 
 Extends `local.contribution-points.md` with two categories:
 
-**`operations`** — takes an entity (or set of entity types), runs a job, appends candidates.
+**`operations`** — takes an entity (or set of entity types), runs a job, produces output.
+**`contextMenus`** — appends items to right-click menus, referencing operations by id.
 
-```yaml
-contributes:
-  operations:
-    - id: isolate-vocals.run
-      label: "Isolate vocals"
-      entityTypes: [audio_clip, transition]     # one operation can apply to many
-      handler: "backend:isolate_vocals.run"      # backend handler reference
-      ui: "frontend:isolate_vocals.Dialog"       # optional confirm dialog component
-      output: audio_candidate                    # what this operation produces
+Both stay as specified; the isolate-vocals plugin's manifest uses them as-is.
+
+### Run & Stem Model
+
+Every invocation of the operation creates one `audio_isolations` row. That row fans out to N stems via the `isolation_stems` junction:
+
+```sql
+CREATE TABLE audio_isolations (
+    id TEXT PRIMARY KEY,              -- UUID
+    entity_type TEXT NOT NULL,        -- 'audio_clip' | 'transition'
+    entity_id TEXT NOT NULL,
+    model TEXT NOT NULL,              -- 'deepfilternet3' for MVP
+    range_mode TEXT NOT NULL,         -- 'full' | 'subset'
+    trim_in REAL,                     -- seconds into source; NULL for full
+    trim_out REAL,
+    status TEXT NOT NULL,             -- 'running' | 'completed' | 'failed'
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE isolation_stems (
+    isolation_id TEXT NOT NULL REFERENCES audio_isolations(id),
+    pool_segment_id TEXT NOT NULL REFERENCES pool_segments(id),
+    stem_type TEXT NOT NULL,          -- 'vocal' | 'background' | ...
+    PRIMARY KEY (isolation_id, pool_segment_id)
+);
+
+CREATE INDEX idx_isolations_entity ON audio_isolations(entity_type, entity_id);
+CREATE INDEX idx_isolation_stems_run ON isolation_stems(isolation_id);
+CREATE INDEX idx_isolation_stems_segment ON isolation_stems(pool_segment_id);
 ```
 
-An operation's handler always returns through the candidate pattern (see below). Operations are loosely-coupled to their discovery surfaces — the same operation is addressable by id from context menus, the future command palette, and chat tools.
+Notes:
+- `stem_type` lives on the junction (not on `pool_segments`). A single pool_segment could appear in multiple runs in the future (cache reuse) — the junction allows it.
+- `pool_segments.kind='generated'`, `created_by='isolate-vocals'` for every stem. No new `kind` value. Media type derives from extension via `_classify_media_type` (already landed).
+- Stems do NOT write to `audio_candidates` / `audio_clips.selected` — those stay for future generated-audio features. The source entity is unchanged by a run.
 
-**`contextMenus`** — appends items to right-click menus on timeline entities, referencing operations by id:
+### Stem Ontology
 
-```yaml
-contributes:
-  contextMenus:
-    - entityType: audio_clip
-      items:
-        - operation: isolate-vocals.run
-          label: "Isolate vocals…"
-          icon: wave
-```
+Canonical labels, aligned with `~/bytv.md`'s pipeline:
 
-### Candidate Pattern for Audio Clips
+**MVP:**
+- `vocal` — isolated speech
+- `background` — everything else on the source (= `source − vocal` residual)
 
-Parallels how keyframes (`candidates` JSON array) and transitions (`tr_candidates` junction + `pool_segments`) already work. Audio uses the **transitions-style junction** because:
-- Future generated audio (TTS, music gen) needs per-candidate provenance / seed / params — inline JSON can't carry that cleanly
-- `pool_segments` is already the "named asset" abstraction in scenecraft; audio segments reuse the same table (provenance carried by `kind` + `created_by`, media type disambiguated by file extension / context)
-- The transitions pattern is the newer, fuller model; the keyframe inline pattern predates `pool_segments` and is effectively legacy
+**Forward-compat (stored but not produced by the MVP operation; valid for future operations):**
+- From MDX23C-DrumSep: `kick`, `snare`, `toms`, `hh`, `ride`, `crash`
+- From Demucs htdemucs_6s: `bass`, `guitar`, `piano`, `other`
 
-### MVP Pipeline
+Free-form strings are accepted with soft validation (warn on unknown, don't reject).
+
+### Model Pipeline
 
 ```
-┌──────────────┐   ffmpeg   ┌────────────┐   DFN3   ┌────────────┐   ffmpeg   ┌──────────────┐
-│ source clip  │─── wav ───▶│  wav_in    │─── → ──▶│  wav_out   │─── mp3 ──▶│ pool_segment │
-│ (any codec)  │            │  (PCM 48k) │          │ (denoised) │            │  pool_segment│
-└──────────────┘            └────────────┘          └────────────┘            └───────┬──────┘
-                                                                                       │
-                                                                              ┌────────▼────────┐
-                                                                              │ audio_candidates│
-                                                                              │   junction row  │
-                                                                              └────────┬────────┘
-                                                                                       │
-                                                                              ┌────────▼────────┐
-                                                                              │ audio_clips     │
-                                                                              │   .selected ←   │
-                                                                              └─────────────────┘
+┌──────────────┐   ffmpeg    ┌──────────────┐
+│  source      │────wav────▶│  wav_in      │
+│  (mp4/wav)   │             │  (PCM 48k)   │
+└──────────────┘             └───────┬──────┘
+                                     │
+                           DFN3 denoise
+                                     │
+                        ┌────────────┴────────────┐
+                        ▼                         ▼
+                ┌──────────────┐           ┌──────────────┐
+                │  wav_vocal   │           │ wav_in  −    │
+                │  (DFN3 out)  │           │ wav_vocal    │
+                └──────┬───────┘           └──────┬───────┘
+                       │                          │
+                       ▼                          ▼
+              pool_segment            pool_segment
+              + isolation_stem        + isolation_stem
+              (stem_type='vocal')     (stem_type='background')
 ```
+
+For `subset` range: pre-slice the source via ffmpeg's `-ss / -t` before decoding. Stems have duration = (trim_out − trim_in). For `full` range: process the entire source; stems have duration = source_duration.
+
+Sample rate preserved from the source; no resampling beyond what DFN3 applies internally (DFN3 works at 48kHz).
+
+### UX: AudioIsolationsPanel
+
+A new dockview panel. Always context-sensitive to the selected `audio_clip` / `transition`. Replaces the role v1 had for `AudioClipPanel` (v1 plan deferred until generated-audio ships).
+
+**Layout:**
+
+```
+┌─ Audio Isolations ─────────────────────────────────────────────┐
+│ ▾ Source: Vocals Show 1 (audio_clip_07463755) · 2h 36m         │
+│                                                                 │
+│  Range:  ( ) Full     (●) Subset (0:00 – 2h 36m)               │
+│  Model:  DeepFilterNet3                                         │
+│  ETA:    ~5m on CPU                                             │
+│  [ Run ]                                                        │
+│                                                                 │
+│ ─── Runs ──────────────────────────────────────────────────────│
+│                                                                 │
+│  ┌ 2026-04-21 14:32 · DFN3 · subset ─────────── ✓ completed ─┐ │
+│  │  ▶ vocal       ▂▃▅▆▃▂ …  0:00–2:36     [drag]            │ │
+│  │  ▶ background  ▁▂▂▁▁▂ …  0:00–2:36     [drag]            │ │
+│  └──────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  ┌ 2026-04-21 13:05 · DFN3 · full ──────────── ✗ failed ────┐ │
+│  │  error: ffmpeg decode failed: …           [retry]        │ │
+│  └──────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Empty states:**
+- Nothing selected: "Select an audio clip or transition in the timeline to isolate audio."
+- Selected but no runs yet: shows the inline Run form + "No isolations yet — click Run to start."
+
+**Stem row interactions:**
+- Waveform — mini canvas fed by `GET /api/projects/:name/pool/:seg_id/peaks?resolution=N` (new route, see below).
+- Label — "vocal" / "background" colored by stem_type.
+- Duration + range annotation — e.g. "0:00–2:36 of source".
+- ▶ play — native `<audio>` element with range-request streaming from `/files/{pool_path}`.
+- drag — native HTML5 drag; sets the drag payload `application/x-scenecraft-stem` with `pool_segment_id` + `stem_type`.
+- No explicit delete/hide in MVP — rely on existing pool GC flow.
+
+**Run invocation:**
+- No confirm modal in the UI — the panel's inline Run button kicks the job off immediately.
+- Chat tool (`isolate_vocals`) KEEPS the elicitation pattern (chat actions lack the visual context a panel Run click has).
+
+### Drag Stem → Timeline
+
+Dropping a stem onto the timeline creates a new `audio_clip`. The rules, per clarification-9:
+
+- **Empty audio lane** → creates a new `audio_track` + `audio_clip` starting at cursor X.
+- **Existing audio track, no overlap** → inserts `audio_clip` at cursor X.
+- **Existing audio track, overlap** → **overwrite-with-split** (DaVinci Resolve "overwrite" mode):
+  - Dropped fully covers existing → soft-delete existing.
+  - Dropped covers existing's LEFT edge → trim existing's `start_time` forward to dropped's `end_time`.
+  - Dropped covers existing's RIGHT edge → trim existing's `end_time` back to dropped's `start_time`.
+  - Dropped fits INSIDE existing → split existing into left + right halves, delete the middle slice, insert the dropped clip.
+- **Drop on a transition's audio region** → deferred (P2). Stems become audio_clips only for MVP.
+
+New `audio_clip` fields on a fresh drop:
+```
+source_path  = stem.pool_path                 (direct pool_segment file)
+start_time   = cursor_x_in_seconds
+end_time     = start_time + stem.duration_seconds
+source_offset= 0
+volume_curve = project default (unmuted)
+name         = f"{source.label} · {stem_type}"   # e.g. "Vocals Show 1 · vocal"
+```
+
+Model name is intentionally NOT in the auto-generated clip name — model metadata stays visible in the run-card, which keeps clip names short.
+
+### HTTP Routes
+
+**New (this design):**
+- `GET /api/projects/:name/pool/:seg_id/peaks?resolution=N` — returns the same float16 peaks format as `/audio-clips/:id/peaks`. Thin shim over the existing `compute_peaks(Path, offset=0, duration=pool_segment.duration_seconds, resolution)` helper. Used by AudioIsolationsPanel for stem waveforms and by any future "show peaks for a raw pool_segment" consumer.
+- `POST /api/projects/:name/plugins/isolate-vocals/run` — kick off an isolation. Body: `{ entity_type, entity_id, range_mode, trim_in?, trim_out? }`. Returns `{ isolation_id, job_id }`. Registered via `plugin_api.register_rest_endpoint`.
+- `GET /api/projects/:name/audio-isolations?entityType=...&entityId=...` — list runs for an entity (for populating the panel). Returns `{ isolations: [{id, status, model, range_mode, trim_in, trim_out, created_at, stems: [{pool_segment_id, stem_type, duration_seconds, pool_path}]}] }`.
+
+**Unchanged:**
+- `GET /api/projects/:name/files/{path}` — range-request streaming of any pool file (used by stem ▶ playback and drag-source-path inference).
+- `GET /api/projects/:name/audio-clips/:id/peaks` — still the primary peaks route for timeline audio_clip rendering.
 
 ---
 
@@ -144,152 +258,233 @@ Parallels how keyframes (`candidates` JSON array) and transitions (`tr_candidate
 
 **Backend** (`scenecraft-engine/src/scenecraft/`):
 ```
-plugin_api.py                       # NEW — host API surface for plugins
-plugin_host.py                      # NEW — registry (static list for MVP)
+plugin_api.py                       # host API surface (landed in task 101)
+plugin_host.py                      # static PluginHost registry (landed in task 101)
 
 plugins/isolate_vocals/
-  plugin.yaml                       # manifest (docs only for MVP)
-  __init__.py                       # exports activate(api), run_isolate_vocals_job
-  isolate_vocals.py                 # kickoff helper (threaded job, JobManager progress)
-  model.py                          # DeepFilterNet3 loader + inference (lazy)
+  plugin.yaml                       # manifest (docs-only for MVP)
+  __init__.py                       # exports activate(api) + run
+  isolate_vocals.py                 # kickoff + job worker
+  model.py                          # DFN3 loader + inference (lazy)
   README.md
   tests/test_isolate_vocals.py
 ```
 
 **Frontend** (`scenecraft/src/`):
 ```
-lib/plugin-api.ts                   # NEW — host API surface for plugins
-lib/plugin-host.ts                  # NEW — registry
+lib/plugin-api.ts                   # host API surface (landed in task 101)
+lib/plugin-host.ts                  # registry (landed in task 101)
 
 plugins/isolate-vocals/
   plugin.yaml                       # manifest mirror
-  index.ts                          # exports context-menu descriptor + activate()
-  IsolateVocalsDialog.tsx           # confirm dialog
-  isolate-vocals-client.ts          # REST/WS client helper
+  index.ts                          # activate(host) + IsolateVocalsRunForm + panel descriptor
+  IsolateVocalsRunForm.tsx          # inline Run form (range toggle + ETA + Run button)
+  AudioIsolationsPanel.tsx          # the panel component
+  isolate-vocals-client.ts          # REST helpers + WS job subscription
+
+components/editor/
+  AudioLane.tsx (modified)          # accept drag payload `application/x-scenecraft-stem`
+                                    #   + overwrite-with-split logic on drop
 ```
 
-Directory naming follows each ecosystem's convention: hyphenated for the npm frontend, underscored for Python.
+### Schema Additions (new)
 
-### Schema Additions
+Applied via idempotent migrations in `db.py::_ensure_schema`:
 
 ```sql
--- pool_segments.kind already exists; accept 'audio' as a new value alongside 'generated'/'imported'
-
-CREATE TABLE IF NOT EXISTS audio_candidates (
-    audio_clip_id     TEXT NOT NULL REFERENCES audio_clips(id),
-    pool_segment_id   TEXT NOT NULL REFERENCES pool_segments(id),
-    added_at          TEXT NOT NULL,
-    source            TEXT NOT NULL,          -- 'generated' | 'imported' | 'chat_generation' | 'plugin'
-    PRIMARY KEY (audio_clip_id, pool_segment_id)
+CREATE TABLE IF NOT EXISTS audio_isolations (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    range_mode TEXT NOT NULL,
+    trim_in REAL,
+    trim_out REAL,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_audio_cand_clip ON audio_candidates(audio_clip_id);
-CREATE INDEX IF NOT EXISTS idx_audio_cand_seg ON audio_candidates(pool_segment_id);
+CREATE INDEX IF NOT EXISTS idx_isolations_entity
+    ON audio_isolations(entity_type, entity_id);
 
--- audio_clips gains a selected column (pool_segment_id of current candidate, or NULL for the
--- original source file which is treated as an implicit candidate).
-ALTER TABLE audio_clips ADD COLUMN selected TEXT;
+CREATE TABLE IF NOT EXISTS isolation_stems (
+    isolation_id TEXT NOT NULL REFERENCES audio_isolations(id),
+    pool_segment_id TEXT NOT NULL REFERENCES pool_segments(id),
+    stem_type TEXT NOT NULL,
+    PRIMARY KEY (isolation_id, pool_segment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_isolation_stems_run
+    ON isolation_stems(isolation_id);
+CREATE INDEX IF NOT EXISTS idx_isolation_stems_segment
+    ON isolation_stems(pool_segment_id);
 ```
 
-New db.py helpers (mirroring `tr_candidates` helpers):
-- `add_audio_candidate(project_dir, *, audio_clip_id, pool_segment_id, source, added_at=None)`
-- `get_audio_candidates(project_dir, audio_clip_id) -> list[pool_segment_dict]`
-- `assign_audio_candidate(project_dir, audio_clip_id, pool_segment_id)` — updates `audio_clips.selected`
+No changes to `pool_segments` (stem-specific metadata lives on the junction). The `audio_candidates` table from task-100 remains (for future generated-audio) but is NOT written by this operation.
 
-### Host API Surface
+New db.py helpers:
+- `add_audio_isolation(project_dir, *, entity_type, entity_id, model, range_mode, trim_in, trim_out) -> isolation_id`
+- `update_audio_isolation_status(project_dir, isolation_id, status, error=None)`
+- `add_isolation_stem(project_dir, isolation_id, pool_segment_id, stem_type)`
+- `get_isolations_for_entity(project_dir, entity_type, entity_id) -> list[dict]` — joined with stems
+- `get_isolation_stems(project_dir, isolation_id) -> list[dict]`
 
-**`plugin_api.py`** (backend):
-```python
-# Re-exports of stable APIs the plugin may call.
-# Intentionally narrow — new additions are intentional contract expansions.
+### Plugin Manifest
 
-from scenecraft.db import (
-    get_audio_clip,
-    add_pool_segment,
-    add_audio_candidate,
-    assign_audio_candidate,
-    undo_begin,
-)
-from scenecraft.ws_server import job_manager  # JobManager singleton
-from scenecraft.plugin_host import PluginHost
+`plugins/isolate_vocals/plugin.yaml`:
 
-def extract_audio_as_wav(source_path: Path, out_path: Path, sample_rate: int = 48000) -> Path:
-    """ffmpeg helper; deferred support for transition inputs in MVP."""
-    ...
+```yaml
+name: isolate-vocals
+version: 0.2.0
+displayName: "Isolate Vocals"
+description: "Separate a voice-over-noise audio source into vocal and background stems using DeepFilterNet3."
+publisher: scenecraft
+license: MIT
 
-def register_rest_endpoint(path_pattern, handler):
-    """Route a POST handler on the shared REST server."""
-    ...
+activationEvents:
+  - onCommand:isolate-vocals.run
+  - onContextMenu:audio_clip
+  - onContextMenu:transition
+
+contributes:
+  operations:
+    - id: isolate-vocals.run
+      label: "Isolate vocals"
+      entityTypes: [audio_clip, transition]
+      handler: "backend:isolate_vocals.run"
+      panel: "frontend:isolate_vocals.AudioIsolationsPanel"   # inline run form lives inside
+      outputs:
+        - kind: pool_segment
+          stem_type_enum: [vocal, background]
+
+  contextMenus:
+    - entityType: audio_clip
+      items:
+        - operation: isolate-vocals.run
+          label: "Isolate vocals…"
+          icon: wave
+          reveals: panel:audio-isolations           # opens the panel focused on this source
+    - entityType: transition
+      items:
+        - operation: isolate-vocals.run
+          label: "Isolate vocals from audio track…"
+          icon: wave
+          reveals: panel:audio-isolations
 ```
 
-**`lib/plugin-api.ts`** (frontend):
-```typescript
-// Host APIs available to plugins: WS client, REST helpers, dialog host, toast,
-// context-menu registration, etc. Re-exports from existing lib modules.
-export { useJobProgress } from './ws-client'
-export { postJSON } from './rest-client'
-export { showDialog } from './dialog-host'
-export { toast } from './toast'
-export type { ContextMenuItem, Operation, OperationDescriptor } from './plugin-host'
-```
-
-### PluginHost Registry
-
-**Backend** (`plugin_host.py`):
-```python
-class PluginHost:
-    _operations: dict[str, OperationDef] = {}
-
-    @classmethod
-    def register(cls, plugin_module):
-        plugin_module.activate(plugin_api)  # plugin registers via activate()
-
-    @classmethod
-    def get_operation(cls, op_id: str) -> OperationDef | None: ...
-
-# server startup wiring (in api_server.run_server):
-from scenecraft.plugins import isolate_vocals
-PluginHost.register(isolate_vocals)
-```
-
-**Frontend** (`lib/plugin-host.ts`): same pattern — static list of plugin modules imported from `src/plugins/*`, `PluginHost.register()` collects their context-menu descriptors and dialog components at editor-entry time.
-
-### Plugin Handler (Backend)
+### Backend Handler Sketch
 
 ```python
 # plugins/isolate_vocals/isolate_vocals.py
 
 def run(entity_type: str, entity_id: str, context: dict) -> dict:
-    """Kick off a DFN3 denoise job. Returns {job_id, audio_clip_id}."""
-    if entity_type != "audio_clip":
-        # MVP: only audio_clip supported; transition support deferred
-        return {"error": "unsupported entity_type for MVP"}
+    """Kick off an isolation job. Returns {isolation_id, job_id} or {error}.
 
-    clip = plugin_api.get_audio_clip(context["project_dir"], entity_id)
-    ...
-    job_id = plugin_api.job_manager.create_job("isolate_vocals", total=100, ...)
+    context keys:
+      - project_dir (Path)
+      - project_name (str)
+      - range_mode: 'full' | 'subset'
+      - trim_in / trim_out: seconds (None for 'full')
+    """
+    if entity_type not in ("audio_clip", "transition"):
+        return {"error": f"unsupported entity_type: {entity_type}"}
+
+    range_mode = context.get("range_mode", "subset")
+    trim_in = context.get("trim_in")
+    trim_out = context.get("trim_out")
+
+    source_path = _resolve_source_path(context["project_dir"], entity_type, entity_id)
+    if not source_path or not source_path.exists():
+        return {"error": "source audio not found"}
+
+    isolation_id = plugin_api.add_audio_isolation(
+        context["project_dir"],
+        entity_type=entity_type, entity_id=entity_id,
+        model="deepfilternet3",
+        range_mode=range_mode, trim_in=trim_in, trim_out=trim_out,
+    )
+    job_id = plugin_api.job_manager.create_job("isolate_vocals", total=100, meta={
+        "isolationId": isolation_id, "entityType": entity_type, "entityId": entity_id,
+    })
 
     def _work():
-        # 1. ffmpeg: source → wav
-        # 2. DFN3 inference (lazy-load model, CPU or GPU)
-        # 3. ffmpeg: wav → mp3 (or keep wav)
-        # 4. add_pool_segment(kind="generated", created_by="isolate-vocals", ...)
-        # 5. add_audio_candidate(audio_clip_id, pool_segment_id, source="plugin")
-        # 6. assign_audio_candidate(audio_clip_id, pool_segment_id)  # auto-select
-        # 7. complete_job(job_id, result={...})
-        ...
+        from .model import denoise_wav
+        try:
+            # 1. ffmpeg: slice + decode source to wav_in
+            wav_in = _extract_source_wav(source_path, range_mode, trim_in, trim_out)
+            plugin_api.job_manager.update_progress(job_id, 20, "denoising")
+
+            # 2. DFN3: wav_in → wav_vocal (speech-enhanced)
+            wav_vocal = denoise_wav(wav_in)
+            plugin_api.job_manager.update_progress(job_id, 70, "computing residual")
+
+            # 3. Residual: wav_background = wav_in − wav_vocal (time-domain subtraction via numpy)
+            wav_bg = _subtract_audio(wav_in, wav_vocal)
+            plugin_api.job_manager.update_progress(job_id, 85, "saving")
+
+            # 4. Register each stem as a pool_segment + isolation_stems junction row
+            vocal_seg_id = _save_stem(wav_vocal, stem_type="vocal", context=context)
+            bg_seg_id = _save_stem(wav_bg, stem_type="background", context=context)
+
+            plugin_api.add_isolation_stem(context["project_dir"], isolation_id, vocal_seg_id, "vocal")
+            plugin_api.add_isolation_stem(context["project_dir"], isolation_id, bg_seg_id, "background")
+
+            plugin_api.update_audio_isolation_status(
+                context["project_dir"], isolation_id, "completed"
+            )
+            plugin_api.job_manager.complete_job(job_id, {
+                "isolation_id": isolation_id,
+                "stems": [
+                    {"stem_type": "vocal", "pool_segment_id": vocal_seg_id},
+                    {"stem_type": "background", "pool_segment_id": bg_seg_id},
+                ],
+            })
+        except Exception as e:
+            plugin_api.update_audio_isolation_status(
+                context["project_dir"], isolation_id, "failed", error=str(e)
+            )
+            plugin_api.job_manager.fail_job(job_id, str(e))
 
     threading.Thread(target=_work, daemon=True).start()
-    return {"job_id": job_id, "audio_clip_id": entity_id}
+    return {"isolation_id": isolation_id, "job_id": job_id}
 ```
 
-### Plugin UI (Frontend)
+Source resolution (`_resolve_source_path`):
+- For `audio_clip`: use `get_audio_clip_effective_path` (task-100 helper) — resolves the clip's selected pool_segment or falls back to `source_path`.
+- For `transition`: extract the selected video candidate's audio via ffmpeg to a staged wav in `audio_staging/`. Same approach as task-56 scoped.
 
-- `index.ts` exports:
-  - A context-menu descriptor: `{ entityType: 'audio_clip', items: [{ operation: 'isolate-vocals.run', label: 'Isolate vocals…' }] }`
-  - A confirm-dialog component (`IsolateVocalsDialog`) shown before the job kicks off
-  - An `activate(host)` function that calls `host.registerOperation(...)` + `host.registerContextMenu(...)`
-- `IsolateVocalsDialog.tsx` shows: model name, estimated time (clip length × 1–2 CPU, ~0.5 GPU), "Run" / "Cancel".
-- `isolate-vocals-client.ts` POSTs to the REST endpoint the backend registered, subscribes to `job_*` WS events, pipes progress into a toast + a small spinner on the selected clip.
+### Peaks Endpoint
+
+`GET /api/projects/:name/pool/:seg_id/peaks?resolution=N`:
+
+```python
+def _handle_pool_peaks(self, project_name: str, seg_id: str):
+    project_dir = work_dir / project_name
+    seg = get_pool_segment(project_dir, seg_id)
+    if not seg:
+        return self._error(404, "NOT_FOUND", f"pool segment not found: {seg_id}")
+    pool_path = project_dir / seg["poolPath"]
+    if not pool_path.exists():
+        return self._error(404, "NOT_FOUND", "file missing on disk")
+    resolution = int(self._qs_get("resolution", "400"))
+
+    from scenecraft.audio.peaks import compute_peaks
+    data = compute_peaks(
+        pool_path,
+        source_offset=0,
+        duration=seg.get("durationSeconds") or 0,
+        resolution=resolution,
+        project_dir=project_dir,
+    )
+    self.send_response(200)
+    self.send_header("Content-Type", "application/octet-stream")
+    self.send_header("X-Peak-Resolution", str(resolution))
+    self.send_header("X-Peak-Duration", f"{seg.get('durationSeconds') or 0:.6f}")
+    self._cors_headers()
+    self.end_headers()
+    self.wfile.write(data)
+```
+
+`compute_peaks` was hardened against long-source OOM in a prior fix (streaming bucket decode). This endpoint benefits from the same hardening.
 
 ### Chat Tool Wrapper
 
@@ -297,161 +492,238 @@ def run(entity_type: str, entity_id: str, context: dict) -> dict:
 ISOLATE_VOCALS_TOOL = {
     "name": "isolate_vocals",
     "description": (
-        "Strip background noise from an audio_clip, leaving clean voices. "
-        "Appends a new audio candidate and auto-selects it. Slow (~realtime on CPU). "
-        "Requires user confirmation."
+        "Separate a voice-over-noise audio source into vocal + background stems "
+        "using DeepFilterNet3. Works on an audio_clip or a transition. Returns a "
+        "new audio_isolations run id with stem pool_segment ids. Slow (~realtime "
+        "on CPU). Requires user confirmation."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "entity_type": {"type": "string", "enum": ["audio_clip"]},  # transition deferred
+            "entity_type": {"type": "string", "enum": ["audio_clip", "transition"]},
             "entity_id":   {"type": "string"},
+            "range_mode":  {"type": "string", "enum": ["full", "subset"], "default": "subset"},
+            "trim_in":     {"type": "number"},
+            "trim_out":    {"type": "number"},
         },
         "required": ["entity_type", "entity_id"],
     },
 }
 ```
 
-Add `"isolate_"` to `_DESTRUCTIVE_TOOL_PATTERNS` in `chat.py` so the elicitation gate fires (consistency with `generate_*`, `restore_checkpoint`, `delete_*`).
+Added to `_DESTRUCTIVE_TOOL_PATTERNS` via the existing `"isolate_"` prefix — elicitation auto-gates. `_format_destructive_summary` case shows source entity, range, estimated duration.
+
+### Drag-to-Timeline (task 104b)
+
+Panel attaches native HTML5 drag handlers on each stem row; sets payload:
+
+```typescript
+e.dataTransfer.setData('application/x-scenecraft-stem', JSON.stringify({
+  pool_segment_id: stem.pool_segment_id,
+  stem_type: stem.stem_type,
+  duration_seconds: stem.duration_seconds,
+  pool_path: stem.pool_path,
+  source_label: run.source_label,
+}))
+e.dataTransfer.effectAllowed = 'copy'
+```
+
+`AudioLane.tsx` (modified) listens for `dragover` + `drop` with this payload. On drop:
+
+```typescript
+async function handleStemDrop(e: DragEvent, track: AudioTrack) {
+  const payload = JSON.parse(e.dataTransfer.getData('application/x-scenecraft-stem'))
+  if (!payload) return
+  const cursor_x = pixelsToSeconds(e.clientX - trackLaneLeft)
+  const drop_start = cursor_x
+  const drop_end = drop_start + payload.duration_seconds
+
+  // Resolve overlaps with existing clips on this track
+  const conflicts = track.clips.filter(c => !(c.end_time <= drop_start || c.start_time >= drop_end))
+  await resolveOverlapsWithSplit(projectName, track.id, conflicts, drop_start, drop_end)
+
+  // Create the new clip
+  await postAddAudioClip(projectName, {
+    track_id: track.id,
+    source_path: payload.pool_path,
+    start_time: drop_start,
+    end_time: drop_end,
+    name: `${payload.source_label} · ${payload.stem_type}`,
+  })
+}
+```
+
+`resolveOverlapsWithSplit` is the overwrite-with-split logic described earlier. Wrap the whole thing in `POST /batch-audio-clip-ops` (new) that does the multi-op in one undo group, or chain individual mutations and rely on client-side undo groups (less clean).
 
 ---
 
 ## Benefits
 
-- **Validates the plugin seams.** First real plugin exercises `plugin.yaml`, `plugin-api`, `PluginHost`, `operations` category, `contextMenus` category, and the candidate pattern all at once.
-- **User value now, architecture value later.** Users get one-click noise removal; the runtime we didn't build yet has a working reference implementation to slot into when ready.
-- **Extractable.** When the real loader ships, the plugin's filesystem dir, its `plugin.yaml`, its `activate()` export, and its API calls are already in the right shape — no refactor of plugin code.
-- **Low-cost model.** DeepFilterNet3 is ~2.3 MB, MIT-licensed, CPU-realtime, and lazy-downloaded. No billing, no hosting, no GPU requirement.
-- **Candidate pattern consistency.** Audio follows the same "add candidate + auto-select" pattern as generated keyframes/transitions. Users build a single mental model; future generated-audio features (TTS, music) slot into the same surface.
+- **Validates plugin seams.** First real plugin exercises `plugin.yaml`, `plugin-api`, `PluginHost`, `operations`, `contextMenus`, panel contribution, and drag-to-timeline all at once.
+- **User value now.** Cleaner dialogue on Oktoberfest/interview audio without leaving the editor. Both the vocal AND the residual ambience are usable.
+- **Extractable later.** When the real loader ships, the plugin's filesystem dir, its `plugin.yaml`, its `activate()` export, and its API calls are already in the right shape — no refactor of plugin code.
+- **Low model cost.** DFN3 is ~2.3 MB, MIT, CPU-realtime. Residual computation is numpy, no extra ML.
+- **Multi-stem future-proof.** The `audio_isolations` + `isolation_stems` schema supports any N-stem model without migration. Adding MDX23C-InstVoc-HQ later (for music sources) or Demucs-6s later (for drums/bass/guitar/piano) is additive — same tables, same panel, new model option in the run form.
+- **No timeline reconciliation at run time.** Source is unchanged; stems appear in the panel. The user chooses when and how to put them on the timeline via drag.
 
 ---
 
 ## Trade-offs
 
-- **Manifest is documentation, not runtime config (MVP).** `plugin.yaml` isn't parsed; if it gets out of sync with `activate()` and `PluginHost` wiring, nothing breaks but the docs become misleading. Mitigation: when the real loader ships, it'll catch drift automatically; until then, add a simple yaml-vs-registry consistency test.
-- **Seam is informal.** Plugin *could* still import app internals directly (`from scenecraft.db import add_pool_segment`). Mitigation: `plugin-api` re-exports the allowed surface; lint rule (`no-app-internals-from-plugins`) can come later when the surface is stable.
-- **Schema change is load-bearing.** Adding `audio_candidates` + `audio_clips.selected` means existing audio clips will initially have `selected=NULL`; all read paths must treat NULL as "use the clip's native source file". Mitigation: handle NULL explicitly in `get_audio_clip_selected_path()` helper; document the convention.
-- **Legacy inline-candidate pattern on keyframes isn't converged.** Keyframes still use `candidates TEXT` JSON column rather than a junction. Audio diverges from keyframes on purpose (pool_segments are a better fit). Mitigation: migrating keyframes to a junction is a separate, bigger initiative; out of scope here.
-- **Transition audio deferred.** Extracting a transition's audio via ffmpeg is straightforward but introduces file-management wrinkles (temp wav, cleanup, cache). Deferring simplifies the MVP; the manifest's `entityTypes: [audio_clip, transition]` stays in place as a forward compatibility signal.
-- **Failure mode is toast-only.** A failed job produces no DB trace. If users want to know why later, they need to replay from logs. Mitigation: acceptable for v1; if complaints appear, add an activity-log panel later.
+- **Residual ≠ source-separated background.** `source − vocal` produces a real residual but it includes DFN3's artifacts (anything DFN3 removed is in the background; anything it couldn't remove also bleeds into the vocal). For genuinely clean instrumental/background stems, a true source-separation model (MDX23C / Demucs) is eventually needed. Flagged as follow-up.
+- **DFN3 is speech-biased.** Works great for dialogue-over-crowd/HVAC/wind. Less great for "clean up the guitar in this messy band recording" (use Demucs later for that).
+- **Overwrite-with-split is opinionated.** Users coming from non-NLE tools might expect "fail with a warning" instead. The overwrite semantics match DaVinci Resolve / Premiere's default modifier-free drop, so it's mainstream but not universal. If complaints surface, add a modifier (Shift-drop = reject, plain drop = overwrite).
+- **Manifest is documentation, not runtime config (MVP).** `plugin.yaml` isn't parsed; if it drifts from `activate()` + `PluginHost` wiring, nothing breaks but the docs become misleading. Mitigation: yaml-vs-registry consistency test.
+- **Seam is informal.** Plugin *could* still import app internals directly. Mitigation: `plugin-api` re-exports the allowed surface; lint rule can follow when the surface is stable.
+- **No delete/hide button for stems in MVP.** Stems accumulate; cleanup relies on the existing pool GC path. If a project generates dozens of runs, the panel scroll gets long. Addable later without schema change.
+- **No confirm modal in the panel.** The inline Run button is click-to-kick-off, no second step. This matches the panel-as-entry-point UX but means mis-clicks cost a ~5 min job. Mitigation: the Run button's disabled/enabled state gates on "source selected + range valid", so it's hard to fire accidentally.
 
 ---
 
 ## Dependencies
 
-- **Runtime:** Python 3.10+, DeepFilterNet3 (pip: `deepfilternet`, lazy-loaded), ffmpeg (system binary, already used elsewhere in scenecraft-engine)
-- **Frontend:** No new deps; reuses existing dialog/toast/WS client code
-- **Backend internal:** existing `JobManager`, `undo_begin`, `pool_segments` helpers; new `audio_candidates` junction + helpers
-- **Design:** extends `local.contribution-points.md` (treat that doc as also updated by this design; the two new categories here supersede anything inconsistent there)
-- **Related:** M9 (audio tracks & clips) for the underlying `audio_clips` / `audio_tracks` tables; M3 task-10 for the frontend placeholder plugin API
+- **Runtime:** Python 3.10+, DeepFilterNet3 (`pip install deepfilternet`, lazy-downloaded on first use), ffmpeg (system binary, already used elsewhere), numpy (already a dep).
+- **Frontend:** No new deps. Reuses existing `<audio>` element, range-request streaming, dockview panel system, drag-and-drop infra.
+- **Backend internal:** existing JobManager, `compute_peaks`, `pool_segments` helpers. New `audio_isolations` + `isolation_stems` tables + helpers.
+- **Plugin scaffolding:** `plugin_api.py`, `plugin_host.py`, `lib/plugin-api.ts`, `lib/plugin-host.ts` — all landed in task 101.
+- **Related designs:** [`local.contribution-points.md`](local.contribution-points.md), [`local.audio-tracks-and-clips.md`](local.audio-tracks-and-clips.md) (the underlying audio_clips/audio_tracks tables from M9).
+- **Reference:** `~/bytv.md` (stem ontology; future ML chain for music-source expansion).
 
 ---
 
 ## Testing Strategy
 
-- **Unit (backend):**
-  - `plugin_host.py` register/get_operation round-trip
-  - `plugin_api.py` re-exports are stable
-  - `add_audio_candidate` / `get_audio_candidates` / `assign_audio_candidate` DB helpers
-  - `isolate_vocals.run` kickoff returns `{job_id, audio_clip_id}` and spawns a worker thread
-  - Mock DFN3 client for deterministic fast tests (same pattern we used for `chat_generation.py` tests)
-- **Unit (frontend):**
-  - `PluginHost.register` collects descriptors
-  - Context-menu descriptor renders "Isolate vocals…" for `entityType=audio_clip`
-  - Dialog invokes the REST client and wires job progress to a toast
-- **Integration:**
-  - End-to-end fixture: insert an audio_clip with a known source file, invoke `isolate_vocals.run`, assert a new `pool_segment` (kind=audio) + `audio_candidate` row, and `audio_clips.selected` is updated
-  - Chat tool path: `isolate_vocals` tool fires the elicitation; decline leaves state unchanged; accept runs the job and the assistant message includes the new `pool_segment_id`
-- **E2E:**
-  - Right-click audio_clip → "Isolate vocals…" → confirm dialog → progress toast → new candidate visible in the audio clip panel, selected indicator flipped to the new candidate
+### Unit (backend)
+- DB helpers: `add_audio_isolation` / `update_status` / `add_isolation_stem` / `get_isolations_for_entity` / `get_isolation_stems` — round-trip.
+- `_classify_media_type` still classifies `.wav` as `audio` (regression).
+- Mocked DFN3 client: `isolate_vocals.run()` returns `{isolation_id, job_id}`; poll job to completion; assert `audio_isolations.status='completed'`, two `isolation_stems` rows, two `pool_segments` rows with `kind='generated'`.
+- Residual math: feed a known input where vocal=A and background=B, confirm `wav_vocal ≈ A` and `wav_bg ≈ B` within a tolerance.
+- Subset range: assert stem duration = trim_out − trim_in.
+
+### Unit (frontend)
+- `PluginHost.register(isolateVocals)` collects the panel descriptor.
+- `AudioIsolationsPanel` renders empty state, in-progress state, completed-run list.
+- Drag payload shape verified in a test that fires `dragstart` and inspects `dataTransfer`.
+- Overwrite-with-split: given three positions (left-edge, right-edge, fully-inside), assert correct clip mutations.
+
+### Integration
+- REST: `POST /plugins/isolate-vocals/run` → job runs → `GET /audio-isolations?entityType=audio_clip&entityId=...` returns the run + stems.
+- REST: `GET /pool/:seg_id/peaks` returns float16 bytes for a freshly-created stem segment.
+- Chat tool: `isolate_vocals` fires elicitation; accept runs the job; decline leaves state unchanged.
+
+### E2E
+- Right-click an audio_clip → "Isolate vocals…" → panel opens → Run → progress toast → two stems appear → drag the vocal stem onto an empty audio lane → new clip appears + new track auto-created.
+- Overwrite-with-split E2E: drop a stem that partially overlaps an existing clip; confirm the existing clip gets trimmed and the stem clip lands cleanly.
 
 ---
 
 ## Migration Path
 
-1. **Schema** — add `audio_candidates` table + `audio_clips.selected` column via `_ensure_schema` migration. Existing rows get `selected=NULL` (read as "use original source").
-2. **Host scaffolding** — add `plugin_api.py`, `plugin_host.py` (backend), `lib/plugin-api.ts`, `lib/plugin-host.ts` (frontend). Empty `PluginHost` at this step; no plugin registered yet.
-3. **Backend plugin** — create `plugins/isolate_vocals/` with DFN3 handler; register in `PluginHost` at server startup. Add `/api/projects/:name/plugins/isolate-vocals/run` REST endpoint (via `plugin_api.register_rest_endpoint`).
-4. **Frontend plugin** — create `plugins/isolate-vocals/`; register in `PluginHost` at editor entry. Wire the context-menu descriptor into `AudioClipPanel` / timeline audio-clip rendering.
-5. **Chat tool** — add `isolate_vocals` tool to `chat.py`, including the `"isolate_"` destructive pattern entry.
-6. **Tests** — unit, integration, E2E per above.
+1. **Schema migration (new task 100b)** — add `audio_isolations` + `isolation_stems` tables + indexes via `_ensure_schema`. Idempotent. No data migration.
+2. **Backend plugin (task 102 redesigned)** — build `plugins/isolate_vocals/` module: manifest, `run` handler, DFN3 wrapper, residual logic, registration.
+3. **Frontend plugin (task 103 redesigned)** — build `plugins/isolate-vocals/`: manifest mirror, `IsolateVocalsRunForm`, `AudioIsolationsPanel`, client helpers.
+4. **AudioIsolationsPanel + panel registration (task 104 redesigned)** — hook panel into dockview registry; wire context-sensitive rendering; stem rows with waveforms via the new `/pool/:seg_id/peaks` route.
+5. **Drag-to-timeline + overwrite-with-split (new task 104b)** — modify `AudioLane.tsx` to accept the stem drag payload; implement overlap resolution.
+6. **Chat tool (task 105 redesigned)** — `isolate_vocals` wrapper with range params and elicitation gate.
+7. **Tests** per the testing strategy above.
 
-No data migration: existing projects gain the new schema with empty candidate lists; no behavior change until a user invokes the operation.
+No backward-compat concerns — this is net-new functionality. The v1 `audio_candidates` table (from task-100) stays in the schema for future generated-audio features; nothing in this plugin writes to it.
 
 ---
 
 ## Key Design Decisions
 
-### Scope & Framing
+### Scope & Output Shape
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Framing of audio isolation | Operation, not effect | Produces a new audio asset; runs once, as a job. Effects are per-frame, continuous, composable. |
-| Multi-speaker split | Explicitly out of scope for MVP | Requires new tracks → timeline reconciliation. User chose single-track voices first. |
-| First plugin vs extension runtime | Ship plugin now, mock runtime | Building dynamic-loader/sandbox/marketplace blocks every plugin. Static registry + narrow seams delivers user value and validates the design at once. |
-| Plugin manifest role (MVP) | Documentation only | Not parsed at runtime; `activate()` + `PluginHost` is what actually wires up. Manifest becomes load-bearing when the loader exists. |
+| Output shape | N stems per run (not single candidate) | User wants to browse + drag stems; the candidate pattern doesn't fit. |
+| Source is unchanged by a run | Yes | Zero timeline reconciliation; source stays pristine while user iterates. |
+| Run grouping | `audio_isolations` table + `isolation_stems` junction | Clean 1:N from source to runs; junction allows future stem-reuse across runs. |
+| `stem_type` lives on junction | Yes | Same pool_segment could be classified differently in another run; row data stays portable. |
+| Candidate pattern (task-100) | Kept in DB, NOT used by this operation | Reserved for future generated-audio; isolation stems are deliberately separate. |
 
-### Plugin Architecture
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| New contribution categories | `operations` + `contextMenus` | Operations subsume the "run a job, produce an output" pattern. `contextMenus` loose-couples discovery from execution. |
-| Operation entityTypes | Array, not single | One operation can apply to multiple entity kinds (audio_clip + transition). Forward-compatibility signal even when MVP only implements one. |
-| Context-menu → operation coupling | Reference by id | Same operation is addressable from menu, chat tool, command palette — no duplication. |
-| Manifest filename | `plugin.yaml` | Not `package.yaml` — avoids conflict with npm's `package.json` and Python's `pyproject.toml`. Visually distinguishes plugin config from language package config. |
-| Plugin-↔-host seam | `plugin-api` re-export module + informal rule | Plugin calls into `plugin-api.py` / `lib/plugin-api.ts`; app code imports *from* the plugin (context menu descriptors). App-internals imports discouraged but allowed for MVP; lint rule later. |
-| Host scaffolding now or later | Now | `plugin-api.py/ts` + `plugin-host.py/ts` exist from day one even with one consumer. Having the target shape established makes the next plugin trivial. |
-| Plugin directory naming | Hyphen (frontend), underscore (backend) | Matches each ecosystem's convention; e.g. npm packages are `isolate-vocals`, Python modules are `isolate_vocals`. |
-
-### Candidate Model
+### Stem Ontology & Model
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Output shape | New candidate on the same entity, auto-selected | Matches keyframe/transition patterns. No new track, no timeline reconciliation, no track-layout rules. |
-| Audio candidate storage | Junction table (`audio_candidates`) + `pool_segments` | Transitions pattern, not the keyframe inline-JSON pattern. Future generated audio needs per-candidate provenance/seed/params. |
-| Audio segments share `pool_segments` | Reuse existing table; provenance via `kind`+`created_by`, media type by extension | `kind` is provenance ('generated'/'imported'), NOT media type — don't confuse the two. Existing check constraint limits `kind` to those two values. |
-| `audio_clips.selected` semantics | NULL = use original source; else pool_segment_id | Existing audio_clips migrate cleanly; candidates are purely additive. |
-| Re-run behavior | Append new candidate, auto-select latest | Previous candidates stay for A/B. Same as generate_* tools. |
+| MVP stem labels | `vocal`, `background` | Matches bytv pipeline; "isolate" framing satisfied (not just denoise). |
+| Expansion labels | `kick`, `snare`, `toms`, `hh`, `ride`, `crash`, `bass`, `guitar`, `piano`, `other` | Forward-compat with bytv's MDX23C-DrumSep + Demucs-6s downstream chain. |
+| Free-form stem_type | Allowed with soft validation | Future models / experiments; warn on unknown, don't reject. |
+| Model (MVP) | **DeepFilterNet3** | Right tool for dialogue-over-noise (Oktoberfest, interviews). MDX23C is music-only. Ships small (~2.3MB), MIT, CPU-realtime. |
+| Background stem derivation | `source − vocal` (time-domain subtraction) | Gives a real residual with no second model. Numpy one-liner. |
+| Model selector in dialog (MVP) | Hidden (DFN3 only) | Expose when a second model (MDX23C) is added; deferred. |
 
-### UX & Integration
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Confirm dialog | Required | Operation takes seconds-to-minutes; consistency with the "any tool that mutates state and takes >10s asks once" pattern. |
-| Audio clip panel | New dedicated panel analogous to KeyframePanel/TransitionPanel | Shows candidate list + selected indicator + per-candidate mini-waveform. |
-| Visual feedback on candidate swap | Not for MVP | Panel-level selection UI is enough; timeline flash/highlight can be added later if users get confused. |
-| Error handling | Toast-only, no DB trace | Matches chat tool error behavior. Simpler; persistent activity log can come later if needed. |
-| Chat tool elicitation | Gated via `"isolate_"` in `_DESTRUCTIVE_TOOL_PATTERNS` | Same pattern as `generate_*`, `restore_checkpoint`, `delete_*`. |
-| Chat tool input for transitions | Not in MVP | `entity_type` enum restricted to `["audio_clip"]`; manifest still says `[audio_clip, transition]` for forward compat. |
-
-### Model & Pipeline
+### Range & Entity
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Model | DeepFilterNet3 | MIT, ~2.3 MB, CPU-realtime, exact target ("keep speech, kill non-speech") — matches the use case described. |
-| Weight distribution | Lazy-download via `pip install deepfilternet` | Avoids hosting weights ourselves; matches the Python ecosystem. |
-| Pipeline | Single step: `denoise(wav_in) → wav_out` | No stem separation, no diarization, no speaker labels. |
-| Input/output encoding | WAV in processing; ffmpeg transcode at the edges; re-encode output to project's common codec | Simplifies DFN3 input; ffmpeg handles everything else. |
+| Input entity types (MVP) | `audio_clip` + `transition` | Cleaning a video transition's dialogue is common; both in-scope. |
+| Range modes | `full` + `subset` | Covers "snippet I'm working on" and "clean everything so I can re-edit". |
+| Default range | `subset` | Matches user intent when a clip is selected. |
+| Sample rate | Preserve source's rate | Avoid double-resample artifacts. |
+
+### Panel & Interaction
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Panel | New `AudioIsolationsPanel` (dockview) | Dedicated surface; doesn't compete with AudioClipPanel (deferred). |
+| Panel role | Both viewer AND kickoff entry point | Single-location workflow matches DaVinci Resolve's Audio Clean Feed pattern. |
+| Panel context | Sensitive to selected audio_clip / transition | No global isolations library for MVP; scoped to the entity in view. |
+| Confirm modal (UI) | None — inline Run button in the panel | Panel context already shows everything a modal would. |
+| Confirm modal (chat tool) | Kept (elicitation) | Chat actions lack visual context; a one-line confirm is cheap safety. |
+| Delete / hide in panel | Not in MVP | Rely on existing pool GC. |
+| Failure handling | Toast + persistent failed-run card with retry | User can see why a job failed without opening logs. |
+| Concurrency | Parallel | OS scheduler; revisit if users complain about contention. |
+
+### Drag-to-Timeline
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Drop on empty lane | Creates new audio_track + audio_clip | Matches existing pool-drag-to-timeline UX. |
+| Drop on existing track (no overlap) | Insert new clip | Standard NLE behavior. |
+| Drop on existing track (overlap) | **Overwrite-with-split** | Dropped stem wins; existing clip trimmed/consumed/split. |
+| Drop on transition's audio region | Deferred (P2) | Requires more design around transition-audio semantics. |
+| Clip name template | `{source.label} · {stem_type}` | Identifies source + stem without the noise of model name. |
+
+### Routes & Schema
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Peaks for stems | New `GET /pool/:seg_id/peaks` | Stems aren't audio_clips; can't reuse the clip-keyed peaks route. |
+| Peaks for audio_clips | **Unchanged** — keep `/audio-clips/:id/peaks` | No canonicalization refactor; Option A (minimal) wins. |
+| `pool_segments.kind` for stems | `'generated'`, `created_by='isolate-vocals'` | Provenance in existing column; media type derived from extension (`.wav`). |
+
+### Plugin Scaffolding (carried forward from clarification-8)
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Manifest filename | `plugin.yaml` | Distinguishes from `package.json` / `pyproject.toml`. |
+| Directory naming | hyphen (frontend), underscore (backend) | Matches each ecosystem's convention. |
+| PluginHost | Static registry, no dynamic load | MVP. Seam is ready for a real loader. |
+| plugin-api module | Explicit host surface, re-exports only | Lint-able boundary; extractable plugin later. |
 
 ---
 
 ## Future Considerations
 
-- **Per-speaker split.** Once timeline-layout rules for multi-track operations are sorted, layer pyannote 3.1 diarization + ffmpeg segment extraction onto this same plugin. Output becomes N `audio_candidate` rows, each tagged with a speaker id. Still no new tracks unless explicitly requested.
-- **"Remove music" toggle.** Swap in Demucs v4 when the source is music-heavy rather than ambient-noisy. Plugin gains a mode parameter.
-- **Real plugin loader / marketplace.** Replace the static `PluginHost` with a dynamic loader that scans `node_modules/@scenecraft-plugins/*` and `~/.scenecraft/plugins/*`, reads `plugin.yaml`, validates capabilities against a declared schema, and calls `activate()` in a permission-scoped context. Plugin code from this MVP loads unchanged.
-- **Lint rule: plugins can't import app internals.** Once `plugin-api` is stable, prohibit `from scenecraft.db import *` in `src/plugins/**` — force all cross-boundary calls through `plugin-api`.
-- **Keyframe candidate migration.** Move keyframes from inline-JSON candidates to the pool_segments + junction pattern, converging with transitions and audio. Big lift; not needed for this plugin.
-- **Batch mode.** Right-click multiple audio_clips → "Isolate vocals on all". Naturally falls out of the job manager; UI work only.
-- **Activity log panel.** Persistent record of plugin invocations + results + failures. Useful when plugins proliferate.
-- **Plugin-scoped settings.** Today, plugin configuration lives in handler args. A future settings surface (`contributes.settings` category) would give plugins a config UI.
+- **MDX23C-InstVoc-HQ as a second operation** (`separate-music-vocals.run`) — for music sources. Different model, different entity types in panel (matches bytv's top-level split).
+- **Full bytv pipeline** — MDX23C-DrumSep (kick/snare/toms/hh/ride/crash) and Demucs-6s (bass/guitar/piano/other) as additional operations producing their own stem types. Panel handles arbitrary stem lists.
+- **Stem delete/hide button in panel** — once users start accumulating runs, add soft-delete + bulk cleanup UI.
+- **Drop onto a transition's audio region** — replace transition's auto-extracted audio with a stem directly, instead of creating a new audio_clip.
+- **Real plugin loader** — scan `node_modules/@scenecraft-plugins/*` + `~/.scenecraft/plugins/*`; parse `plugin.yaml`; validate contributions; call `activate()` in a permission-scoped context. This plugin's code loads unchanged.
+- **Lint rule: plugins can't import app internals** — enforce `plugin-api` as the only import path from `src/plugins/**` once the surface is stable.
+- **Stem reuse / caching** — if the same (source, range, model) is requested twice, skip the work and reattach existing stems to a new `audio_isolations` row. Junction already supports it.
+- **Batch operations** — right-click multiple audio_clips → "Isolate vocals on all". The JobManager already supports concurrent jobs.
+- **Chat tool post-run actions** — after `isolate_vocals` completes, allow chat to follow up with "drop the vocal stem on track A3 at 0:00" via a subsequent tool call.
 
 ---
 
-**Status**: Design Specification
-**Recommendation**: Plan a milestone + tasks to implement this design; suggested milestone scope: schema migration → host scaffolding → backend plugin → frontend plugin → chat tool → tests.
+**Status**: Design Specification (v2)
+**Recommendation**: Re-plan M11 tasks 100b, 102, 103, 104, 104b, 105 against this design; task 101 (plugin host scaffolding) is unaffected and can proceed in parallel.
 **Related Documents**:
-- [Clarification 8: Audio Isolation Plugin](../clarifications/clarification-8-audio-isolation-plugin.md)
-- [Contribution Points (existing)](local.contribution-points.md) — this design adds two new categories
-- [Audio Tracks and Clips](local.audio-tracks-and-clips.md) — underlying data model for `audio_clips`
-- [Milestone 3: Contribution Points](../milestones/) — plugin framework parent milestone (this MVP is a deliberate side-track until M3 completes its runtime pieces)
+- [Clarification 9: Audio Isolation — Stems, Range, and Panel](../clarifications/clarification-9-audio-isolation-stems-and-panel.md) (Completed — source of truth for v2 decisions)
+- [Clarification 8: Audio Isolation Plugin (v1 scope)](../clarifications/clarification-8-audio-isolation-plugin.md) (Completed — plugin scaffolding decisions still valid)
+- [Contribution Points](local.contribution-points.md) — extends with `operations` + `contextMenus`
+- [Audio Tracks and Clips](local.audio-tracks-and-clips.md) — M9 foundation for `audio_clips` / `audio_tracks`
+- `~/bytv.md` — reference pipeline / stem ontology
