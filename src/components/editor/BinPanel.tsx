@@ -799,8 +799,8 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
               )}
               {(() => {
                 const visibleSegs = filterByTag(poolSegments)
-                const videoSegs = visibleSegs.filter((e) => !isAudioPath(e.path))
-                const audioSegs = visibleSegs.filter((e) => isAudioPath(e.path))
+                const videoSegs = visibleSegs.filter((e) => !isAudioEntry(e))
+                const audioSegs = visibleSegs.filter((e) => isAudioEntry(e))
                 return (
                   <>
                     {videoSegs.length > 0 && (

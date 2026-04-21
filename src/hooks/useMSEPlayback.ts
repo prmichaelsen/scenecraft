@@ -7,16 +7,17 @@ const MIME_TYPE = 'video/mp4; codecs="avc1.42E01E"'
  * Wire a <video> element to the backend's MSE playback stream.
  *
  * Lifecycle:
- *   - When `playing` flips to true, opens a WebSocket + MediaSource and tells
- *     the backend to play from `currentTime`.
- *   - When `playing` flips to false, tears the whole pipe down (close socket,
- *     end MediaSource). The `<video>` retains the last-rendered frame.
- *   - `seek` is triggered when `currentTime` changes while already playing.
- *     The backend rebuilds its encoder on seek, so we mirror that by
- *     tearing down the existing MediaSource and rebuilding. Incoming
- *     fragments after the seek are appended to the fresh SourceBuffer.
- *
- * The caller (<PreviewViewport>) owns the `<video>` element ref.
+ *   - WebSocket opens on mount, closes on unmount. Never closed on play/pause.
+ *     Play-pause-play cycles send `action: play` / `action: pause` over the
+ *     live socket so the backend can pause its render loop without losing
+ *     state.
+ *   - MediaSource is also created on mount (empty). SourceBuffer is added on
+ *     `sourceopen`. The video element keeps the last-rendered frame when
+ *     paused.
+ *   - `currentTime` changes while playing are Timeline's rAF ticks — we read
+ *     via a ref so we never resubscribe. Explicit seeks will eventually need
+ *     a separate seek-detection channel; for now, large currentTime jumps
+ *     are not propagated to the backend automatically.
  */
 export function useMSEPlayback(
   videoRef: React.RefObject<HTMLVideoElement | null>,
@@ -24,53 +25,28 @@ export function useMSEPlayback(
   playing: boolean,
   currentTime: number,
 ): void {
-  // Track the current stream + resources so we can tear down cleanly
   const streamRef = useRef<PreviewStream | null>(null)
   const mediaSourceRef = useRef<MediaSource | null>(null)
   const sourceBufferRef = useRef<SourceBuffer | null>(null)
   const objectUrlRef = useRef<string | null>(null)
-
-  // Pending fragments queued while SourceBuffer is updating
   const pendingFragments = useRef<ArrayBuffer[]>([])
-  const hasAppendedInit = useRef(false)
 
-  // Track which seek we're currently servicing so stale async callbacks bail
-  const generationRef = useRef(0)
-
-  // Read the live currentTime via a ref so the lifecycle effect below
-  // doesn't re-run when Timeline's rAF loop ticks it at 60Hz during playback.
+  // Read live currentTime + playing via refs so the session effect reacts to
+  // the latest values without resubscribing on every tick or toggle.
   const currentTimeRef = useRef(currentTime)
   currentTimeRef.current = currentTime
+  const playingRef = useRef(playing)
+  playingRef.current = playing
 
-  // Lifecycle: spin up/down based on `playing` + `projectName` only.
-  // Explicit seeks during playback should go through a separate channel
-  // (not yet wired) — for now, tearing down and restarting via `playing=false
-  // → true` is the only way to jump.
+  // Session lifecycle: open WS + MediaSource on mount, close on unmount.
+  // NOT on play/pause.
   useEffect(() => {
     const videoEl = videoRef.current
-    if (!videoEl || !playing) {
-      if (!videoEl) console.log('[useMSEPlayback] no videoEl ref')
-      else console.log('[useMSEPlayback] playing=false → teardown')
-      teardown()
-      return
-    }
+    if (!videoEl) return
 
-    // Tear down any previous session BEFORE taking a fresh generation number
-    // — teardown bumps the generation, which would otherwise invalidate the
-    // handlers we're about to register.
-    teardown()
-    const gen = ++generationRef.current
-    console.log('[useMSEPlayback] startPlayback gen=', gen, 'currentTime=', currentTimeRef.current, 'project=', projectName)
-    startPlayback(videoEl, gen)
+    console.log('[useMSEPlayback] session open for project=', projectName)
 
-    return () => {
-      teardown()
-    }
-  }, [playing, projectName])
-
-  function startPlayback(videoEl: HTMLVideoElement, gen: number) {
     pendingFragments.current = []
-    hasAppendedInit.current = false
 
     const ms = new MediaSource()
     mediaSourceRef.current = ms
@@ -78,13 +54,17 @@ export function useMSEPlayback(
     objectUrlRef.current = objectUrl
     videoEl.src = objectUrl
 
-    ms.addEventListener('sourceopen', () => {
-      console.log('[useMSEPlayback] MediaSource sourceopen gen=', gen, 'current=', generationRef.current)
-      if (gen !== generationRef.current) return
+    const onSourceOpen = () => {
+      console.log('[useMSEPlayback] MediaSource sourceopen')
       if (!MediaSource.isTypeSupported(MIME_TYPE)) {
         console.error('[useMSEPlayback] browser does not support', MIME_TYPE)
         return
       }
+      // Set Infinity so fragments with any DTS are accepted. Without this,
+      // MediaSource.duration defaults to NaN/0 and far-forward fragments may
+      // be silently dropped.
+      try { ms.duration = Number.POSITIVE_INFINITY } catch { /* noop */ }
+
       let sb: SourceBuffer
       try {
         sb = ms.addSourceBuffer(MIME_TYPE)
@@ -92,42 +72,90 @@ export function useMSEPlayback(
         console.error('[useMSEPlayback] addSourceBuffer failed', err)
         return
       }
+      // Sequence mode: ignore fMP4 timestamps, append in order. Live preview
+      // doesn't need seek-to-timecode accuracy.
+      try { sb.mode = 'sequence' } catch { /* noop */ }
       sourceBufferRef.current = sb
-      sb.addEventListener('updateend', () => flushPending(gen))
+      sb.addEventListener('updateend', () => {
+        const v = videoEl
+        console.log(
+          '[useMSEPlayback] sb updateend — buffered:',
+          v.buffered.length ? `${v.buffered.start(0).toFixed(2)}-${v.buffered.end(v.buffered.length - 1).toFixed(2)}` : 'empty',
+          'currentTime=', v.currentTime.toFixed(2),
+          'readyState=', v.readyState,
+          'paused=', v.paused,
+        )
+        flushPending()
+      })
 
-      // Open the WebSocket now that the SourceBuffer is ready
       const stream = openPreviewStream(projectName, {
-        onFragment: (bytes) => enqueueFragment(bytes, gen),
-        onError: (err) => {
-          if (gen !== generationRef.current) return
-          console.warn('[useMSEPlayback] stream error', err)
-        },
+        onFragment: enqueueFragment,
+        onError: (err) => console.warn('[useMSEPlayback] stream error', err),
         onClose: () => {
-          if (gen !== generationRef.current) return
+          console.log('[useMSEPlayback] stream onClose')
           try { if (ms.readyState === 'open') ms.endOfStream() } catch { /* noop */ }
         },
       })
       streamRef.current = stream
-      stream.play(currentTimeRef.current)
 
-      // Start the video playing immediately — it'll pause itself at the
-      // first frame while waiting for fragments, then resume.
-      videoEl.play().catch(() => { /* autoplay may be blocked; UI prompts user */ })
-    })
+      // If the parent was already in playing=true when the session spun up,
+      // the play/pause effect fired before streamRef was set and got a no-op.
+      // Kick the initial action here now that the stream exists.
+      if (playingRef.current) {
+        console.log('[useMSEPlayback] initial play @', currentTimeRef.current)
+        stream.play(currentTimeRef.current)
+        videoEl.play().catch(() => { /* autoplay may be blocked */ })
+      }
+    }
 
-    ms.addEventListener('sourceended', () => {
-      if (gen !== generationRef.current) return
-    })
-  }
+    ms.addEventListener('sourceopen', onSourceOpen)
 
-  function enqueueFragment(bytes: ArrayBuffer, gen: number) {
-    if (gen !== generationRef.current) return
+    return () => {
+      console.log('[useMSEPlayback] session teardown for project=', projectName)
+      const s = streamRef.current
+      if (s) {
+        try { s.close() } catch { /* noop */ }
+        streamRef.current = null
+      }
+      if (ms) {
+        ms.removeEventListener('sourceopen', onSourceOpen)
+        try { if (ms.readyState === 'open') ms.endOfStream() } catch { /* noop */ }
+      }
+      mediaSourceRef.current = null
+      sourceBufferRef.current = null
+      pendingFragments.current = []
+      const url = objectUrlRef.current
+      if (url) {
+        URL.revokeObjectURL(url)
+        objectUrlRef.current = null
+      }
+    }
+  }, [projectName])
+
+  // Play/pause: drive the backend via action messages on the live socket.
+  useEffect(() => {
+    const videoEl = videoRef.current
+    const stream = streamRef.current
+    if (!videoEl) return
+
+    if (playing) {
+      console.log('[useMSEPlayback] play action @', currentTimeRef.current)
+      stream?.play(currentTimeRef.current)
+      videoEl.play().catch(() => { /* autoplay may be blocked */ })
+    } else {
+      console.log('[useMSEPlayback] pause action')
+      stream?.pause()
+      videoEl.pause()
+    }
+  }, [playing])
+
+  function enqueueFragment(bytes: ArrayBuffer) {
+    console.log('[useMSEPlayback] fragment received:', bytes.byteLength, 'bytes (queue now', pendingFragments.current.length + 1, ')')
     pendingFragments.current.push(bytes)
-    flushPending(gen)
+    flushPending()
   }
 
-  function flushPending(gen: number) {
-    if (gen !== generationRef.current) return
+  function flushPending() {
     const sb = sourceBufferRef.current
     const ms = mediaSourceRef.current
     if (!sb || !ms || ms.readyState !== 'open') return
@@ -135,47 +163,18 @@ export function useMSEPlayback(
     const next = pendingFragments.current.shift()
     if (!next) return
     try {
+      console.log('[useMSEPlayback] appending', next.byteLength, 'bytes to SourceBuffer')
       sb.appendBuffer(new Uint8Array(next))
-      if (!hasAppendedInit.current) hasAppendedInit.current = true
     } catch (err) {
-      // QuotaExceededError — evict behind the playhead and retry
       const videoEl = videoRef.current
       if ((err as DOMException)?.name === 'QuotaExceededError' && videoEl) {
         try {
           sb.remove(0, Math.max(0, videoEl.currentTime - 10))
-          pendingFragments.current.unshift(next) // retry after eviction
+          pendingFragments.current.unshift(next)
         } catch { /* noop */ }
       } else {
         console.warn('[useMSEPlayback] appendBuffer failed', err)
       }
-    }
-  }
-
-  function teardown() {
-    // Bump generation so any in-flight async callbacks bail out
-    generationRef.current++
-
-    const stream = streamRef.current
-    if (stream) {
-      try { stream.stop() } catch { /* noop */ }
-      try { stream.close() } catch { /* noop */ }
-      streamRef.current = null
-    }
-
-    const ms = mediaSourceRef.current
-    if (ms) {
-      try { if (ms.readyState === 'open') ms.endOfStream() } catch { /* noop */ }
-      mediaSourceRef.current = null
-    }
-
-    sourceBufferRef.current = null
-    pendingFragments.current = []
-    hasAppendedInit.current = false
-
-    const objectUrl = objectUrlRef.current
-    if (objectUrl) {
-      URL.revokeObjectURL(objectUrl)
-      objectUrlRef.current = null
     }
   }
 }

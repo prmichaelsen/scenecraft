@@ -93,6 +93,7 @@ export function openPreviewStream(
   let isOpen = false
 
   ws.addEventListener('open', () => {
+    console.log('[preview-client] WS open, flushing outbox:', outbox.length)
     isOpen = true
     for (const msg of outbox) ws.send(msg)
     outbox.length = 0
@@ -119,19 +120,26 @@ export function openPreviewStream(
     }
   })
 
-  ws.addEventListener('error', () => {
+  ws.addEventListener('error', (ev) => {
+    console.warn('[preview-client] WS error event', ev)
     events.onError?.(new Error('preview-stream socket error'))
   })
 
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', (ev) => {
+    console.log('[preview-client] WS close code=', ev.code, 'reason=', ev.reason, 'wasClean=', ev.wasClean)
     isOpen = false
     events.onClose?.()
   })
 
   const send = (obj: Record<string, unknown>) => {
     const msg = JSON.stringify(obj)
-    if (isOpen) ws.send(msg)
-    else outbox.push(msg)
+    if (isOpen) {
+      console.log('[preview-client] send (live):', msg)
+      ws.send(msg)
+    } else {
+      console.log('[preview-client] send (queued, ws state=', ws.readyState, '):', msg)
+      outbox.push(msg)
+    }
   }
 
   return {
