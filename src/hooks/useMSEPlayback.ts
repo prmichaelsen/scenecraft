@@ -37,28 +37,38 @@ export function useMSEPlayback(
   // Track which seek we're currently servicing so stale async callbacks bail
   const generationRef = useRef(0)
 
-  // Spin up playback whenever `playing` becomes true (or `currentTime` moves while playing)
+  // Read the live currentTime via a ref so the lifecycle effect below
+  // doesn't re-run when Timeline's rAF loop ticks it at 60Hz during playback.
+  const currentTimeRef = useRef(currentTime)
+  currentTimeRef.current = currentTime
+
+  // Lifecycle: spin up/down based on `playing` + `projectName` only.
+  // Explicit seeks during playback should go through a separate channel
+  // (not yet wired) — for now, tearing down and restarting via `playing=false
+  // → true` is the only way to jump.
   useEffect(() => {
     const videoEl = videoRef.current
     if (!videoEl || !playing) {
+      if (!videoEl) console.log('[useMSEPlayback] no videoEl ref')
+      else console.log('[useMSEPlayback] playing=false → teardown')
       teardown()
       return
     }
 
+    // Tear down any previous session BEFORE taking a fresh generation number
+    // — teardown bumps the generation, which would otherwise invalidate the
+    // handlers we're about to register.
+    teardown()
     const gen = ++generationRef.current
+    console.log('[useMSEPlayback] startPlayback gen=', gen, 'currentTime=', currentTimeRef.current, 'project=', projectName)
     startPlayback(videoEl, gen)
 
     return () => {
-      // Cleanup when deps change or component unmounts
       teardown()
     }
-    // We intentionally re-run on currentTime changes to service seeks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, currentTime, projectName])
+  }, [playing, projectName])
 
   function startPlayback(videoEl: HTMLVideoElement, gen: number) {
-    teardown()
-
     pendingFragments.current = []
     hasAppendedInit.current = false
 
@@ -69,6 +79,7 @@ export function useMSEPlayback(
     videoEl.src = objectUrl
 
     ms.addEventListener('sourceopen', () => {
+      console.log('[useMSEPlayback] MediaSource sourceopen gen=', gen, 'current=', generationRef.current)
       if (gen !== generationRef.current) return
       if (!MediaSource.isTypeSupported(MIME_TYPE)) {
         console.error('[useMSEPlayback] browser does not support', MIME_TYPE)
@@ -97,7 +108,7 @@ export function useMSEPlayback(
         },
       })
       streamRef.current = stream
-      stream.play(currentTime)
+      stream.play(currentTimeRef.current)
 
       // Start the video playing immediately — it'll pause itself at the
       // first frame while waiting for fragments, then resume.

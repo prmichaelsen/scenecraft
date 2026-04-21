@@ -29,21 +29,20 @@ export class ScrubFetchError extends Error {
  * Fetch a single composited frame from the backend and decode it to an
  * ImageBitmap ready to blit onto a canvas.
  *
- * @param project - project name
- * @param t       - timeline time in seconds
- * @param quality - JPEG quality 1-100 (default 85)
- * @param signal  - AbortSignal for cancellation (used by useLatestWinsRequest)
+ * Requests are never canceled — the caller fires one per scrub tick and
+ * relies on the backend's frame cache to warm for every visited t. Paint
+ * correctness is gated on the caller side (drop the bitmap if the user
+ * has moved on).
  */
 export async function fetchScrubFrame(
   project: string,
   t: number,
   quality = 85,
-  signal?: AbortSignal,
 ): Promise<ImageBitmap> {
   const url =
     `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}` +
     `/render-frame?t=${t}&quality=${quality}`
-  const res = await fetch(url, { signal, credentials: 'include' })
+  const res = await fetch(url, { credentials: 'include' })
   if (!res.ok) {
     throw new ScrubFetchError(res.status, await res.text().catch(() => ''))
   }
@@ -85,6 +84,7 @@ export function openPreviewStream(
   events: PreviewStreamEvents,
 ): PreviewStream {
   const url = `${SCENECRAFT_WS_URL}/ws/preview-stream/${encodeURIComponent(project)}`
+  console.log('[preview-client] openPreviewStream →', url)
   const ws = new WebSocket(url)
   ws.binaryType = 'arraybuffer'
 

@@ -7,7 +7,6 @@ import {
   useState,
 } from 'react'
 import { fetchScrubFrame, ScrubFetchError } from '@/lib/preview-client'
-import { useLatestWinsRequest } from '@/hooks/useLatestWinsRequest'
 import { useMSEPlayback } from '@/hooks/useMSEPlayback'
 
 type PreviewViewportProps = {
@@ -34,7 +33,12 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [scrubState, setScrubState] = useState<ScrubState>('idle')
     const [errorText, setErrorText] = useState<string | null>(null)
-    const scrubQueue = useLatestWinsRequest<number>()
+    // Paint gate: every scrub fires a request (so the backend cache warms for
+    // every visited t), but we only paint the response if it still matches
+    // the current scrub position. Out-of-order resolves are dropped on paint,
+    // not on fetch.
+    const latestScrubTimeRef = useRef<number>(0)
+    const inFlightRef = useRef(0)
 
     useImperativeHandle(ref, () => ({
       getCanvas: () => canvasRef.current,
@@ -59,16 +63,22 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
 
     useEffect(() => {
       if (playing) return // video handles its own rendering during playback
-      scrubQueue.request(currentTime, async (t, signal) => {
-        setScrubState((s) => (s === 'idle' ? 'loading' : s))
-        try {
-          const bmp = await fetchScrubFrame(projectName, t, scrubQuality, signal)
-          if (signal.aborted) return
+      const t = currentTime
+      latestScrubTimeRef.current = t
+      inFlightRef.current += 1
+      setScrubState('loading')
+      fetchScrubFrame(projectName, t, scrubQuality)
+        .then((bmp) => {
+          if (latestScrubTimeRef.current !== t) {
+            bmp.close?.()
+            return
+          }
           paintBitmap(bmp)
           setScrubState('idle')
           setErrorText(null)
-        } catch (err) {
-          if ((err as Error)?.name === 'AbortError') return
+        })
+        .catch((err) => {
+          if (latestScrubTimeRef.current !== t) return
           if (err instanceof ScrubFetchError && err.status === 404) {
             setScrubState('empty')
             setErrorText(null)
@@ -77,10 +87,13 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
           }
           setScrubState('error')
           setErrorText((err as Error)?.message ?? String(err))
-        }
-      })
-      // scrubQueue is stable across renders
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+        })
+        .finally(() => {
+          inFlightRef.current -= 1
+          if (inFlightRef.current === 0) {
+            setScrubState((s) => (s === 'loading' ? 'idle' : s))
+          }
+        })
     }, [playing, currentTime, projectName, scrubQuality, paintBitmap])
 
     const clearCanvas = () => {
