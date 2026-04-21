@@ -2,15 +2,14 @@ import { useRef, useEffect } from 'react'
 import { useCurrentTime } from './CurrentTimeContext'
 import { usePreview } from './PreviewContext'
 import { useEditorState } from './EditorStateContext'
-import { BeatEffectPreview } from './BeatEffectPreview'
+import { PreviewViewport } from './PreviewViewport'
 import { TransformHandles } from './TransformHandles'
-import { scenecraftFileUrl } from '@/lib/scenecraft-client'
 import { useEditorData } from './EditorDataContext'
 
 export function PreviewPanel() {
   const data = useEditorData()
   const { currentTime, isPlaying } = useCurrentTime()
-  const { crossfadeData, trackLayers, isTransitionLoading, hoverPreviewUrl, hoverVideo, previewRef } = usePreview()
+  const { hoverPreviewUrl, hoverVideo, previewRef } = usePreview()
   const { selectedTransition } = useEditorState()
   const containerRef = useRef<HTMLDivElement>(null)
   const hoverVideoRef = useRef<HTMLVideoElement>(null)
@@ -19,15 +18,6 @@ export function PreviewPanel() {
     ...kf,
     timeSeconds: kf.timestamp.split(':').reduce((acc, part, i) => acc + parseFloat(part) * [3600, 60, 1][i], 0),
   }))
-
-  const currentKeyframe = [...keyframes]
-    .filter((kf) => kf.timeSeconds <= currentTime)
-    .sort((a, b) => b.timeSeconds - a.timeSeconds)
-    .find((kf) => kf.hasSelectedImage)
-    || [...keyframes].reverse().find((kf) => kf.timeSeconds <= currentTime)
-
-  const canvasWidth = data.meta.resolution?.[0] || 1920
-  const canvasHeight = data.meta.resolution?.[1] || 1080
 
   // Sync hover video element with scrub/play state
   useEffect(() => {
@@ -77,36 +67,12 @@ export function PreviewPanel() {
             <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
           )
         ) : null}
-        {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
-          <BeatEffectPreview
-            ref={previewRef}
-            src={currentKeyframe?.hasSelectedImage
-              ? scenecraftFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`) + `?v=${currentKeyframe.selected ?? 0}`
-              : ''}
-            beats={data.beats}
-            audioEvents={data.audioEvents}
-            userEffects={data.userEffects}
-            suppressions={data.beatSuppressions}
-            currentTime={currentTime}
-            isPlaying={isPlaying}
-            className="w-full h-full object-cover"
-            canvasWidth={canvasWidth}
-            canvasHeight={canvasHeight}
-            transitionFrameA={crossfadeData.frameA}
-            transitionFrameB={crossfadeData.frameB}
-            blendFactor={crossfadeData.blendFactor}
-            layers={trackLayers.length > 0 ? trackLayers : undefined}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
-            No image
-          </div>
-        )}
-        {isTransitionLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
-            <span className="text-white/70 text-xs">Loading frames...</span>
-          </div>
-        )}
+        <PreviewViewport
+          ref={previewRef}
+          projectName={data.projectName}
+          currentTime={currentTime}
+          playing={isPlaying}
+        />
         {selectedTransition && (
           <TransformHandles
             containerRef={containerRef}
