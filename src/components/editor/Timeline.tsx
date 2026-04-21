@@ -372,6 +372,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<Set<string>>(new Set())
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [selectedTransitionIds, setSelectedTransitionIds] = useState<Set<string>>(new Set())
+  const [selectedAudioClipIds, setSelectedAudioClipIds] = useState<Set<string>>(new Set())
   const [transformMode, setTransformMode] = useState(false)
   const previewContainerRef = useRef<HTMLDivElement>(null)
   const [showBin, setShowBin] = useState(false)
@@ -852,6 +853,34 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     })
   }, [closeAllPanels])
 
+  const handleAudioClipClick = useCallback((clip: import('@/lib/audio-client').AudioClip, shiftKey: boolean) => {
+    // Any audio-clip click swaps the Properties panel away from track settings.
+    setTrackSettingsId(null)
+    if (shiftKey) {
+      // Shift-click: toggle in multi-select set (additive across types — keyframe/tr
+      // sets are untouched so the user can build mixed kf+clip+tr selections).
+      setSelectedAudioClipIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(clip.id)) next.delete(clip.id)
+        else next.add(clip.id)
+        return next
+      })
+      editorState.setSelectedAudioClipId(clip.id)
+      return
+    }
+    // Plain click: close other single panels, seed the clip-ID set with just this one.
+    // Clicking the same clip twice clears selection.
+    const alreadySelected = editorState.selectedAudioClipId === clip.id
+    closeAllPanels()
+    if (alreadySelected) {
+      setSelectedAudioClipIds(new Set())
+      editorState.setSelectedAudioClipId(null)
+    } else {
+      setSelectedAudioClipIds(new Set([clip.id]))
+      editorState.setSelectedAudioClipId(clip.id)
+    }
+  }, [closeAllPanels, editorState])
+
   const handleTransitionClick = useCallback((tr: Transition, shiftKey?: boolean) => {
     setSelectedTrackId(tr.trackId)
     // Any tr click swaps the Properties panel away from track settings.
@@ -1190,15 +1219,49 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (sel && sel.toString().length > 0 && (matchesHotkey(e, 'copy') || matchesHotkey(e, 'paste'))) return
 
       if (matchesHotkey(e, 'delete') || matchesHotkey(e, 'deleteAlt')) {
-        if (selectedKeyframeIds.size > 0) {
-          const ids = [...selectedKeyframeIds]
-          if (!confirm(`Delete ${ids.length} keyframes?`)) return
-          batchDeleteKeyframes({ data: { projectName: data.projectName, keyframeIds: ids } }).then(() => {
-            setSelectedKeyframeIds(new Set())
-            setSelectedKeyframe(null)
-            refreshTimeline()
-          }).catch((err) => { console.error('Batch delete failed:', err); alert(`Batch delete failed: ${err}`) })
+        // Mixed-selection batch delete: any combination of keyframes + audio clips
+        // vacuums together in one confirm prompt.
+        if (selectedKeyframeIds.size > 0 || selectedAudioClipIds.size > 0) {
+          const kfIds = [...selectedKeyframeIds]
+          const clipIds = [...selectedAudioClipIds]
+          const parts: string[] = []
+          if (kfIds.length) parts.push(`${kfIds.length} keyframe${kfIds.length === 1 ? '' : 's'}`)
+          if (clipIds.length) parts.push(`${clipIds.length} audio clip${clipIds.length === 1 ? '' : 's'}`)
+          if (!confirm(`Delete ${parts.join(' + ')}?`)) return
+          ;(async () => {
+            try {
+              if (kfIds.length) {
+                await batchDeleteKeyframes({ data: { projectName: data.projectName, keyframeIds: kfIds } })
+              }
+              if (clipIds.length) {
+                const { postDeleteAudioClip } = await import('@/lib/audio-client')
+                await Promise.all(clipIds.map((id) => postDeleteAudioClip(data.projectName, id)))
+              }
+              setSelectedKeyframeIds(new Set())
+              setSelectedKeyframe(null)
+              setSelectedAudioClipIds(new Set())
+              editorState.setSelectedAudioClipId(null)
+              refreshTimeline()
+            } catch (err) {
+              console.error('Batch delete failed:', err)
+              alert(`Batch delete failed: ${err}`)
+            }
+          })()
         } else if (selectedKeyframe) handleDeleteKeyframe(selectedKeyframe.id)
+        else if (editorState.selectedAudioClipId) {
+          // Single-audio-clip delete path — no confirm, symmetric with single-kf delete
+          ;(async () => {
+            try {
+              const { postDeleteAudioClip } = await import('@/lib/audio-client')
+              await postDeleteAudioClip(data.projectName, editorState.selectedAudioClipId!)
+              editorState.setSelectedAudioClipId(null)
+              refreshTimeline()
+            } catch (err) {
+              console.error('Audio clip delete failed:', err)
+              alert(`Audio clip delete failed: ${err}`)
+            }
+          })()
+        }
         else if (selectedEffectIds.size > 0) {
           const remaining = userEffects.filter((fx) => !selectedEffectIds.has(fx.id))
           setUserEffects(remaining)
@@ -1354,7 +1417,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedTransition, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
+  }, [selectedKeyframe, selectedKeyframeIds, selectedTrackId, selectedTransition, selectedEffect, selectedEffectIds, selectedSuppressionId, selectedSuppressionIds, selectedAudioClipIds, editorState, handleDeleteKeyframe, handleEffectDelete, handleDeleteSuppression, userEffects, suppressions, persistEffects, data.projectName, refreshTimeline])
 
   // Preview divider drag
   const handlePreviewDividerDown = useCallback((e: React.MouseEvent) => {
@@ -2120,7 +2183,14 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               {localAudioTracks && localAudioTracks.length > 0 && (
                 <div className="relative">
                   {[...localAudioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => (
-                    <AudioLane key={t.id} projectName={data.projectName} track={t} pxPerSec={pxPerSec} />
+                    <AudioLane
+                      key={t.id}
+                      projectName={data.projectName}
+                      track={t}
+                      pxPerSec={pxPerSec}
+                      selectedIds={selectedAudioClipIds}
+                      onClipClick={handleAudioClipClick}
+                    />
                   ))}
                 </div>
               )}

@@ -84,6 +84,15 @@ export async function postUpdateAudioClip(project: string, clipId: string, updat
   if (!res.ok) throw new Error(`audio-clips/update failed: ${res.status}`)
 }
 
+export async function postDeleteAudioClip(project: string, clipId: string): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-clips/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: clipId }),
+  })
+  if (!res.ok) throw new Error(`audio-clips/delete failed: ${res.status}`)
+}
+
 export type AudioTrackUpdate = Partial<{
   name: string
   displayOrder: number

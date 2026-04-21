@@ -8,13 +8,22 @@ type AudioLaneProps = {
   track: AudioTrack
   pxPerSec: number
   height?: number
+  /** IDs currently in the Timeline's audio-clip multi-selection set. */
+  selectedIds?: Set<string>
+  /**
+   * Click handler override. When provided, `AudioClipBlock` calls this with
+   * the clip and shiftKey instead of the context's setSelectedAudioClipId.
+   * Timeline uses this to implement additive shift-click across the mixed
+   * selection (kfs + trs + audio clips).
+   */
+  onClipClick?: (clip: AudioClip, shiftKey: boolean) => void
 }
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56 }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted || !track.enabled
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -43,7 +52,15 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
 
       {/* Clips */}
       {clips.map((c) => (
-        <AudioClipBlock key={c.id} projectName={projectName} clip={c} pxPerSec={pxPerSec} laneHeight={height} />
+        <AudioClipBlock
+          key={c.id}
+          projectName={projectName}
+          clip={c}
+          pxPerSec={pxPerSec}
+          laneHeight={height}
+          isInMultiSelect={selectedIds?.has(c.id) ?? false}
+          onClipClick={onClipClick}
+        />
       ))}
     </div>
   )
@@ -54,9 +71,11 @@ type AudioClipBlockProps = {
   clip: AudioClip
   pxPerSec: number
   laneHeight: number
+  isInMultiSelect: boolean
+  onClipClick?: (clip: AudioClip, shiftKey: boolean) => void
 }
 
-function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight }: AudioClipBlockProps) {
+function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, onClipClick }: AudioClipBlockProps) {
   const left = clip.start_time * pxPerSec
   const width = Math.max(2, (clip.end_time - clip.start_time) * pxPerSec)
   const durationSeconds = clip.end_time - clip.start_time
@@ -64,7 +83,7 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight }: AudioClipBl
   // absolute top-1 bottom-1 below (1px=4px because tailwind scale).
   const blockHeight = Math.max(0, laneHeight - 8)
   const { selectedAudioClipId, setSelectedAudioClipId } = useEditorState()
-  const selected = selectedAudioClipId === clip.id
+  const selected = selectedAudioClipId === clip.id || isInMultiSelect
 
   return (
     <div
@@ -75,7 +94,8 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight }: AudioClipBl
       title={`${clip.source_path} · ${durationSeconds.toFixed(2)}s`}
       onClick={(e) => {
         e.stopPropagation()
-        setSelectedAudioClipId(clip.id)
+        if (onClipClick) onClipClick(clip, e.shiftKey)
+        else setSelectedAudioClipId(clip.id)
       }}
     >
       <AudioWaveform
