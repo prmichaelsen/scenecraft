@@ -978,6 +978,105 @@ milestones:
         estimated_hours: 3
         actual_hours: null
 
+  - id: milestone_14
+    name: In-Editor Audio Playback
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-14-in-editor-audio-playback.md
+    tasks_total: 4
+    tasks_completed: 0
+    estimated_weeks: 1
+    tasks:
+      - id: task-115
+        name: Mixer module skeleton + curve math TS port + unit tests
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-14-in-editor-audio-playback/task-115-mixer-module-skeleton.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-116
+        name: WebAudio graph + streaming source management + scheduling loop
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-14-in-editor-audio-playback/task-116-webaudio-graph-and-streaming.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-117
+        name: Curve automation + equal-power crossfade on same-track overlap
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-14-in-editor-audio-playback/task-117-curve-automation-and-crossfade.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-118
+        name: Timeline integration behind feature flag + perceptual A/B
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-14-in-editor-audio-playback/task-118-timeline-integration-and-flag.md
+        estimated_hours: 4
+        actual_hours: null
+
+  - id: milestone_15
+    name: Audio Clip Editing + Track Management
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-15-audio-clip-editing.md
+    tasks_total: 7
+    tasks_completed: 0
+    estimated_weeks: 2
+    tasks:
+      - id: task-119
+        name: Clip & track delete via right-click context menu
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-119-clip-and-track-delete.md
+        estimated_hours: 2
+        actual_hours: null
+      - id: task-120
+        name: Track add / rename / reorder + mute/enabled header toggles
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-120-track-add-rename-reorder.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-121
+        name: Clip body-drag move (same-track, snap-to-second)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-121-clip-body-drag-move.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-122
+        name: Clip trim edges (left adjusts offset+start, right adjusts end)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-122-clip-trim-edges.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-123
+        name: Drag/drop unlinked audio file onto a lane
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-123-unlinked-audio-drop.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-124
+        name: Cross-highlight linked transition ↔ audio on selection
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-124-cross-highlight-linked.md
+        estimated_hours: 2
+        actual_hours: null
+      - id: task-125
+        name: Optimistic extraction ghost during video drop / auto-link
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-15-audio-clip-editing/task-125-extraction-ghost.md
+        estimated_hours: 2
+        actual_hours: null
+
 tasks:
   milestone_1:
     - id: task-1
@@ -1675,6 +1774,96 @@ tasks:
       estimated_hours: 3
       actual_hours: null
       started: null
+  milestone_14:
+    - id: task-115
+      name: Mixer module skeleton + curve math TS port + unit tests
+      status: not_started
+      milestone_id: milestone_14
+      file: agent/tasks/milestone-14-in-editor-audio-playback/task-115-mixer-module-skeleton.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-116
+      name: WebAudio graph + streaming source management + scheduling loop
+      status: not_started
+      milestone_id: milestone_14
+      file: agent/tasks/milestone-14-in-editor-audio-playback/task-116-webaudio-graph-and-streaming.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-117
+      name: Curve automation + equal-power crossfade on same-track overlap
+      status: not_started
+      milestone_id: milestone_14
+      file: agent/tasks/milestone-14-in-editor-audio-playback/task-117-curve-automation-and-crossfade.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-118
+      name: Timeline integration behind feature flag + perceptual A/B
+      status: not_started
+      milestone_id: milestone_14
+      file: agent/tasks/milestone-14-in-editor-audio-playback/task-118-timeline-integration-and-flag.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+  milestone_15:
+    - id: task-119
+      name: Clip & track delete via right-click context menu
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-119-clip-and-track-delete.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
+    - id: task-120
+      name: Track add / rename / reorder + mute/enabled header toggles
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-120-track-add-rename-reorder.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-121
+      name: Clip body-drag move (same-track, snap-to-second)
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-121-clip-body-drag-move.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-122
+      name: Clip trim edges (left adjusts offset+start, right adjusts end)
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-122-clip-trim-edges.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-123
+      name: Drag/drop unlinked audio file onto a lane
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-123-unlinked-audio-drop.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-124
+      name: Cross-highlight linked transition ↔ audio on selection
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-124-cross-highlight-linked.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
+    - id: task-125
+      name: Optimistic extraction ghost during video drop / auto-link
+      status: not_started
+      milestone_id: milestone_15
+      file: agent/tasks/milestone-15-audio-clip-editing/task-125-extraction-ghost.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
   unassigned:
     - id: task-13
       name: Polish Interactive Transform Handles
@@ -1760,6 +1949,8 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
+  - "M15: Audio Clip Editing + Track Management — delete/move/trim clips, track add/rename/reorder, unlinked drop, cross-highlight, extraction ghost (7 tasks, ~20h, 2-2.5 weeks)"
   - "M13: Audio Sync Tab — lipsync via candidate variants (sync.so + ElevenLabs TTS/S2S); 9 tasks, ~30 hours, 2-3 weeks"
   - "M11: Audio Isolation Plugin — first real plugin (DFN3 denoise); validates plugin seams (6 tasks, ~25 hours, 2 weeks)"
   - "M6: Git-Style Version Control — SSH auth, UUID migration, object store, branches, merge (15 tasks, ~85 hours)"
