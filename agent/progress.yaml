@@ -1195,6 +1195,95 @@ tasks:
       estimated_hours: 10
       actual_hours: null
       started: null
+  milestone_9:
+    - id: task-82
+      name: Schema migration (greenfield)
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-82-schema-migration.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-83
+      name: Audio-stream extract via ffmpeg
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-83-audio-extract.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-84
+      name: Slot routing + linked-audio insert endpoint
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-84-insert-routing.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-85
+      name: Transition move/trim propagation to linked audio
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-85-transition-propagation.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-86
+      name: Cascade delete on transition removal
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-86-cascade-delete.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-87
+      name: Timeline audio lanes + mirrored layout
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-87-timeline-audio-lanes.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-88
+      name: Audio clip block + waveform rendering
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-88-clip-block-waveform.md
+      estimated_hours: 7
+      actual_hours: null
+      started: null
+    - id: task-89
+      name: Drag/drop insert + auto-link UI
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-89-drag-drop-insert.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-90
+      name: Volume curve editor (clips + tracks)
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-90-volume-curve-editor.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-91
+      name: Multi-track mixdown + equal-power crossfade
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-91-mixdown-renderer.md
+      estimated_hours: 7
+      actual_hours: null
+      started: null
+    - id: task-92
+      name: Veo auto-link integration
+      status: not_started
+      milestone_id: milestone_9
+      file: agent/tasks/milestone-9-audio-tracks-and-clips/task-92-veo-auto-link.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
   unassigned:
     - id: task-13
       name: Polish Interactive Transform Handles
