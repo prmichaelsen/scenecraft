@@ -904,6 +904,80 @@ milestones:
         estimated_hours: 2
         actual_hours: null
 
+  - id: milestone_13
+    name: Audio Sync Tab (Lipsync via Candidate Variants)
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-13-audio-sync.md
+    tasks_total: 9
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-106
+        name: Schema migration (derived_from + variant_kind on pool_segments)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-106-schema-migration.md
+        estimated_hours: 2
+        actual_hours: null
+      - id: task-107
+        name: Backend /lipsync endpoint — TTS mode
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-107-backend-tts.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-108
+        name: Backend /lipsync endpoint — S2S mode
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-108-backend-s2s.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-109
+        name: Candidates tab filter + CandidateDetail types
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-109-candidates-filter-types.md
+        estimated_hours: 2
+        actual_hours: null
+      - id: task-110
+        name: AudioSyncTab scaffold + form
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-110-audio-sync-tab-scaffold.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-111
+        name: Hover-driven preview override
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-111-hover-preview-override.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-112
+        name: Wire Generate + Resync to live endpoint + WS progress
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-112-wire-live-generation.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-113
+        name: ElevenLabs voice list (client-side fetch + cache)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-113-elevenlabs-voice-list.md
+        estimated_hours: 2
+        actual_hours: null
+      - id: task-114
+        name: E2E tests + mocked sync.so harness
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-13-audio-sync/task-114-e2e-tests.md
+        estimated_hours: 3
+        actual_hours: null
+
 tasks:
   milestone_1:
     - id: task-1
@@ -1528,6 +1602,79 @@ tasks:
       estimated_hours: 2
       actual_hours: null
       started: null
+  milestone_13:
+    - id: task-106
+      name: Schema migration (derived_from + variant_kind on pool_segments)
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-106-schema-migration.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
+    - id: task-107
+      name: Backend /lipsync endpoint — TTS mode
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-107-backend-tts.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-108
+      name: Backend /lipsync endpoint — S2S mode
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-108-backend-s2s.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-109
+      name: Candidates tab filter + CandidateDetail types
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-109-candidates-filter-types.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
+    - id: task-110
+      name: AudioSyncTab scaffold + form
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-110-audio-sync-tab-scaffold.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-111
+      name: Hover-driven preview override
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-111-hover-preview-override.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-112
+      name: Wire Generate + Resync to live endpoint + WS progress
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-112-wire-live-generation.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-113
+      name: ElevenLabs voice list (client-side fetch + cache)
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-113-elevenlabs-voice-list.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
+    - id: task-114
+      name: E2E tests + mocked sync.so harness
+      status: not_started
+      milestone_id: milestone_13
+      file: agent/tasks/milestone-13-audio-sync/task-114-e2e-tests.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
   unassigned:
     - id: task-13
       name: Polish Interactive Transform Handles
@@ -1580,9 +1727,9 @@ tasks:
 
 documentation:
   design_documents: 10
-  milestone_documents: 4
+  milestone_documents: 5
   pattern_documents: 0
-  task_documents: 42
+  task_documents: 51
 
 progress:
   planning: 80
@@ -1613,6 +1760,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M13: Audio Sync Tab — lipsync via candidate variants (sync.so + ElevenLabs TTS/S2S); 9 tasks, ~30 hours, 2-3 weeks"
   - "M11: Audio Isolation Plugin — first real plugin (DFN3 denoise); validates plugin seams (6 tasks, ~25 hours, 2 weeks)"
   - "M6: Git-Style Version Control — SSH auth, UUID migration, object store, branches, merge (15 tasks, ~85 hours)"
   - "M2: Dynamic Panel Layout — migrate all panels to 4-column dockview layout"
