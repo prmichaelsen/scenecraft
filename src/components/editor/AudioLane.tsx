@@ -145,6 +145,11 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
         // (otherwise it's clipped by the lane's overflow).
         transform: isDragging ? `translate(${dragOffsetPx}px, ${dragOffsetPy}px)` : undefined,
         overflow: isDragging ? 'visible' : undefined,
+        // During drag, let mouse events fall through so elementFromPoint
+        // reads the target lane under the cursor instead of picking up this
+        // translated block (whose DOM ancestor is still the SOURCE lane,
+        // causing trackDelta to flicker between target and source).
+        pointerEvents: isDragging ? 'none' : undefined,
       }}
       title={`${clip.source_path} · ${durationSeconds.toFixed(2)}s`}
       onMouseDown={(e) => {
