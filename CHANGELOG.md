@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0] - 2026-04-21
+
+### Added
+- M14 Task 116 — WebAudio graph + streaming source management. `createAudioMixer` now builds a real graph lazily on first `play()`:
+  - `AudioContext` created on-demand (satisfies browser autoplay gesture requirement), closed on `dispose()`.
+  - Per-track `GainNode` → `destination`.
+  - Per-clip `HTMLAudioElement` (preload='auto', crossOrigin='anonymous') → `MediaElementAudioSourceNode` → per-clip `clipGain` → per-clip `crossfadeGain` → track gain.
+  - Clip source URLs resolved via `scenecraftFileUrl` (overridable for tests).
+  - Scheduling model: `seek()` drives activation/deactivation — no internal rAF. Timeline's existing per-frame tick calls `seek()`; the mixer activates any clip whose `[start_time, end_time)` contains the new playhead, setting `audio.currentTime = source_offset + (playhead - start_time)` and calling `.play()`. Clips leaving the window are paused.
+  - `rebuild(tracks)` tears down the old graph and rebuilds atomically. `dispose()` pauses all elements and closes the context.
+- Injection hooks on `createAudioMixer` (`audioCtxFactory`, `audioElementFactory`, `sourceUrlFactory`) enable testing without a real WebAudio/DOM.
+- 12 new tests covering lazy construction, activation by playhead, forward/backward seek transitions, source-offset math, mute updates, and dispose cleanup. 36 total pass.
+
 ## [0.16.0] - 2026-04-21
 
 ### Added
