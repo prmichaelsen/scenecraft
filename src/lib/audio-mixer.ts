@@ -447,7 +447,17 @@ export function createAudioMixer(
     rebuild(nextTracks: AudioTrack[]) {
       if (disposed) return
       populateFromTracks(nextTracks)
-      if (audioCtx) ensureGraph()
+      if (audioCtx) {
+        ensureGraph()
+        // Graph was torn down + re-built; any clip that was active before
+        // rebuild is now at `active: false` with a fresh HTMLAudioElement.
+        // Re-schedule track curves and re-activate the clips that sit under
+        // the current playhead so mid-playback rebuilds (triggered by
+        // refreshTimeline() after drags / trims / align-apply / etc.) don't
+        // silently drop audio that should keep playing.
+        scheduleAllTrackCurves(lastPlayhead)
+        reevaluateClips(lastPlayhead)
+      }
       log(`rebuild(${nextTracks.length} tracks)`)
     },
 
