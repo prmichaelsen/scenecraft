@@ -33,12 +33,22 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [scrubState, setScrubState] = useState<ScrubState>('idle')
     const [errorText, setErrorText] = useState<string | null>(null)
-    // Paint gate: every scrub fires a request (so the backend cache warms for
-    // every visited t), but we only paint the response if it still matches
-    // the current scrub position. Out-of-order resolves are dropped on paint,
-    // not on fetch.
+    // Paint gate: every scrub fires a request unless the frame is already
+    // cached locally (see frameCacheRef). If a fetch does go out, we only
+    // paint when the response matches the current scrub position.
     const latestScrubTimeRef = useRef<number>(0)
     const inFlightRef = useRef(0)
+    // Client-side frame cache keyed on t_ms. Lives for the lifetime of the
+    // component. Cleared wholesale when the project changes. Task-38 covers
+    // finer-grained invalidation once the backend push channel lands.
+    const frameCacheRef = useRef<Map<number, ImageBitmap>>(new Map())
+    const FRAME_CACHE_MAX = 500
+    // Drop the cache if projectName changes (different project = different
+    // pixels at the same t).
+    useEffect(() => {
+      for (const bmp of frameCacheRef.current.values()) bmp.close?.()
+      frameCacheRef.current.clear()
+    }, [projectName])
 
     useImperativeHandle(ref, () => ({
       getCanvas: () => canvasRef.current,
@@ -47,10 +57,11 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     }), [playing])
 
     // ── Scrub path: fetch JPEG and blit to canvas when paused ────
+    // paintBitmap does NOT close the bitmap — the cache owns bitmap
+    // lifetimes. Closes happen on eviction or component unmount.
     const paintBitmap = useCallback((bmp: ImageBitmap) => {
       const canvas = canvasRef.current
       if (!canvas) return
-      // Size canvas to the source bitmap on first paint (or resize) — preserves pixel parity.
       if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
         canvas.width = bmp.width
         canvas.height = bmp.height
@@ -58,13 +69,117 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
       const ctx = canvas.getContext('2d')
       if (!ctx) return
       ctx.drawImage(bmp, 0, 0)
-      bmp.close?.()
     }, [])
 
+    // When transitioning from play → pause, snapshot the current video
+    // frame onto the canvas before the z-index swap reveals it. Otherwise
+    // you'd see the stale scrub frame from before play started, or a
+    // different frame than what was just playing, depending on encoder lag.
+    // sb.mode = 'sequence' means video.currentTime doesn't map to project
+    // time, so fetching a scrub JPEG at currentTime doesn't necessarily
+    // show the same frame the video was showing — we just grab the pixels.
+    const wasPlayingRef = useRef(playing)
     useEffect(() => {
-      if (playing) return // video handles its own rendering during playback
+      if (wasPlayingRef.current && !playing) {
+        const video = videoRef.current
+        const canvas = canvasRef.current
+        if (video && canvas && video.videoWidth > 0) {
+          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            canvas.width = video.videoWidth
+            canvas.height = video.videoHeight
+          }
+          const ctx = canvas.getContext('2d')
+          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
+        }
+      }
+      wasPlayingRef.current = playing
+    }, [playing])
+
+    // Touch the cache on access to mark as most-recently-used (Map iteration
+    // order = insertion, so delete+set moves to end).
+    const cacheTouch = useCallback((tKey: number, bmp: ImageBitmap) => {
+      const c = frameCacheRef.current
+      const existing = c.get(tKey)
+      if (existing && existing !== bmp) existing.close?.()
+      c.delete(tKey)
+      c.set(tKey, bmp)
+      while (c.size > FRAME_CACHE_MAX) {
+        const oldestKey = c.keys().next().value
+        if (oldestKey === undefined) break
+        c.get(oldestKey)?.close?.()
+        c.delete(oldestKey)
+      }
+    }, [])
+
+    // Background prefetch: renders + caches frames around the current
+    // playhead while idle. Canceled when the playhead moves so that near-
+    // playhead renders always win the scheduling race.
+    const prefetchControllerRef = useRef<AbortController | null>(null)
+    const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const schedulePrefetch = useCallback((centerT: number) => {
+      // Cancel the previous batch
+      prefetchControllerRef.current?.abort()
+      if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current)
+
+      // Debounce: only kick in after the playhead has been still for 200ms.
+      prefetchTimerRef.current = setTimeout(() => {
+        const controller = new AbortController()
+        prefetchControllerRef.current = controller
+        // Offsets radiating outward from the playhead. Forward first, then
+        // back. Clamped to non-negative t on the near-zero side.
+        const offsets = [0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0]
+        const runOne = async (offset: number) => {
+          if (controller.signal.aborted) return
+          const t = centerT + offset
+          if (t < 0) return
+          const tKey = Math.round(t * 1000)
+          if (frameCacheRef.current.has(tKey)) return
+          try {
+            const bmp = await fetchScrubFrame(projectName, t, scrubQuality, controller.signal)
+            if (controller.signal.aborted) { bmp.close?.(); return }
+            cacheTouch(tKey, bmp)
+          } catch {
+            // AbortError or fetch error — drop silently
+          }
+        }
+        // Fire them serially (one at a time) so we don't overwhelm the
+        // backend render worker; each completes in ~100ms if cached on
+        // backend, slower on first render.
+        ;(async () => {
+          for (const off of offsets) {
+            if (controller.signal.aborted) break
+            await runOne(off)
+          }
+        })()
+      }, 200)
+    }, [projectName, scrubQuality, cacheTouch])
+
+    useEffect(() => {
+      if (playing) {
+        // Don't prefetch during playback — MSE is driving render pipeline
+        prefetchControllerRef.current?.abort()
+        return
+      }
       const t = currentTime
+      const tKey = Math.round(t * 1000)
       latestScrubTimeRef.current = t
+
+      const cached = frameCacheRef.current.get(tKey)
+      if (cached) {
+        cacheTouch(tKey, cached) // bump LRU
+        paintBitmap(cached)
+        setScrubState('idle')
+        setErrorText(null)
+        schedulePrefetch(t)
+        return
+      }
+
+      // Cancel any in-flight prefetch — the user moved the playhead to a
+      // new position that isn't cached, we want to spend server cycles on
+      // this request, not on the old prefetch batch.
+      prefetchControllerRef.current?.abort()
+
       inFlightRef.current += 1
       setScrubState('loading')
       fetchScrubFrame(projectName, t, scrubQuality)
@@ -73,9 +188,11 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
             bmp.close?.()
             return
           }
+          cacheTouch(tKey, bmp)
           paintBitmap(bmp)
           setScrubState('idle')
           setErrorText(null)
+          schedulePrefetch(t)
         })
         .catch((err) => {
           if (latestScrubTimeRef.current !== t) return
@@ -94,7 +211,7 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
             setScrubState((s) => (s === 'loading' ? 'idle' : s))
           }
         })
-    }, [playing, currentTime, projectName, scrubQuality, paintBitmap])
+    }, [playing, currentTime, projectName, scrubQuality, paintBitmap, cacheTouch, schedulePrefetch])
 
     const clearCanvas = () => {
       const canvas = canvasRef.current
