@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.20.0] - 2026-04-21
+
+### Added
+- **M10 complete — Clip Move (Drag and Drop Across Tracks)**. Body-drag on a transition bar's interior (not on the `<]`/`<|>`/`[>` trim zones) moves clips in time and between tracks, with full overlap resolution and copy-mode support.
+  - **Gesture**: mousedown on transition interior → 4 px threshold → `cursor: grabbing` → `createPortal` ghost anchored bottom-right of cursor → Escape cancels → mouseup commits.
+  - **Cross-track**: Y-delta via `document.elementFromPoint` + `data-track-id` → uniform `trackDelta` per batch. Target-track row tints on hover.
+  - **Multi-clip**: if the primary-dragged clip is in `selectedTransitionIds`, the whole selection moves as a rigid group; relative time + track offsets preserved.
+  - **Multi-track source selections**: clips spanning multiple tracks apply uniform `trackDelta` sourced from the primary clip (e.g., selection on T2+T3 dragged T3→T2 produces `trackDelta = -1` — T2→T1, T3→T2).
+  - **Auto-create tracks**: `trackDelta` past the existing range auto-creates dashed "New track" ghost rows during drag; commit materializes them with safe defaults (`blendMode: "normal"`, `baseOpacity: 1.0`, `enabled: true`).
+  - **Copy mode**: Cmd/Ctrl+drag captured at mousedown; primary ghost gets a green `+` badge; copies the tr row + `tr_candidates` junction rows + effects + `selected_transitions/{id}_slot_*.mp4` cache; source clips unchanged.
+  - **Overlap preview**: during drag, existing clips on the target track get red tints for consume / partial-trim / three-way-split cases; split lines shown at boundary positions.
+  - **Tooltip**: `M:SS.ss → M:SS.ss · TrackName · Δ+X.XXs · N clips · K consumed · J split · +T new tracks` (segments suppressed when zero).
+- Backend `POST /api/projects/:name/move-transitions` (scenecraft-engine) with delta-based body, four modes of target-track overlap resolution (consume, trim-left, trim-right, three-way split), kf-ownership model (interior kfs migrate; boundary kfs duplicate for cross-track moves), source-track empty-tr bridge on vacated spans, and `mode="copy"` path that clones rows + junction + effects + cache.
+
+### Changed
+- Merge contention around `TransitionTrack.tsx` resolved — body-drag, boundary trim/rolling zones, filmstrip, and overlap overlays now coexist cleanly.
+
 ## [0.19.0] - 2026-04-21
 
 ### Added

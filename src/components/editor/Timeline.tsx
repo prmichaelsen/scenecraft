@@ -404,6 +404,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Target-track highlight during body-drag (M10: cross-track drag visual feedback).
   // Set by TransitionTrack via onTargetTracksChange; cleared on mouseup/cancel.
   const [targetTrackIds, setTargetTrackIds] = useState<Set<string> | null>(null)
+  // Overlap preview during body-drag (M10 T99). Published by the drag-initiating
+  // TransitionTrack; every TransitionTrack reads this to paint red tint / split
+  // lines on its own transitions when they'd be consumed / trimmed / split.
+  const [overlapPreview, setOverlapPreview] = useState<import('./TransitionTrack').OverlapPreview | null>(null)
+  // Auto-create-track overflow during body-drag (M10 T99). Counts of "New track"
+  // dashed rows to render above / below the existing track stack.
+  const [ghostOverflow, setGhostOverflow] = useState<import('./TransitionTrack').GhostOverflow | null>(null)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
@@ -2327,6 +2334,28 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               )}
             </div>
 
+            {/* Auto-create-track preview — dashed rows ABOVE the existing stack
+                shown while a body-drag pushes some clips past the top track.
+                See TransitionTrack.onGhostOverflowChange / GhostOverflow. */}
+            {ghostOverflow && ghostOverflow.topCount > 0 && (
+              <>
+                {Array.from({ length: ghostOverflow.topCount }).map((_, i) => (
+                  <div
+                    key={`ghost-top-${i}`}
+                    className="relative shrink-0 border border-dashed border-blue-500/40 bg-blue-500/5"
+                    style={{ height: videoTrackHeight }}
+                  >
+                    <div
+                      className="absolute inset-0 flex items-center text-[11px] font-mono text-blue-400/70 pointer-events-none px-3 z-10"
+                      style={{ left: scrollLeft }}
+                    >
+                      + New track
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
             {/* Video tracks */}
             {sortedTracks.map((track, trackIdx) => {
               const tKfs = trackKeyframes.get(track.id) || []
@@ -2421,6 +2450,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       tracks={sortedTracks}
                       trackRowHeight={videoTrackHeight}
                       onTargetTracksChange={setTargetTrackIds}
+                      onOverlapPreviewChange={setOverlapPreview}
+                      onGhostOverflowChange={setGhostOverflow}
+                      overlapPreview={overlapPreview}
                       pxPerSec={pxPerSec}
                       selectedId={selectedTransition?.id ?? null}
                       selectedIds={selectedTransitionIds}
@@ -2439,6 +2471,27 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 </div>
               )
             })}
+
+            {/* Auto-create-track preview — dashed rows BELOW the existing stack
+                shown while a body-drag pushes some clips past the bottom track. */}
+            {ghostOverflow && ghostOverflow.bottomCount > 0 && (
+              <>
+                {Array.from({ length: ghostOverflow.bottomCount }).map((_, i) => (
+                  <div
+                    key={`ghost-bottom-${i}`}
+                    className="relative shrink-0 border border-dashed border-blue-500/40 bg-blue-500/5"
+                    style={{ height: videoTrackHeight }}
+                  >
+                    <div
+                      className="absolute inset-0 flex items-center text-[11px] font-mono text-blue-400/70 pointer-events-none px-3 z-10"
+                      style={{ left: scrollLeft }}
+                    >
+                      + New track
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
 
             {/* Draggable divider */}
             <div

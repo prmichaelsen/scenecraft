@@ -1,9 +1,46 @@
 import { useRef, useState, useCallback, useEffect, useMemo, memo } from 'react'
 import { createPortal } from 'react-dom'
+import { Plus } from 'lucide-react'
 import type { KeyframeWithTime } from './Timeline'
 import type { Transition } from '@/routes/project/$name/editor'
 import { postUpdateTransitionTrim, postClipTrimEdge, postMoveTransitions, type Track } from '@/lib/scenecraft-client'
 import { TransitionFilmstrip } from './TransitionFilmstrip'
+
+/**
+ * OverlapPreview — live, non-destructive preview of what a body-drag would do
+ * to EXISTING transitions on the target track(s).
+ *
+ * Classification mirrors the backend's four overlap cases (see T95):
+ *   A) fully inside drop span      → target is consumed (soft-deleted on commit)
+ *   B) straddles drop's new_from   → target is trimmed; its RIGHT portion (from
+ *                                    boundaryX to target's right edge) would be
+ *                                    consumed. boundaryX = drop's new_from.
+ *   C) straddles drop's new_to     → target is trimmed; its LEFT portion (from
+ *                                    target's left edge to boundaryX) would be
+ *                                    consumed. boundaryX = drop's new_to.
+ *   D) drop lands fully inside the target → the target is split into two pieces
+ *                                    with the dropped clip in the middle. leftX
+ *                                    / rightX are the two split lines.
+ *
+ * All x-coordinates are in timeline pixels (time * pxPerSec), consistent with
+ * how TransitionTrack positions its transition bars.
+ */
+export type OverlapPreview = {
+  consumedIds: string[]
+  trimmedLeftIds: Array<{ id: string; boundaryX: number }>
+  trimmedRightIds: Array<{ id: string; boundaryX: number }>
+  splitInsideIds: Array<{ id: string; leftX: number; rightX: number }>
+}
+
+/**
+ * GhostOverflow — counts of "New track" rows to preview above / below the
+ * existing track stack during a body-drag. Published by the drag-initiating
+ * TransitionTrack so Timeline can render the dashed rows.
+ */
+export type GhostOverflow = {
+  topCount: number
+  bottomCount: number
+}
 
 type TransitionTrackProps = {
   transitions: Transition[]
@@ -22,6 +59,18 @@ type TransitionTrackProps = {
   // Target-track highlight callback — during a body-drag, TransitionTrack reports
   // which track IDs would receive a dropped clip so Timeline can tint those rows.
   onTargetTracksChange?: (ids: Set<string> | null) => void
+  // Per-mousemove overlap preview — the drag-initiating TransitionTrack computes
+  // what would happen to existing transitions on the target track(s) and publishes
+  // it so Timeline can render overlays on every matching TransitionTrack.
+  onOverlapPreviewChange?: (preview: OverlapPreview | null) => void
+  // Auto-create-track overflow — how many "New track" dashed rows to render
+  // above / below the existing stack because trackDelta has pushed some clips
+  // out of the existing track range.
+  onGhostOverflowChange?: (overflow: GhostOverflow | null) => void
+  // Overlap preview passed down from Timeline (same payload as published via
+  // onOverlapPreviewChange). Each TransitionTrack renders the slice that
+  // matches its own `transitions`.
+  overlapPreview?: OverlapPreview | null
   pxPerSec: number
   selectedId: string | null
   duration: number
@@ -78,9 +127,10 @@ type BodyDragState = {
   startY: number
   mode: 'move' | 'copy'
   locked: boolean                   // true once movement threshold crossed
-  numTracks: number                 // for trackDelta clamping
-  minTrackDelta: number             // = -min(sourceTrackIndex) across dragged clips
-  maxTrackDelta: number             // =  (numTracks - 1) - max(sourceTrackIndex)
+  numTracks: number                 // existing track count at drag start — used for overflow detection
+  // Previous-frame memo keys — skip recompute when nothing relevant changed.
+  lastTimeDelta: number
+  lastTrackDelta: number
 }
 
 // Ghost preview position + metadata (state, rendered by React)
@@ -88,11 +138,15 @@ type GhostState = {
   cursorX: number
   cursorY: number
   timeDelta: number                 // clamped so from + delta >= 0
-  trackDelta: number                // clamped to [minTrackDelta, maxTrackDelta]
+  trackDelta: number                // UNCLAMPED — values outside [0, numTracks-1] trigger auto-create preview rows
   mode: 'move' | 'copy'
   clips: DraggedClipInfo[]          // snapshot at drag-start (pinned so ghost doesn't flicker)
   primary: DraggedClipInfo
-  targetTrackName: string           // e.g. "Track 2" — resolved on mousemove
+  targetTrackName: string           // e.g. "Track 2" — resolved on mousemove; "New track" when out of range
+  overflow: GhostOverflow           // # of dashed "new track" rows above / below
+  // Counts for tooltip suffixes — computed from the overlap preview.
+  consumedCount: number
+  splitCount: number                // trimmedLeft + trimmedRight + splitInside
 }
 
 export const TransitionTrack = memo(function TransitionTrack({
@@ -103,6 +157,9 @@ export const TransitionTrack = memo(function TransitionTrack({
   tracks,
   trackRowHeight,
   onTargetTracksChange,
+  onOverlapPreviewChange,
+  onGhostOverflowChange,
+  overlapPreview,
   pxPerSec,
   selectedId,
   onTransitionClick,
@@ -450,12 +507,7 @@ export const TransitionTrack = memo(function TransitionTrack({
       // Guarantee primary is in clips (single-clip drag when not in selection)
       if (!clips.some((c) => c.id === primary.id)) clips.push(primary)
 
-      // trackDelta clamp range derived from the dragged clip with the min/max source index.
       const numTracks = Math.max(1, trackList.length)
-      const minSrcIdx = clips.reduce((m, c) => Math.min(m, c.sourceTrackIndex), Infinity)
-      const maxSrcIdx = clips.reduce((m, c) => Math.max(m, c.sourceTrackIndex), -Infinity)
-      const minTrackDelta = -minSrcIdx
-      const maxTrackDelta = (numTracks - 1) - maxSrcIdx
 
       bodyDragState.current = {
         primaryTrId: tr.id,
@@ -467,8 +519,8 @@ export const TransitionTrack = memo(function TransitionTrack({
         mode,
         locked: false,
         numTracks,
-        minTrackDelta,
-        maxTrackDelta,
+        lastTimeDelta: Number.NaN,
+        lastTrackDelta: Number.NaN,
       }
       didDrag.current = false
 
@@ -491,6 +543,8 @@ export const TransitionTrack = memo(function TransitionTrack({
         setGhost(null)
         document.body.style.cursor = ''
         onTargetTracksChange?.(null)
+        onOverlapPreviewChange?.(null)
+        onGhostOverflowChange?.(null)
         document.removeEventListener('mousemove', onMouseMove)
         document.removeEventListener('mouseup', onMouseUp)
         document.removeEventListener('keydown', onKeyDown)
@@ -524,16 +578,115 @@ export const TransitionTrack = memo(function TransitionTrack({
         return null
       }
 
+      // Unclamped: trackDelta can push clips past the top/bottom of the stack,
+      // which triggers the "New track" auto-create preview rows (T99). The
+      // backend's autoCreateTracks flag makes this just work on commit.
       const computeTrackDelta = (clientX: number, clientY: number): number => {
         const st = bodyDragState.current
         if (!st) return 0
         const hit = hitTestTrackIndex(clientX, clientY)
-        // If cursor isn't over a track row, hold the last value implicit in ghost.
-        // Falling back to 0 would snap the ghost back to origin on stray mouseouts.
-        const target = hit != null ? hit : st.primary.sourceTrackIndex
-        const raw = target - st.primary.sourceTrackIndex
-        // Task 98: clamp to existing range; Task 99 adds auto-create-track preview.
-        return Math.max(st.minTrackDelta, Math.min(st.maxTrackDelta, raw))
+        // If cursor isn't over a track row, clamp to the nearest valid row.
+        // We still want to allow overflow when the cursor IS over a row-adjacent
+        // area above/below the stack — detect via the cursor Y relative to the
+        // track container. For simplicity, when no hit is found we hold the
+        // primary's source track (0 delta).
+        if (hit == null) return 0
+        return hit - st.primary.sourceTrackIndex
+      }
+
+      // Compute the overlap preview + ghost overflow for the current drop params.
+      // Scans allTransitions for items on each target track that overlap a dropped
+      // clip's new [new_from, new_to] span, classifying per the four overlap cases.
+      // Returns null when nothing is worth rendering (no locked drag yet, etc.).
+      const computePreviewAndOverflow = (
+        draggedIdSet: Set<string>,
+        timeDelta: number,
+        trackDelta: number,
+      ): { preview: OverlapPreview; overflow: GhostOverflow } => {
+        const preview: OverlapPreview = {
+          consumedIds: [],
+          trimmedLeftIds: [],
+          trimmedRightIds: [],
+          splitInsideIds: [],
+        }
+        // Overflow — how many rows past the top / bottom of the stack do we need?
+        // Each dragged clip's target row = sourceTrackIndex + trackDelta; if < 0
+        // that's negative overflow (top), if >= numTracks that's positive (bottom).
+        let topOverflow = 0
+        let bottomOverflow = 0
+        for (const c of bodyDragState.current!.clips) {
+          const ti = c.sourceTrackIndex + trackDelta
+          if (ti < 0) topOverflow = Math.max(topOverflow, -ti)
+          else if (ti >= numTracks) bottomOverflow = Math.max(bottomOverflow, ti - numTracks + 1)
+        }
+        const overflow: GhostOverflow = { topCount: topOverflow, bottomCount: bottomOverflow }
+
+        // Build a track-id → all-active-transitions-on-that-track map ONCE per frame,
+        // excluding the dragged clips themselves.
+        const kfTimeById = new Map(allKfs.map((k) => [k.id, k.timeSeconds]))
+        const byTrack = new Map<string, Transition[]>()
+        for (const t of allTrs) {
+          if (draggedIdSet.has(t.id)) continue
+          if (t.hidden) continue
+          const arr = byTrack.get(t.trackId) ?? []
+          arr.push(t)
+          byTrack.set(t.trackId, arr)
+        }
+
+        const EPS = 0.001
+        for (const c of bodyDragState.current!.clips) {
+          const ti = c.sourceTrackIndex + trackDelta
+          // Landing on a new (auto-created) track — no existing trs to overlap with.
+          if (ti < 0 || ti >= numTracks) continue
+          const targetTrack = trackList[ti]
+          if (!targetTrack) continue
+          const newFrom = c.fromTimeSeconds + timeDelta
+          const newTo = c.toTimeSeconds + timeDelta
+          if (newTo <= newFrom) continue
+
+          const existing = byTrack.get(targetTrack.id) ?? []
+          for (const other of existing) {
+            const oFrom = kfTimeById.get(other.from)
+            const oTo = kfTimeById.get(other.to)
+            if (oFrom == null || oTo == null) continue
+            // No overlap
+            if (oTo <= newFrom + EPS || oFrom >= newTo - EPS) continue
+
+            // Case A: target fully inside [newFrom, newTo] → consumed
+            if (oFrom >= newFrom - EPS && oTo <= newTo + EPS) {
+              preview.consumedIds.push(other.id)
+              continue
+            }
+            // Case D: drop fully inside target → two split lines
+            if (newFrom > oFrom + EPS && newTo < oTo - EPS) {
+              preview.splitInsideIds.push({
+                id: other.id,
+                leftX: newFrom * pxPerSec,
+                rightX: newTo * pxPerSec,
+              })
+              continue
+            }
+            // Case B: drop's new_from lands inside target (straddles left edge of drop)
+            //   → target's RIGHT portion (from newFrom to oTo) is consumed
+            if (newFrom > oFrom + EPS && newFrom < oTo - EPS) {
+              preview.trimmedLeftIds.push({
+                id: other.id,
+                boundaryX: newFrom * pxPerSec,
+              })
+              continue
+            }
+            // Case C: drop's new_to lands inside target (straddles right edge of drop)
+            //   → target's LEFT portion (from oFrom to newTo) is consumed
+            if (newTo > oFrom + EPS && newTo < oTo - EPS) {
+              preview.trimmedRightIds.push({
+                id: other.id,
+                boundaryX: newTo * pxPerSec,
+              })
+              continue
+            }
+          }
+        }
+        return { preview, overflow }
       }
 
       const onMouseMove = (ev: MouseEvent) => {
@@ -550,18 +703,49 @@ export const TransitionTrack = memo(function TransitionTrack({
         const timeDelta = computeTimeDelta(ev.clientX)
         const trackDelta = computeTrackDelta(ev.clientX, ev.clientY)
         const targetTrackIdx = st.primary.sourceTrackIndex + trackDelta
-        const targetTrackName = trackList[targetTrackIdx]?.name || `Track ${targetTrackIdx + 1}`
+        const targetTrackName =
+          targetTrackIdx < 0 || targetTrackIdx >= numTracks
+            ? 'New track'
+            : trackList[targetTrackIdx]?.name || `Track ${targetTrackIdx + 1}`
 
-        // Publish target-track set for Timeline to tint. Each clip's landing track
-        // = sourceTrackIndex + trackDelta.
+        // Publish target-track set for Timeline to tint. Only trs landing on an
+        // EXISTING track count for tinting; new-track-overflow clips tint nothing
+        // (the dashed rows convey their own affordance).
         if (onTargetTracksChange) {
           const targetIds = new Set<string>()
           for (const c of st.clips) {
             const ti = c.sourceTrackIndex + trackDelta
+            if (ti < 0 || ti >= numTracks) continue
             const id = trackList[ti]?.id
             if (id) targetIds.add(id)
           }
           onTargetTracksChange(targetIds)
+        }
+
+        // Memoized overlap + overflow compute — only runs when drop params change.
+        const draggedIdSet = new Set(st.draggedIds)
+        const changed = timeDelta !== st.lastTimeDelta || trackDelta !== st.lastTrackDelta
+        let consumedCount = 0
+        let splitCount = 0
+        let overflow: GhostOverflow = { topCount: 0, bottomCount: 0 }
+        if (changed) {
+          st.lastTimeDelta = timeDelta
+          st.lastTrackDelta = trackDelta
+          const { preview, overflow: ov } = computePreviewAndOverflow(draggedIdSet, timeDelta, trackDelta)
+          overflow = ov
+          consumedCount = preview.consumedIds.length
+          splitCount = preview.trimmedLeftIds.length + preview.trimmedRightIds.length + preview.splitInsideIds.length
+          onOverlapPreviewChange?.(preview)
+          onGhostOverflowChange?.(overflow)
+        } else {
+          // Reuse last computed counts — cheap: re-derive from lastGhostRef so
+          // the tooltip counts stay stable across pure mouse-jitter frames.
+          const last = lastGhostRef.current
+          if (last) {
+            consumedCount = last.consumedCount
+            splitCount = last.splitCount
+            overflow = last.overflow
+          }
         }
 
         commitGhost({
@@ -573,6 +757,9 @@ export const TransitionTrack = memo(function TransitionTrack({
           clips: st.clips,
           primary: st.primary,
           targetTrackName,
+          overflow,
+          consumedCount,
+          splitCount,
         })
       }
 
@@ -637,7 +824,7 @@ export const TransitionTrack = memo(function TransitionTrack({
       document.addEventListener('mouseup', onMouseUp)
       document.addEventListener('keydown', onKeyDown)
     },
-    [pxPerSec, projectName, onTrimChange, selectedIds, tracks, allTransitions, allKeyframes, transitions, keyframes, onTargetTracksChange],
+    [pxPerSec, projectName, onTrimChange, selectedIds, tracks, allTransitions, allKeyframes, transitions, keyframes, onTargetTracksChange, onOverlapPreviewChange, onGhostOverflowChange],
   )
 
   // Safety: release document-level cursor override if the component unmounts mid-drag.
@@ -790,6 +977,65 @@ export const TransitionTrack = memo(function TransitionTrack({
               )}
             </div>
 
+            {/* Overlap preview overlays — rendered during a body-drag to show what
+                would happen to THIS transition if the drop committed. All are
+                pointer-events-none so they don't interfere with trim/click handlers.
+                Coordinates in overlapPreview are absolute timeline px (time * pxPerSec);
+                we subtract this wrapper's `x` to translate into local coords. */}
+            {overlapPreview && (() => {
+              if (overlapPreview.consumedIds.includes(tr.id)) {
+                // Case A: fully consumed — red tint over the whole bar
+                return (
+                  <div
+                    className="absolute bottom-0 left-0 right-0 h-3 rounded-t-sm bg-red-500/25 ring-1 ring-red-500/60 pointer-events-none z-30"
+                  />
+                )
+              }
+              const trimLeft = overlapPreview.trimmedLeftIds.find((e) => e.id === tr.id)
+              if (trimLeft) {
+                // Case B: drop's new_from falls inside this tr → right portion
+                // from boundaryX to tr's right edge is consumed.
+                const localLeft = Math.max(0, trimLeft.boundaryX - x)
+                return (
+                  <div
+                    className="absolute bottom-0 h-3 rounded-tr-sm bg-red-500/25 ring-1 ring-red-500/60 pointer-events-none z-30"
+                    style={{ left: localLeft, right: 0 }}
+                  />
+                )
+              }
+              const trimRight = overlapPreview.trimmedRightIds.find((e) => e.id === tr.id)
+              if (trimRight) {
+                // Case C: drop's new_to falls inside this tr → left portion
+                // from tr's left edge to boundaryX is consumed.
+                const localRight = Math.max(0, trimRight.boundaryX - x)
+                return (
+                  <div
+                    className="absolute bottom-0 left-0 h-3 rounded-tl-sm bg-red-500/25 ring-1 ring-red-500/60 pointer-events-none z-30"
+                    style={{ width: localRight }}
+                  />
+                )
+              }
+              const splitInside = overlapPreview.splitInsideIds.find((e) => e.id === tr.id)
+              if (splitInside) {
+                // Case D: drop lands fully inside this tr → two split lines.
+                const localL = splitInside.leftX - x
+                const localR = splitInside.rightX - x
+                return (
+                  <>
+                    <div
+                      className="absolute bottom-0 h-3 w-0.5 bg-blue-400 shadow-[0_0_4px_rgba(96,165,250,0.8)] pointer-events-none z-30"
+                      style={{ left: localL }}
+                    />
+                    <div
+                      className="absolute bottom-0 h-3 w-0.5 bg-blue-400 shadow-[0_0_4px_rgba(96,165,250,0.8)] pointer-events-none z-30"
+                      style={{ left: localR }}
+                    />
+                  </>
+                )
+              }
+              return null
+            })()}
+
             {/* Boundary zone handles — siblings of the bar so they span the full track height.
                 Invisible by default; tint + glyph appear on hover. These stopPropagation
                 in handleBoundaryDown so the body-drag onMouseDown above doesn't fire. */}
@@ -851,7 +1097,8 @@ export const TransitionTrack = memo(function TransitionTrack({
           Multi-clip ghosts are composited relative to the primary clip's ghost: each rect is
           offset by (clip.fromTime - primary.fromTime) * pxPerSec horizontally and
           (clip.sourceTrackIndex - primary.sourceTrackIndex) * trackRowHeight vertically, plus
-          a shared trackDelta * trackRowHeight vertical shift for the cross-track portion. */}
+          a shared trackDelta * trackRowHeight vertical shift for the cross-track portion.
+          Copy mode (Cmd/Ctrl at mousedown) renders a green tint + a `+` badge on the primary. */}
       {ghost && typeof document !== 'undefined' && createPortal(
         (() => {
           const rowHeight = trackRowHeight ?? 96
@@ -869,8 +1116,20 @@ export const TransitionTrack = memo(function TransitionTrack({
             const secs = safe - m * 60
             return `${m}:${secs.toFixed(2).padStart(5, '0')}`
           }
-          const deltaLabel = `Δ${ghost.timeDelta >= 0 ? '+' : ''}${ghost.timeDelta.toFixed(2)}s`
-          const nClipsSuffix = ghost.clips.length > 1 ? ` · ${ghost.clips.length} clips` : ''
+          const isCopy = ghost.mode === 'copy'
+          const deltaLabel = `${isCopy ? '📋 ' : ''}Δ${ghost.timeDelta >= 0 ? '+' : ''}${ghost.timeDelta.toFixed(2)}s`
+          const nClips = ghost.clips.length
+          // Pluralized clip/copy label — "3 clips" for move, "+3 copies" (or "+1 copy") for copy mode.
+          let clipsSuffix = ''
+          if (isCopy) clipsSuffix = ` · +${nClips} ${nClips === 1 ? 'copy' : 'copies'}`
+          else if (nClips > 1) clipsSuffix = ` · ${nClips} clips`
+          const consumedSuffix = ghost.consumedCount > 0 ? ` · ${ghost.consumedCount} consumed` : ''
+          const splitSuffix = ghost.splitCount > 0 ? ` · ${ghost.splitCount} split` : ''
+          const newTracks = ghost.overflow.topCount + ghost.overflow.bottomCount
+          const newTracksSuffix = newTracks > 0 ? ` · +${newTracks} new track${newTracks > 1 ? 's' : ''}` : ''
+          const primaryBase = isCopy
+            ? 'bg-green-500/30 border-green-500'
+            : 'bg-orange-500/30 border-orange-500'
           return (
             <>
               {ghost.clips.map((c) => {
@@ -880,11 +1139,7 @@ export const TransitionTrack = memo(function TransitionTrack({
                 return (
                   <div
                     key={c.id}
-                    className={`pointer-events-none fixed z-50 rounded-t-sm border ${
-                      ghost.mode === 'copy'
-                        ? 'bg-green-500/30 border-green-500'
-                        : 'bg-orange-500/30 border-orange-500'
-                    } ${isPrimary ? 'ring-1 ring-white/40' : ''}`}
+                    className={`pointer-events-none fixed z-50 rounded-t-sm border ${primaryBase} ${isPrimary ? 'ring-1 ring-white/40' : ''}`}
                     style={{
                       left: originX + offsetX,
                       top: originY + offsetY,
@@ -892,7 +1147,17 @@ export const TransitionTrack = memo(function TransitionTrack({
                       height: 12,
                       opacity: 0.5,
                     }}
-                  />
+                  >
+                    {/* Copy-mode + badge — only on the primary ghost, top-left corner */}
+                    {isPrimary && isCopy && (
+                      <div
+                        className="absolute flex items-center justify-center rounded-full bg-green-500 text-white shadow-[0_0_4px_rgba(34,197,94,0.8)]"
+                        style={{ left: -6, top: -6, width: 16, height: 16 }}
+                      >
+                        <Plus size={12} strokeWidth={3} />
+                      </div>
+                    )}
+                  </div>
                 )
               })}
               {/* Tooltip — top-left corner of primary ghost, offset (8, -20) so it sits above */}
@@ -900,7 +1165,7 @@ export const TransitionTrack = memo(function TransitionTrack({
                 className="pointer-events-none fixed z-50 bg-gray-900 text-xs text-white font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap border border-gray-700"
                 style={{ left: originX + 8, top: originY - 20 }}
               >
-                {fmt(startT)} → {fmt(endT)} · {ghost.targetTrackName} · {deltaLabel}{nClipsSuffix}
+                {fmt(startT)} → {fmt(endT)} · {ghost.targetTrackName} · {deltaLabel}{clipsSuffix}{consumedSuffix}{splitSuffix}{newTracksSuffix}
               </div>
             </>
           )

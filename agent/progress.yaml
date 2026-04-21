@@ -790,12 +790,12 @@ milestones:
 
   - id: milestone_10
     name: Clip Move — Drag and Drop Across Tracks
-    status: in_progress
+    status: completed
     started: 2026-04-21
-    completed: null
+    completed: 2026-04-21
     file: agent/milestones/milestone-10-clip-move-cross-track.md
     tasks_total: 7
-    tasks_completed: 1
+    tasks_completed: 7
     estimated_weeks: 3
     tasks:
       - id: task-93
@@ -816,36 +816,41 @@ milestones:
         actual_hours: 1.5
       - id: task-95
         name: Backend overlap resolution
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T06:00:00Z
+        completed_date: 2026-04-21T13:10:00Z
         file: agent/tasks/milestone-10-clip-move-cross-track/task-95-backend-overlap-resolution.md
         estimated_hours: 7
-        actual_hours: null
+        actual_hours: 7.0
       - id: task-96
         name: Backend copy mode
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T13:10:00Z
+        completed_date: 2026-04-21T13:40:00Z
         file: agent/tasks/milestone-10-clip-move-cross-track/task-96-backend-copy-mode.md
         estimated_hours: 4
-        actual_hours: null
+        actual_hours: 0.5
       - id: task-97
         name: Frontend body-drag gesture + ghost preview (same-track, single-clip)
-        status: in_progress
+        status: completed
         started: 2026-04-21T01:00:00Z
+        completed_date: 2026-04-21T06:00:00Z
         file: agent/tasks/milestone-10-clip-move-cross-track/task-97-frontend-body-drag.md
         estimated_hours: 6
-        actual_hours: null
+        actual_hours: 5.0
       - id: task-98
         name: Frontend cross-track + multi-clip + multi-track source
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T06:00:00Z
+        completed_date: 2026-04-21T13:10:00Z
         file: agent/tasks/milestone-10-clip-move-cross-track/task-98-frontend-cross-track-multi-clip.md
         estimated_hours: 6
-        actual_hours: null
+        actual_hours: 7.0
       - id: task-99
         name: Frontend overlap preview + auto-create-track rows + copy-mode visuals
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T13:10:00Z
+        completed_date: 2026-04-21T14:40:00Z
         file: agent/tasks/milestone-10-clip-move-cross-track/task-99-frontend-overlap-preview-and-copy.md
         estimated_hours: 7
         actual_hours: null
