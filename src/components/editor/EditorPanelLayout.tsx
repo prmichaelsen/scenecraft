@@ -22,6 +22,7 @@ import { ChatPanel } from './ChatPanel'
 import { MCPPanel } from './MCPPanel'
 import { AudioPropertiesPanel } from './AudioPropertiesPanel'
 import { saveWorkspaceView } from '@/lib/workspace-client'
+import { ContextMenuProvider } from '@/contexts/ContextMenuContext'
 
 // --- Panel wrapper ---
 
@@ -351,6 +352,7 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
     <CurrentTimeProvider>
     <PreviewProvider>
     <EditorStateProvider>
+    <ContextMenuProvider>
       <AutoActivatePropertiesEffect panelLayoutRef={panelLayoutRef} />
       <PanelLayout
         ref={panelLayoutRef}
@@ -359,6 +361,7 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
         defaultLayout={initialLayout}
         onLayoutChange={handleLayoutChange}
       />
+    </ContextMenuProvider>
     </EditorStateProvider>
     </PreviewProvider>
     </CurrentTimeProvider>
