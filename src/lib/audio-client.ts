@@ -39,6 +39,13 @@ export type AudioClip = {
    * Computed server-side; equals `source_offset` for unlinked clips.
    */
   effective_source_offset?: number
+  /**
+   * Transition id this clip is linked to via `audio_clip_links`, or null
+   * for standalone clips. Computed server-side. Used by cross-type drag
+   * so a linked clip isn't double-shifted when its transition is moved:
+   * propagation in `update_keyframe` handles the linked-audio shift.
+   */
+  linked_transition_id?: string | null
 }
 
 export type AudioClipLink = {
@@ -109,4 +116,32 @@ export async function postUpdateAudioTrack(project: string, trackId: string, upd
     body: JSON.stringify({ id: trackId, ...update }),
   })
   if (!res.ok) throw new Error(`audio-tracks/update failed: ${res.status}`)
+}
+
+/**
+ * Auto-detect time offset between audio clips via waveform cross-correlation.
+ * Returns signed seconds per non-anchor clip: positive = clip should shift
+ * later; negative = clip should shift earlier, so its waveform aligns with
+ * the anchor's waveform.
+ *
+ * Backend not yet implemented; caller should handle non-2xx as "auto-detect
+ * unavailable" and fall back to manual offsets.
+ */
+export type AlignWaveformsResult = {
+  anchorClipId: string
+  offsets: Record<string, number>       // clipId -> signed-seconds shift
+  confidence: Record<string, number>    // clipId -> 0..1 score
+}
+
+export async function postDetectAudioAlignment(
+  project: string,
+  opts: { anchorClipId: string; clipIds: string[] },
+): Promise<AlignWaveformsResult> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-clips/align-detect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) throw new Error(`audio-clips/align-detect failed: ${res.status}`)
+  return res.json()
 }

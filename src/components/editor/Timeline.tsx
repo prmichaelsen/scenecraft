@@ -861,6 +861,39 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     })
   }, [closeAllPanels])
 
+  /**
+   * After an M10 transition body-drag commits, carry selected audio clips
+   * along by the same timeDelta. Clips linked to a transition that was in
+   * the drag set are SKIPPED — the backend's update_keyframe propagation
+   * (Task 85) already shifts those linked clips, so a manual move would
+   * double-shift.
+   */
+  const handleTrDragCarryAudio = useCallback(async ({ timeDelta, draggedTransitionIds }: { timeDelta: number; trackDelta: number; draggedTransitionIds: string[] }) => {
+    if (selectedAudioClipIds.size === 0 || Math.abs(timeDelta) < 0.001) return
+    const draggedTrSet = new Set(draggedTransitionIds)
+    const clipsToShift: Array<{ id: string; start: number; end: number }> = []
+    for (const track of (localAudioTracks ?? [])) {
+      for (const c of (track.clips ?? [])) {
+        if (!selectedAudioClipIds.has(c.id)) continue
+        // Skip clips whose linked transition is in the drag — propagation handles them.
+        if (c.linked_transition_id && draggedTrSet.has(c.linked_transition_id)) continue
+        clipsToShift.push({ id: c.id, start: c.start_time, end: c.end_time })
+      }
+    }
+    if (clipsToShift.length === 0) return
+    try {
+      const { postUpdateAudioClip } = await import('@/lib/audio-client')
+      await Promise.all(clipsToShift.map((c) =>
+        postUpdateAudioClip(data.projectName, c.id, {
+          startTime: Math.max(0, c.start + timeDelta),
+          endTime: Math.max(0.001, c.end + timeDelta),
+        })
+      ))
+    } catch (err) {
+      console.error('TrDrag carry-audio failed:', err)
+    }
+  }, [selectedAudioClipIds, localAudioTracks, data.projectName])
+
   const handleAudioClipMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, e: React.MouseEvent) => {
     // Only left-click on the block body. Shift-click is for selection (the
     // synthetic click event after mousedown will be handled by onClipClick
@@ -2285,6 +2318,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       onRetryRender={handleRetryRender}
                       onDropVideo={handleDropVideoOnTransition}
                       onTrimChange={refreshTimeline}
+                      onAfterBodyDrag={handleTrDragCarryAudio}
                       renderProgress={renderProgress}
                       scrollLeft={scrollLeft}
                       viewportWidth={viewportWidth}

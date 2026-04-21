@@ -81,6 +81,14 @@ type TransitionTrackProps = {
   onBoundaryDragEnd?: (keyframeId: string, newTimeSeconds: number) => void
   onRemapChange?: (transitionId: string, targetDuration: number) => void
   onTrimChange?: () => void  // called after a trim drag persists so parent can refresh
+  /**
+   * Fires after a successful body-drag commit (M10). Timeline uses it to
+   * carry selected audio clips along with the dragged transitions by the
+   * same timeDelta. `draggedTransitionIds` lets the caller skip clips that
+   * are linked to one of these transitions — propagation via `update_keyframe`
+   * already shifts linked-audio clips, so a manual shift would double-move.
+   */
+  onAfterBodyDrag?: (opts: { timeDelta: number; trackDelta: number; draggedTransitionIds: string[] }) => void
   onRetryRender?: (tr: Transition) => void
   onDropVideo?: (transitionId: string, poolPath: string, sourceTransitionId?: string) => void
   renderProgress?: Record<string, number>
@@ -168,6 +176,7 @@ export const TransitionTrack = memo(function TransitionTrack({
   onBoundaryDragEnd: _onBoundaryDragEnd,
   onRemapChange: _onRemapChange,
   onTrimChange,
+  onAfterBodyDrag,
   onRetryRender,
   onDropVideo,
   renderProgress,
@@ -804,6 +813,10 @@ export const TransitionTrack = memo(function TransitionTrack({
             transitionIds: draggedIds,
             autoCreateTracks: true,
           })
+          // Give the parent a chance to move selected audio clips by the
+          // same timeDelta BEFORE refreshing. Linked clips auto-shift via
+          // update_keyframe propagation; the callback filters those out.
+          onAfterBodyDrag?.({ timeDelta, trackDelta, draggedTransitionIds: draggedIds })
           onTrimChange?.()
         } catch (err) {
           console.error('[TransitionTrack] postMoveTransitions failed:', err)
