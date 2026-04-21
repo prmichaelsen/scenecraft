@@ -8,7 +8,9 @@
 
 ## Overview
 
-The **Audio Sync** tab on `TransitionPanel` produces lipsync variants of transition candidates. A user picks a source candidate (v1, v2, v3…), an ElevenLabs voice, and a script; sync.so renders a new video with the subject's mouth matching the synthesized speech. The output is another candidate — same `pool_segments` row, same `tr_candidates` junction — distinguished by a parent link (`derived_from`) back to the source candidate and a `variant_kind='lipsync'` tag.
+The **Audio Sync** tab on `TransitionPanel` produces lipsync variants of transition candidates. A user picks a source candidate (v1, v2, v3…), an ElevenLabs voice, and **either a written script (text-to-speech) or a source audio clip (speech-to-speech)**; sync.so renders a new video with the subject's mouth matching the synthesized speech. The output is another candidate — same `pool_segments` row, same `tr_candidates` junction — distinguished by a parent link (`derived_from`) back to the source candidate and a `variant_kind='lipsync'` tag.
+
+The **Candidates tab** filters to `variant_kind IS NULL` — lipsync variants live exclusively in the Audio Sync tab so the raw-take view stays clean.
 
 This design narrows the lipsync mechanism from `local.characters-and-lipsync.md` (which defines the broader character-entity + multi-speaker S2S pipeline). The character model and multi-speaker work from that doc remain valid — this one specifies the concrete data shape and UX for attaching a single lipsync variant to a single source candidate.
 
@@ -39,7 +41,7 @@ Lipsyncs are ordinary `pool_segments` rows with a `tr_candidates` junction row o
 
 New **Audio Sync** tab on `TransitionPanel`, layout mirrors the Candidates tab:
 
-- **Inline generate form at top**: source candidate picker, ElevenLabs voice, script textarea, options
+- **Inline generate form at top**: source candidate picker, audio-mode toggle (**Script → TTS** / **Audio → S2S**), ElevenLabs voice, a script textarea **or** an audio input (depending on mode), options
 - **Grid below** — each lipsync-take card shows:
   - Lipsynced video thumbnail
   - `from v{d}` chip — rank of the source candidate within the transition, live-computed from `added_at ASC`
@@ -52,12 +54,16 @@ New **Audio Sync** tab on `TransitionPanel`, layout mirrors the Candidates tab:
 
 ### Backend flow
 
-1. `POST /api/projects/:name/transitions/:tr_id/lipsync` with `{ source_pool_segment_id, voice_id, script, options }`
+1. `POST /api/projects/:name/transitions/:tr_id/lipsync` with body shape depending on mode:
+   - **TTS**: `{ source_pool_segment_id, voice_id, script, mode: 'tts', options }`
+   - **S2S**: `{ source_pool_segment_id, voice_id, source_audio_ref, mode: 's2s', options }` — `source_audio_ref` is either a multipart upload or a pool_segment_id of a pre-existing audio asset
 2. Read source video from `pool/segments/cand_<source>.mp4`
-3. Multipart `POST https://api.sync.so/v2/generate` with `model=lipsync-2`, video file, `input=[{"type":"text","provider":{"name":"elevenlabs","voiceId":..., "script":...}}]`, `options={"sync_mode":"cut_off"}`
+3. Assemble the sync.so request based on mode:
+   - **TTS**: multipart `POST https://api.sync.so/v2/generate` with `model=lipsync-2`, video file, `input=[{"type":"text","provider":{"name":"elevenlabs","voiceId":..., "script":...}}]`, `options={"sync_mode":"cut_off"}`
+   - **S2S**: server runs ElevenLabs Speech-to-Speech on the source audio with the target `voice_id`, then POSTs to sync.so with `input=[{"type":"audio","url":<s2s_output_url>}]` (or inline audio upload). If/when sync.so's ElevenLabs provider supports native S2S via an audio field, this collapses to a single multipart request — worth checking at implementation time.
 4. Poll `/v2/generate/{job_id}` every 5s via the existing job manager (WS progress events streamed on `/ws/jobs`); on `COMPLETED`, download `outputUrl`
 5. Write to `pool/segments/cand_<new_uuid>.mp4`
-6. Insert `pool_segments` row with `kind='generated'`, `variant_kind='lipsync'`, `derived_from=<source>`, `generation_params={ provider:'sync.so', model:'lipsync-2', voiceId, script }`
+6. Insert `pool_segments` row with `kind='generated'`, `variant_kind='lipsync'`, `derived_from=<source>`, `generation_params={ provider:'sync.so', model:'lipsync-2', mode, voiceId, script? | sourceAudioRef? }`
 7. Insert `tr_candidates` row on the same transition/slot with `source='generated'`
 8. Broadcast `job_completed` WS event → frontend invalidates the transitions query → new card appears in the grid
 
@@ -85,16 +91,26 @@ CREATE INDEX idx_pool_segments_derived_from
 
 ```
 POST /api/projects/:name/transitions/:tr_id/lipsync
-  body: {
-    source_pool_segment_id: string
-    voice_id: string
-    script: string
-    options?: { sync_mode?: 'cut_off' | 'loop' | 'bounce', slot?: number }
-  }
+  body (TTS mode):
+    {
+      source_pool_segment_id: string
+      mode: 'tts'
+      voice_id: string
+      script: string
+      options?: { sync_mode?: 'cut_off' | 'loop' | 'bounce', slot?: number }
+    }
+  body (S2S mode):
+    {
+      source_pool_segment_id: string
+      mode: 's2s'
+      voice_id: string
+      source_audio_ref: string    // pool_segment_id OR multipart upload handle
+      options?: { sync_mode?: 'cut_off' | 'loop' | 'bounce', slot?: number }
+    }
   returns: { jobId: string }
 
 WS /ws/jobs:
-  job_progress:  { jobId, phase: 'uploading'|'processing'|'downloading', pct: number }
+  job_progress:  { jobId, phase: 'uploading'|'s2s'|'processing'|'downloading', pct: number }
   job_completed: { jobId, result: { transitionId, poolSegmentId, derivedFrom, slot } }
 
 GET /api/projects/:name/transitions/:tr_id
@@ -105,7 +121,8 @@ GET /api/projects/:name/transitions/:tr_id
 ### Frontend changes
 
 - `CandidateDetail` gains `derivedFrom: string | null` and `variantKind: string | null`
-- New `AudioSyncTab.tsx` — inline form + grid, reuses `LazyVideoCard` with added `derivedFromLabel` prop and `onChipHover` / `onCardHover` handlers that push a `previewSourceOverride` ref
+- **Candidates tab filters to `variantKind == null`** — raw takes only; variants are scoped to the Audio Sync tab
+- New `AudioSyncTab.tsx` — inline form + grid, reuses `LazyVideoCard` with added `derivedFromLabel` prop and `onChipHover` / `onCardHover` handlers that push a `previewSourceOverride` ref. Form has a mode toggle (Script/Audio) that swaps the script textarea for an audio input (file picker / pool-audio picker)
 - `TransitionPanel.tsx` gets a new tab slot between `candidates` and `browse`: `details · candidates · audio-sync · browse · bench`
 - Render preview panel reads `previewSourceOverride` when set and falls back to the playhead source otherwise; hover handlers push/pop the override
 
@@ -127,8 +144,8 @@ MVP fetches `GET https://api.elevenlabs.io/v1/voices` client-side using a key fr
 
 ## Trade-offs
 
-- **Single-speaker only (MVP)**: The native ElevenLabs-in-sync.so flow applies one voice to the whole video. Multi-speaker scenes still need the M8 diarization + S2S approach — this is a follow-on, not in scope here.
-- **Candidates tab gets denser**: raw + variant takes both land in `tr_candidates`. The Audio Sync tab isolates variants visually, but the Candidates tab will list everything unless filtered by `variant_kind IS NULL`.
+- **Single-speaker only (MVP)**: One voice applies to the whole video. Multi-speaker scenes still need the M8 diarization + per-segment S2S approach — a follow-on, not in scope here.
+- **Filtered Candidates tab**: the Candidates tab filter (`variant_kind IS NULL`) means any future tool that wants a cross-variant view of candidates must query `pool_segments` directly or opt out of the filter.
 - **VCS implications**: the `pool_segments` row-level diff path sees two new columns. Backfill fills them with `NULL`. Because `pool_segments` is append-only and source candidates are never deleted, `derived_from` conflicts are not possible in practice.
 
 ---
@@ -171,7 +188,8 @@ No data migration — `derived_from` and `variant_kind` default to `NULL` for al
 |---|---|---|
 | Lipsync data shape | Candidate variant via `pool_segments.derived_from` + `variant_kind` | Honors the candidate pattern; minimal schema delta; extensible to other transforms |
 | Selection model | Unchanged — `transitions.selected[slot] = pool_segment_id` | Raw and variants share one selection mechanism |
-| TTS + lipsync integration | sync.so native ElevenLabs provider (single round trip) | Prototype proved end-to-end; avoids WhisperX/S2S pipeline for single-speaker MVP |
+| TTS + lipsync integration | sync.so native ElevenLabs provider (single round trip) | Prototype proved end-to-end; avoids WhisperX/segment-stitching pipeline for single-speaker MVP |
+| S2S support | Backend runs ElevenLabs S2S, passes resulting audio to sync.so (one extra hop) | Users may want to drive lipsync from existing audio (takes, references) rather than a typed script |
 | Stale-lipsync handling | Not needed | pool_segments are append-only; source candidates are never deleted — the concern doesn't arise |
 
 ### UX
@@ -179,9 +197,11 @@ No data migration — `derived_from` and `variant_kind` default to `NULL` for al
 | Decision | Choice | Rationale |
 |---|---|---|
 | Tab name | "Audio Sync" (not "Lip-Sync") | Leaves room for future audio-driven ops without a rename |
+| Candidates tab filter | `variant_kind IS NULL` — raws only | Variants have their own tab; keeps the raw-take view uncluttered |
+| Input modes | Script (TTS) and Audio (S2S), toggle in the form | sync.so supports both; users want the choice |
 | Generate entry point | Inside the Audio Sync tab (inline form) | Scopes the workflow; consistent with Candidates tab rhythm |
 | Layout | Inline form at top + grid below (mirrors Candidates tab) | Makes Resync-with-edits a natural flow |
-| Resync button | One-click identical re-run (same source/voice/script → new take) | sync.so isn't deterministic; Generate form already covers edit-and-rerun |
+| Resync button | One-click identical re-run (same source/voice + same script-or-audio → new take) | sync.so isn't deterministic; Generate form already covers edit-and-rerun |
 | Auto-select on completion | No — new take appears in grid, user must click to promote | Don't silently mutate what plays in the timeline |
 | Hover behavior | Chip → raw plays; card → synced plays; release → playhead frame | Preview has one default (playhead); hover is transient override |
 | `from v{d}` label | Live-computed from `added_at ASC` rank of source | Candidates never deleted, so rank is stable — but compute live, don't store |
