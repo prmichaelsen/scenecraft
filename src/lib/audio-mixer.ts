@@ -95,7 +95,10 @@ const DEFAULT_AUDIO_CTX_FACTORY = (): AudioContext =>
 
 const DEFAULT_AUDIO_ELEMENT_FACTORY = (): HTMLAudioElement => {
   const el = document.createElement('audio')
-  el.preload = 'auto'
+  // 'metadata' fetches just enough to know duration/dimensions — avoids
+  // parallel full-file downloads across many clips. The element upgrades
+  // to streaming playback on .play() anyway.
+  el.preload = 'metadata'
   el.crossOrigin = 'anonymous'
   return el
 }
