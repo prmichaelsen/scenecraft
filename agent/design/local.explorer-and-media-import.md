@@ -78,25 +78,27 @@ Expanded column width target: ~275 px.
 - `Shift+F` global handler: if not in Focus Mode, snapshot the layout into an in-memory `focusSnapshot`, then set `collapsed: true` on every non-primary group. On next press, restore from snapshot.
 - `focusSnapshot` is ephemeral (NOT persisted in workspace view).
 - `primary` IS persisted in workspace view.
-- UI for toggling `primary`: right-click on a group's tab-bar → "Mark as Primary" (reuses the existing menu primitive in `PanelGroup.tsx`).
+- UI for toggling `primary`: the existing **ellipsis (⋮) menu** on each panel-group header (`PanelGroup.tsx:230-269`) gains a new item — **"Mark as Primary"** / **"Unmark as Primary"** depending on the current state. Placed below the existing "Add Panel" section and above "Close Group", separated by a divider. Checkmark or filled-vs-outline state indicator optional.
 
 ### Project view (top panel)
 
 Renders the real on-disk contents of the project directory (`project_dir` from the router context), using a tree component with collapsible folders (VSCode-style). Fetches children via `GET /api/projects/:name/tree?path=<relative>`.
 
-**Default hidden filters** (shrunk after confirming what a project dir actually contains):
+**Always-hidden filters** (no user toggle — these never appear in the Project view):
 - `project.db-wal`, `project.db-shm` — SQLite sidecars; noise
 - `.DS_Store`, `Thumbs.db` — OS cruft
-- `transaction_snapshots/` — checkpoint dir; hidden by default, toggled via "Show backups"
+- `transaction_snapshots/` — checkpoint/backup dir; surfaced instead via the future **Branch Explorer** panel (see Future Considerations), not the Project view
 
 Filters NOT applied (none of these exist in a scenecraft project dir): `.git/`, `.scenecraft_work/`, `__pycache__/`, `node_modules/`.
+
+There is **no "Show backups" / "Show hidden" toggle** in the Project view. Users who want to inspect checkpoint state use the Branch Explorer surface (dedicated panel, deferred).
 
 **Row actions** (right-click opens a custom in-app menu; browser's native context menu is replaced via `contextmenu` event + `preventDefault()`):
 - Copy absolute path
 - Copy relative path
 - Open in Preview panel (media files → double-click default)
 - Rename (calls `PATCH /api/projects/:name/path`)
-- Remove from project (hard delete on the server; not bin)
+- Remove from project (hard-delete the pool copy on the server; **source file is NOT touched**). If the file is a pool-linked entry, this drops the corresponding `pool_segments` row AND unlinks its `source_locations` rows, but the bytes in the original source location (watched folder, or the user's local machine for uploaded files) are left intact. Not sent to the bin.
 
 **Removed from original proposal** (due to remote-browser): "Reveal in system file manager" — server-side reveal is unreachable from the user's machine.
 
@@ -116,12 +118,12 @@ Flat tree with top-level roots — one per watched folder, plus one synthetic `"
 No per-file status badges — the panel shows what's there; reconciliation is internal.
 
 **Header action**: "Link Media" button (Link2 icon + text) opens a small menu:
-- **Add file(s) to import** → native `<input type=file multiple>` picker. Bytes upload to `/api/projects/:name/pool/upload`; server writes into `pool/segments/`; a new `source_locations` row records `source_kind='upload'` + `source_ref=<user-side filename string>`.
+- **Add file(s) to import** → native `<input type=file multiple accept="video/*,image/*,audio/*">` picker. Accepts **video, image, AND audio** files — the upload pipeline treats all three uniformly; server classifies each upload by `media_kind` and writes into a flat `pool/<uuid>.<ext>`. A new `source_locations` row records `source_kind='upload'` + `source_ref=<user-side filename string>` per file.
 - **Add folder to watch** → opens the in-app filesystem browser modal (see _Filesystem browser modal_ below). User picks a server path; server registers it as a watched root.
 
 **Row context menus**:
 - On a watched folder: _Unwatch (keep pool rows)_, _Unwatch and remove pool rows_.
-- On an imported file: _Drag to timeline_, _Remove from pool_.
+- On an imported file: _Drag to timeline_, _Remove from pool_ — hard-deletes the pool copy on the server and drops the `pool_segments` row + `source_locations` rows; **the original source file on disk (watched folder) or in the user's browser-local filesystem (upload) is untouched**. The same file can be re-ingested later from that source.
 - No "Refresh" action — watched folders are always-live (see _Watched folders_ below).
 - No "Reveal in file manager" — server-side.
 
@@ -169,8 +171,25 @@ A second tab on the same `GroupNode` as the Preview panel, named **Source Monito
 ```sql
 ALTER TABLE pool_segments ADD COLUMN source_hash TEXT;
 ALTER TABLE pool_segments ADD COLUMN source_size INTEGER;
+ALTER TABLE pool_segments ADD COLUMN media_kind TEXT;     -- 'video' | 'image' | 'audio'
 CREATE INDEX idx_pool_segments_source_hash ON pool_segments(source_hash);
+CREATE INDEX idx_pool_segments_media_kind ON pool_segments(media_kind);
 ```
+
+`media_kind` is populated on ingest by the file-type classifier (`mimetypes.guess_type` + ffprobe fallback); required on all new rows. The Import panel groups/filters by `media_kind` for icon selection and, optionally, per-kind filter chips.
+
+**On-disk layout — flat pool**:
+
+```
+pool/
+└─ <uuid>.<ext>        every imported/generated media file, regardless of kind
+```
+
+Ingest writes every file as `pool/<uuid>.<ext>`. Categorization is **SQL-only**, via `pool_segments.media_kind`. No per-kind subdirectories — the filesystem is just bytes-by-id; queries, filters, and grouping happen in the DB.
+
+`pool_segments.pool_path` stores `<uuid>.<ext>` (relative to `pool/`).
+
+Pre-existing `pool/segments/` and `pool/keyframes/` subdirs (legacy convention from the earlier codebase) are left in place for any code that still references them, but the new ingest path no longer writes there. Old subdirs can be collapsed in a follow-up cleanup once no code reads from them.
 
 **New table `source_locations`** (replaces the single `original_filepath` column, which is migrated and then dropped or left NULL):
 ```sql
@@ -321,11 +340,13 @@ Existing watched folders grandfather in — no retroactive ACL check at startup.
 
 ## Migration Path
 
-1. **Schema**: add `source_hash`, `source_size`, `source_locations` (new table), `acl_rules` (new table). Leave `pool_segments.original_filepath` in place as nullable; write a one-time backfill that, for each pool row, inserts a matching `source_locations` row (kind heuristically `'upload'` if the path contains spaces/user-home-shaped prefix; else `'server_path'`). Column stays in place for a release, then is dropped.
-2. **ACL bootstrap**: on first server start after this migration lands, if `acl_rules` is empty, seed the first connecting authenticated user as admin with `allow / (root)` recursive. Log the seed event.
-3. **Watcher**: register observers for every pre-existing watched folder on server start. Any pool rows created by the pre-migration watcher are already hashed via the backfill (added to an async job) or hashed lazily on first read.
+Greenfield — no backfill required. Existing `pool_segments` rows (if any are in use) can be cleared/ignored at migration time; production data for this feature has not yet accumulated.
+
+1. **Schema**: add `source_hash`, `source_size`, `media_kind` columns; create `source_locations` and `acl_rules` tables; drop `pool_segments.original_filepath` outright (no data worth preserving). Ensure `pool/` exists on project startup; no per-kind subdirs.
+2. **ACL bootstrap**: on first server start with a non-empty user base, if `acl_rules` is empty, seed the first authenticated user as admin with `allow / (root)` recursive. Log the seed event.
+3. **Watcher**: register observers for every pre-existing watched folder on server start. Any rows the pre-migration watcher produced are discarded along with the old columns — greenfield.
 4. **Frontend default layout**: ship the new default layout with the Explorer column collapsed. Existing users keep their saved layouts; a small migration in the workspace-view loader inserts the Explorer column on the left if their saved layout doesn't have it. `primary: true` is applied to `preview-group` and `timeline-group` automatically if absent.
-5. **Rollback**: remove the new panel registrations and default-layout migration; drop `acl_rules` and `source_locations`; keep `source_hash` / `source_size` (harmless if nullable). Re-enable a `/api/reveal` stub only if we decide to ship a local-daemon client.
+5. **Rollback**: remove the new panel registrations and default-layout migration; drop `acl_rules` and `source_locations`; `source_hash` / `source_size` / `media_kind` are harmless if left nullable.
 
 ---
 
@@ -341,13 +362,14 @@ Existing watched folders grandfather in — no retroactive ACL check at startup.
 | Expanded width | **~275 px** | User preference over right-sidebar parity. |
 | Focus Mode hotkey | **`Shift+F`** | DaVinci Resolve convention, familiar to video editors; short and chord-free vs. IntelliJ's `Cmd+Shift+F12`. |
 | Primary flag location | `primary?: boolean` on `GroupNode` | Smallest schema addition; reuses existing collapse infra for the focus-mode behavior. |
+| Primary toggle UI | **Ellipsis (⋮) menu** on the panel-group header | Not right-click. The ellipsis menu already exists on every group (Add Panel, Close Group) — adding "Mark as Primary" / "Unmark as Primary" keeps all group-level controls in one discoverable surface. |
 
 ### Project view
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | View model | **Real on-disk mirror** | Matches VSCode explorer familiarity; no drift between dir state and UI. |
-| Default hidden filters | `project.db-wal/shm`, `.DS_Store`, `Thumbs.db`, `transaction_snapshots/` | After verifying what a project dir actually contains, most originally-proposed filters (`.git/`, `.scenecraft_work/`, `__pycache__/`, `node_modules/`) match nothing. |
+| Default hidden filters | `project.db-wal/shm`, `.DS_Store`, `Thumbs.db`, `transaction_snapshots/` — **always hidden, no toggle** | After verifying what a project dir actually contains, most originally-proposed filters match nothing. `transaction_snapshots/` is checkpoint state — surfaced via the future Branch Explorer panel (separate tab), not the Project view. |
 | Context menu | **Custom in-app menu replacing browser native** | Web pages can't extend the browser's context menu; all desktop-class web apps (Figma/Linear/VSCode-for-Web) replace it. |
 | "Reveal in system file manager" | **Dropped** | Server-side reveal is unreachable from a remote browser. |
 
@@ -364,6 +386,10 @@ Existing watched folders grandfather in — no retroactive ACL check at startup.
 | Import semantics | **Copy into pool** (not symlink) | Pool must be self-contained; symlinks break if the source moves. |
 | Dedup | **By content hash** (SHA-256) | Catches cross-folder duplicates, upload-then-watch duplicates, and renames (when combined with `source_locations`). |
 | Hash timing | **Sync, streaming during upload**; sync file-scan for watched-folder path; initial scan runs in a background thread | Hash is ~40× faster than upload; streaming means zero wall-clock overhead on uploads. |
+| Pool removal semantics | **Hard-delete pool copy; leave source intact** | Source files (watched-folder contents, user-local uploads) are owned by the user, not by scenecraft. Removing a pool entry drops the DB rows and the on-disk `pool/segments/*` copy only. A subsequent re-ingest (same source, same hash) recreates the pool row cleanly. No bin state for pool items — hard delete is the contract. |
+| Upload media types | **Video, image, AND audio** | Native file picker uses `accept="video/*,image/*,audio/*"`. Same upload endpoint + ingest pipeline for all three; classifier assigns `media_kind` on the fly. Single `pool_segments` table, `media_kind` column for queries. |
+| On-disk pool layout | **Flat `pool/<uuid>.<ext>`** — categorization via SQL only | One source of truth. Avoids dir-vs-column desync (no risk of a row's `media_kind` disagreeing with which subdir it lives in). Filesystem is just content-addressable storage; every query goes through SQL. Legacy `pool/segments/` and `pool/keyframes/` left in place for any still-reading code, collapsed in a follow-up. |
+| Migration strategy | **Greenfield — no backfill** | No accumulated production data to preserve. Old `pool_segments.original_filepath` column is dropped outright; new columns added fresh. Simpler, no heuristic `source_kind` inference, no ffprobe sweep at startup. |
 
 ### Architecture
 
@@ -392,6 +418,7 @@ Existing watched folders grandfather in — no retroactive ACL check at startup.
 ## Future Considerations
 
 - **Source Monitor panel** (Premiere-style) — second tab on `preview-group`; double-click a media row → opens clip, scrubber, `I`/`O` marks, Insert at Playhead / Drag to timeline. Deferred to its own milestone; it's a separate UI surface with its own scope (media playback, in/out handles, track-insert semantics).
+- **Branch Explorer panel** — dedicated tab (separate from Project view) for browsing checkpoint/snapshot state in `transaction_snapshots/` and the VCS layer. Lets users view snapshot history, diff revisions, and restore checkpoints without cluttering the on-disk Project view with backup noise. Ties into M6 (Git-Style Version Control). Out of scope for this milestone.
 - **In-app ACL admin UI**: replace CLI grants with a settings page once we have multiple users regularly.
 - **Access-request workflow**: non-admin asks admin for a path; notification + one-click approve.
 - **Role-based ACL**: `admin` / `editor` / `viewer` roles on top of the existing rules.

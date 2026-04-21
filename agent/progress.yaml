@@ -185,7 +185,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-6-git-version-control.md
     tasks_total: 15
-    tasks_completed: 7
+    tasks_completed: 8
     estimated_weeks: 6
     tasks:
       - id: task-29
@@ -260,11 +260,12 @@ milestones:
         actual_hours: null
       - id: task-37
         name: Branch refs & operations
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T00:00:00Z
+        completed_date: 2026-04-21T00:45:00Z
+        actual_hours: 0.75
         file: agent/tasks/milestone-6-git-version-control/task-37-branch-refs-operations.md
         estimated_hours: 6
-        actual_hours: null
       - id: task-38
         name: Replace checkpoints with commits
         status: not_started
@@ -314,7 +315,7 @@ milestones:
     started: 2026-04-16
     completed: null
     file: agent/milestones/milestone-7-clip-trim-and-snap.md
-    tasks_total: 8
+    tasks_total: 9
     tasks_completed: 1
     estimated_weeks: 3
     tasks:
@@ -326,6 +327,18 @@ milestones:
         file: agent/tasks/milestone-7-clip-trim-and-snap/task-44-schema-migration.md
         estimated_hours: 4
         actual_hours: 0.5
+      - id: task-69
+        name: Rip slot concept + drop selected_*/ directories
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-7-clip-trim-and-snap/task-69-rip-slots-and-drop-selected-dirs.md
+        estimated_hours: 20
+        actual_hours: null
+        notes: |
+          Prerequisite for Tasks 45-51. Flattens transitions.selected,
+          drops transitions.slots + tr_candidates.slot, rewires render
+          pipeline to read selected media from SQL (tr_candidates +
+          pool_segments / keyframes.candidates), deletes selected_*/ dirs.
       - id: task-45
         name: Backend trim support
         status: in_progress
@@ -374,6 +387,101 @@ milestones:
         started: null
         file: agent/tasks/milestone-7-clip-trim-and-snap/task-51-snap-targets.md
         estimated_hours: 5
+        actual_hours: null
+
+  - id: milestone_9
+    name: Explorer Panel and Media Import
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-9-explorer-and-media-import.md
+    tasks_total: 12
+    tasks_completed: 0
+    estimated_weeks: 6
+    tasks:
+      - id: task-70
+        name: Schema foundation (pool_segments + source_locations)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-70-schema-foundation.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-71
+        name: ACL system (rules table + evaluator + CLI)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-71-acl-system.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-72
+        name: Media classifier + streaming hasher
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-72-media-classifier-and-hasher.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-73
+        name: /api/browse endpoint (ACL-gated server FS listing)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-73-browse-endpoint.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-74
+        name: Upload pipeline (streaming hash + flat pool + dedup)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-74-upload-pipeline.md
+        estimated_hours: 7
+        actual_hours: null
+      - id: task-75
+        name: Watchdog ingest (live watcher + rename detection)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-75-watchdog-ingest.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-76
+        name: Panel registration + default layout (Explorer column)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-76-panel-registration-and-layout.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-77
+        name: Project panel (tree view + custom contextmenu)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-77-project-panel.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-78
+        name: Import panel (roots + icons + Link Media menu)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-78-import-panel.md
+        estimated_hours: 8
+        actual_hours: null
+      - id: task-79
+        name: In-app FS browser modal (ACL-gated)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-79-fs-browser-modal.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-80
+        name: Focus Mode (Shift+F + primary flag)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-80-focus-mode.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-81
+        name: Missing-source recovery (detection + Relocate)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-explorer-and-media-import/task-81-missing-source-recovery.md
+        estimated_hours: 4
         actual_hours: null
 
   - id: milestone_4
@@ -570,6 +678,94 @@ milestones:
         started: null
         file: agent/tasks/milestone-8-characters-and-lipsync/task-68-playback-wiring.md
         estimated_hours: 4
+        actual_hours: null
+
+  - id: milestone_9
+    name: Audio Tracks and Audio Clips
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-9-audio-tracks-and-clips.md
+    tasks_total: 11
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-82
+        name: Schema migration (greenfield)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-82-schema-migration.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-83
+        name: Audio-stream extract via ffmpeg
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-83-audio-extract.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-84
+        name: Slot routing + linked-audio insert endpoint
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-84-insert-routing.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-85
+        name: Transition move/trim propagation to linked audio
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-85-transition-propagation.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-86
+        name: Cascade delete on transition removal
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-86-cascade-delete.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-87
+        name: Timeline audio lanes + mirrored layout
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-87-timeline-audio-lanes.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-88
+        name: Audio clip block + waveform rendering
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-88-clip-block-waveform.md
+        estimated_hours: 7
+        actual_hours: null
+      - id: task-89
+        name: Drag/drop insert + auto-link UI
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-89-drag-drop-insert.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-90
+        name: Volume curve editor (clips + tracks)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-90-volume-curve-editor.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-91
+        name: Multi-track mixdown + equal-power crossfade
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-91-mixdown-renderer.md
+        estimated_hours: 7
+        actual_hours: null
+      - id: task-92
+        name: Veo auto-link integration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-9-audio-tracks-and-clips/task-92-veo-auto-link.md
+        estimated_hours: 3
         actual_hours: null
 
 tasks:
@@ -841,6 +1037,14 @@ tasks:
       actual_hours: 0.5
       started: 2026-04-16T00:00:00Z
       completed_date: 2026-04-16T00:30:00Z
+    - id: task-69
+      name: Rip slot concept + drop selected_*/ directories
+      status: not_started
+      milestone_id: milestone_7
+      file: agent/tasks/milestone-7-clip-trim-and-snap/task-69-rip-slots-and-drop-selected-dirs.md
+      estimated_hours: 20
+      actual_hours: null
+      started: null
     - id: task-45
       name: Backend trim support
       status: not_started
