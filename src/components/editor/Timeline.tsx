@@ -5,6 +5,7 @@ import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/p
 import type { UserEffect, BeatSuppression, AudioEvent, EffectType } from '@/lib/scenecraft-client'
 import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyframe, deleteKeyframe, batchDeleteKeyframes, deleteTransition, saveEffects, generateTransitionCandidates, getAudioIntelligenceData, getTimelineData, restoreKeyframe } from '@/routes/project/$name/editor'
 import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
+import { useAudioMixer } from '@/hooks/useAudioMixer'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
@@ -549,6 +550,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   useEffect(() => { setLocalKeyframes(data.keyframes) }, [data.keyframes])
   useEffect(() => { setLocalTransitions(data.transitions) }, [data.transitions])
   useEffect(() => { setLocalAudioTracks(data.audioTracks) }, [data.audioTracks])
+
+  // M14: WebAudio streaming mixer — plays audio clips in real time, driven
+  // by isPlaying + currentTime. When `data.audioFile` exists, the legacy
+  // <AudioTrack> element below still acts as the master clock (and plays the
+  // beats track); the mixer adds multi-track audio on top. When there's no
+  // audioFile, the Timeline's fallback rAF timer drives currentTime and the
+  // mixer is the sole audio source. Return value is unused at this level —
+  // AudioPropertiesPanel picks up edit feedback via refreshTimeline →
+  // localAudioTracks → mixer.rebuild (eventually targeted per-clip/track in
+  // a follow-up).
+  useAudioMixer(data.projectName, localAudioTracks, isPlaying, currentTime)
 
   // Partial refetch — only keyframes + transitions + audio tracks (fast, ~500KB)
   const refreshTimeline = useCallback(() => {

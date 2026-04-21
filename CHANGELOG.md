@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.0] - 2026-04-21
+
+### Added
+- M14 Task 118 — In-editor multi-track audio playback shipped. Timeline now mounts `useAudioMixer(projectName, audioTracks, isPlaying, currentTime)` which runs the WebAudio streaming mixer alongside the existing playhead clock:
+  - When a project has `audioFile` (legacy beats track), `<AudioTrack>` keeps its clock-driver role; the mixer plays audio clips on top.
+  - When `audioFile` is null (multi-track-only projects — the target workflow), the Timeline's existing fallback rAF timer drives `currentTime` and the mixer is the sole audio source.
+  - Curve edits, mute toggles, and crossfades reach the ear via `mixer.rebuild(tracks)` on every `refreshTimeline()` (follow-up: targeted `updateClip`/`updateTrack` from the properties panel).
+- `src/hooks/useAudioMixer.ts` — React wrapper: mixer per `projectName`, `tracks` drives `rebuild`, `isPlaying` drives `play`/`pause`, `currentTime` drives `seek`, unmount calls `dispose`.
+
+### Changed
+- M14 shipped without a feature flag (greenfield project — see memory note). `<AudioTrack>` remains only as the clock driver for legacy beats-file projects.
+
 ## [0.18.0] - 2026-04-21
 
 ### Added

@@ -239,16 +239,6 @@ describe('createAudioMixer — curve automation (T117)', () => {
   let opts: ReturnType<typeof makeOptions>
   beforeEach(() => { opts = makeOptions() })
 
-  // Helper: find the track-gain MockGainNode from the ctx.destination connections
-  const getTrackGain = (ctx: MockAudioContext): MockGainNode => {
-    // destination.connections has the incoming connections (via our `dst as MockGainNode` hack)
-    // but our mock stores connections on the UPSTREAM node. So the trackGain is whichever
-    // gain node connected to destination. We inspect all connection calls via a known graph shape.
-    // Simpler: track-gain is the first GainNode created with nonzero gain events at play time.
-    // Instead, we wrap createGain to capture creation order:
-    return (ctx as unknown as { _trackGains?: MockGainNode[] })._trackGains?.[0] as MockGainNode
-  }
-
   const instrumentCtx = (ctx: MockAudioContext): void => {
     const origCreateGain = ctx.createGain.bind(ctx)
     const gains: MockGainNode[] = []
