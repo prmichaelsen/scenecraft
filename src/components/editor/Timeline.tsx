@@ -375,10 +375,12 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [selectedTransitionIds, setSelectedTransitionIds] = useState<Set<string>>(new Set())
   const [selectedAudioClipIds, setSelectedAudioClipIds] = useState<Set<string>>(new Set())
-  // Audio clip body-drag state. When active: set of clip IDs being moved +
-  // the live offset in seconds. AudioLane renders the optimistic CSS transform
-  // via props; commit happens on mouseup.
-  const [audioDrag, setAudioDrag] = useState<{ ids: Set<string>; offsetSeconds: number } | null>(null)
+  // Audio clip body-drag state. When active: set of clip IDs being moved,
+  // the live offset in seconds (unsnapped — cursor-tracking), and a per-clip
+  // trackDelta (how many lanes down/up the cursor has moved relative to the
+  // primary clip's source lane). AudioLane renders the optimistic CSS
+  // transform via props; commit happens on mouseup.
+  const [audioDrag, setAudioDrag] = useState<{ ids: Set<string>; offsetSeconds: number; trackDelta: number } | null>(null)
   // Align-waveforms dialog state — opened from audio clip right-click menu
   const [alignWaveformsDialog, setAlignWaveformsDialog] = useState<{ open: boolean; clipIds: string[] }>({ open: false, clipIds: [] })
   const [transformMode, setTransformMode] = useState(false)
@@ -938,22 +940,21 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
     let moved = false
     const THRESHOLD_PX = 4
-    const SNAP_SECONDS = 1
+
+    const computeTrackDelta = (me: MouseEvent): number => {
+      currentTargetTrackId = detectTargetLane(me)
+      const targetIdx = trackIndexOf(currentTargetTrackId)
+      return (targetIdx >= 0 && primarySourceIdx >= 0) ? (targetIdx - primarySourceIdx) : 0
+    }
 
     const onMove = (me: MouseEvent) => {
       const dxPx = me.clientX - startX
       if (!moved && Math.abs(dxPx) < THRESHOLD_PX) return
       moved = true
-      let dt = dxPx / pxPerSecAtStart
-      // Clamp so earliest clip stays ≥ 0
-      dt = Math.max(dt, -minStart)
-      // Snap: default 1s, shift = 0.1s, alt = none
-      if (!me.altKey) {
-        const grid = me.shiftKey ? 0.1 : SNAP_SECONDS
-        dt = Math.round(dt / grid) * grid
-      }
-      currentTargetTrackId = detectTargetLane(me)
-      setAudioDrag({ ids: dragIds, offsetSeconds: dt })
+      // No snap during drag — cursor-tracking movement for a responsive feel.
+      let rawDt = dxPx / pxPerSecAtStart
+      rawDt = Math.max(rawDt, -minStart)
+      setAudioDrag({ ids: dragIds, offsetSeconds: rawDt, trackDelta: computeTrackDelta(me) })
     }
 
     const onUp = async (ue: MouseEvent) => {
@@ -964,14 +965,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         setAudioDrag(null)
         return
       }
-      // Snapshot the final delta so we don't depend on stale state
+      // Snapshot the final delta so we don't depend on stale state. No snap.
       const dxPx = ue.clientX - startX
       let dt = dxPx / pxPerSecAtStart
       dt = Math.max(dt, -minStart)
-      if (!ue.altKey) {
-        const grid = ue.shiftKey ? 0.1 : SNAP_SECONDS
-        dt = Math.round(dt / grid) * grid
-      }
       const finalTargetTrackId = detectTargetLane(ue)
       const targetIdx = trackIndexOf(finalTargetTrackId)
       // trackDelta = target - source (uniform across all dragged clips, mirrors M10)
@@ -2414,6 +2411,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       onClipClick={handleAudioClipClick}
                       onClipMouseDown={handleAudioClipMouseDown}
                       dragOffsetSeconds={audioDrag?.offsetSeconds ?? 0}
+                      dragTrackDelta={audioDrag?.trackDelta ?? 0}
                       draggingIds={audioDrag?.ids}
                       onRequestAlignWaveforms={(clipIds) => {
                         // Promote right-clicked clip into selection (AudioLane did this

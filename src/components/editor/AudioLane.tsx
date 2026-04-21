@@ -40,6 +40,12 @@ type AudioLaneProps = {
    * server roundtrip happens per-frame.
    */
   dragOffsetSeconds?: number
+  /**
+   * Vertical lane delta for the drag (number of lanes to move down). Each
+   * dragged clip translates by `trackDelta * laneHeight` pixels on Y so the
+   * user sees exactly which audio lane the drop will land on.
+   */
+  dragTrackDelta?: number
   /** IDs currently being drag-moved (for optimistic CSS transform). */
   draggingIds?: Set<string>
 }
@@ -48,7 +54,7 @@ type AudioLaneProps = {
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onClipMouseDown, dragOffsetSeconds = 0, draggingIds }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onClipMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted || !track.enabled
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -91,6 +97,7 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           onRequestDeleteClip={onRequestDeleteClip}
           onClipMouseDown={onClipMouseDown}
           dragOffsetPx={(draggingIds?.has(c.id) ? dragOffsetSeconds : 0) * pxPerSec}
+          dragOffsetPy={(draggingIds?.has(c.id) ? dragTrackDelta : 0) * height}
         />
       ))}
     </div>
@@ -108,11 +115,13 @@ type AudioClipBlockProps = {
   onRequestAlignWaveforms?: (clipIds: string[]) => void
   onRequestDeleteClip?: (clipId: string) => void
   onClipMouseDown?: (clip: AudioClip, e: React.MouseEvent) => void
-  /** Optimistic drag offset in px applied via CSS transform. Zero when not dragging. */
+  /** Optimistic drag X offset in px applied via CSS transform. Zero when not dragging. */
   dragOffsetPx?: number
+  /** Optimistic drag Y offset in px (for cross-lane drag). Zero when dragging within source lane. */
+  dragOffsetPy?: number
 }
 
-function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onClipMouseDown, dragOffsetPx = 0 }: AudioClipBlockProps) {
+function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onClipMouseDown, dragOffsetPx = 0, dragOffsetPy = 0 }: AudioClipBlockProps) {
   const left = clip.start_time * pxPerSec
   const width = Math.max(2, (clip.end_time - clip.start_time) * pxPerSec)
   const durationSeconds = clip.end_time - clip.start_time
@@ -123,16 +132,19 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
   const selected = selectedAudioClipId === clip.id || isInMultiSelect
   const { show: showContextMenu } = useContextMenu()
 
-  const isDragging = dragOffsetPx !== 0
+  const isDragging = dragOffsetPx !== 0 || dragOffsetPy !== 0
   return (
     <div
       className={`absolute top-1 bottom-1 rounded-sm overflow-hidden border bg-cyan-900/30 hover:bg-cyan-900/50 ${isDragging ? '' : 'transition-colors'} ${
         selected ? 'border-cyan-300 ring-1 ring-cyan-300/60' : 'border-cyan-700/60'
-      } ${clip.muted ? 'opacity-40' : ''} ${isDragging ? 'cursor-grabbing opacity-80 shadow-lg z-30' : 'cursor-pointer'}`}
+      } ${clip.muted ? 'opacity-40' : ''} ${isDragging ? 'cursor-grabbing opacity-80 shadow-lg z-40' : 'cursor-pointer'}`}
       style={{
         left,
         width,
-        transform: dragOffsetPx !== 0 ? `translateX(${dragOffsetPx}px)` : undefined,
+        // Layer Y ahead of X so the dragged block clears its source lane
+        // (otherwise it's clipped by the lane's overflow).
+        transform: isDragging ? `translate(${dragOffsetPx}px, ${dragOffsetPy}px)` : undefined,
+        overflow: isDragging ? 'visible' : undefined,
       }}
       title={`${clip.source_path} · ${durationSeconds.toFixed(2)}s`}
       onMouseDown={(e) => {
