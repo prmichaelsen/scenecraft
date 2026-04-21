@@ -391,8 +391,8 @@ milestones:
 
   - id: milestone_9
     name: Explorer Panel and Media Import
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-21
     completed: null
     file: agent/milestones/milestone-9-explorer-and-media-import.md
     tasks_total: 12
@@ -401,8 +401,8 @@ milestones:
     tasks:
       - id: task-70
         name: Schema foundation (pool_segments + source_locations)
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-21T00:00:00Z
         file: agent/tasks/milestone-9-explorer-and-media-import/task-70-schema-foundation.md
         estimated_hours: 4
         actual_hours: null
@@ -700,8 +700,8 @@ milestones:
         actual_hours: 1.0
       - id: task-83
         name: Audio-stream extract via ffmpeg
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-19T01:00:00Z
         file: agent/tasks/milestone-9-audio-tracks-and-clips/task-83-audio-extract.md
         estimated_hours: 4
         actual_hours: null
@@ -767,6 +767,66 @@ milestones:
         started: null
         file: agent/tasks/milestone-9-audio-tracks-and-clips/task-92-veo-auto-link.md
         estimated_hours: 3
+        actual_hours: null
+
+  - id: milestone_10
+    name: Clip Move — Drag and Drop Across Tracks
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-10-clip-move-cross-track.md
+    tasks_total: 7
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-93
+        name: Backend /move-transitions endpoint + same-track move
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-93-backend-move-endpoint.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-94
+        name: Backend cross-track + kf ownership + auto-create tracks
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-94-backend-cross-track-and-auto-tracks.md
+        estimated_hours: 7
+        actual_hours: null
+      - id: task-95
+        name: Backend overlap resolution
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-95-backend-overlap-resolution.md
+        estimated_hours: 7
+        actual_hours: null
+      - id: task-96
+        name: Backend copy mode
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-96-backend-copy-mode.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-97
+        name: Frontend body-drag gesture + ghost preview (same-track, single-clip)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-97-frontend-body-drag.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-98
+        name: Frontend cross-track + multi-clip + multi-track source
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-98-frontend-cross-track-multi-clip.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-99
+        name: Frontend overlap preview + auto-create-track rows + copy-mode visuals
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-10-clip-move-cross-track/task-99-frontend-overlap-preview-and-copy.md
+        estimated_hours: 7
         actual_hours: null
 
 tasks:
@@ -1284,6 +1344,63 @@ tasks:
       milestone_id: milestone_9
       file: agent/tasks/milestone-9-audio-tracks-and-clips/task-92-veo-auto-link.md
       estimated_hours: 3
+      actual_hours: null
+      started: null
+  milestone_10:
+    - id: task-93
+      name: Backend /move-transitions endpoint + same-track move
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-93-backend-move-endpoint.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-94
+      name: Backend cross-track + kf ownership + auto-create tracks
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-94-backend-cross-track-and-auto-tracks.md
+      estimated_hours: 7
+      actual_hours: null
+      started: null
+    - id: task-95
+      name: Backend overlap resolution
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-95-backend-overlap-resolution.md
+      estimated_hours: 7
+      actual_hours: null
+      started: null
+    - id: task-96
+      name: Backend copy mode
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-96-backend-copy-mode.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-97
+      name: Frontend body-drag gesture + ghost preview (same-track, single-clip)
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-97-frontend-body-drag.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-98
+      name: Frontend cross-track + multi-clip + multi-track source
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-98-frontend-cross-track-multi-clip.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-99
+      name: Frontend overlap preview + auto-create-track rows + copy-mode visuals
+      status: not_started
+      milestone_id: milestone_10
+      file: agent/tasks/milestone-10-clip-move-cross-track/task-99-frontend-overlap-preview-and-copy.md
+      estimated_hours: 7
       actual_hours: null
       started: null
   unassigned:
