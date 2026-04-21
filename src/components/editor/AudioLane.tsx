@@ -1,7 +1,9 @@
 import { memo } from 'react'
 import type { AudioTrack, AudioClip } from '@/lib/audio-client'
+import { AudioWaveform } from './AudioWaveform'
 
 type AudioLaneProps = {
+  projectName: string
   track: AudioTrack
   pxPerSec: number
   height?: number
@@ -9,9 +11,9 @@ type AudioLaneProps = {
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
- * horizontal timeline scaled by pxPerSec. Waveforms come in a later task.
+ * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ track, pxPerSec, height = 56 }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56 }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted || !track.enabled
 
@@ -33,34 +35,44 @@ export const AudioLane = memo(function AudioLane({ track, pxPerSec, height = 56 
 
       {/* Clips */}
       {clips.map((c) => (
-        <AudioClipBlock key={c.id} clip={c} pxPerSec={pxPerSec} />
+        <AudioClipBlock key={c.id} projectName={projectName} clip={c} pxPerSec={pxPerSec} laneHeight={height} />
       ))}
     </div>
   )
 })
 
 type AudioClipBlockProps = {
+  projectName: string
   clip: AudioClip
   pxPerSec: number
+  laneHeight: number
 }
 
-function AudioClipBlock({ clip, pxPerSec }: AudioClipBlockProps) {
+function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight }: AudioClipBlockProps) {
   const left = clip.start_time * pxPerSec
   const width = Math.max(2, (clip.end_time - clip.start_time) * pxPerSec)
+  const durationSeconds = clip.end_time - clip.start_time
+  // Clip block sits with 4px vertical inset from the lane — same as the
+  // absolute top-1 bottom-1 below (1px=4px because tailwind scale).
+  const blockHeight = Math.max(0, laneHeight - 8)
 
-  // Placeholder "waveform": horizontal stripes — replaced with canvas waveform in a later task
   return (
     <div
       className={`absolute top-1 bottom-1 rounded-sm overflow-hidden border border-cyan-700/60 bg-cyan-900/30 hover:bg-cyan-900/50 transition-colors ${
         clip.muted ? 'opacity-40' : ''
       }`}
       style={{ left, width }}
-      title={`${clip.source_path} · ${(clip.end_time - clip.start_time).toFixed(2)}s`}
+      title={`${clip.source_path} · ${durationSeconds.toFixed(2)}s`}
     >
-      {/* Fake waveform stripe — horizontal bar through the middle */}
-      <div className="absolute top-1/2 left-0 right-0 h-px bg-cyan-400/50 -translate-y-1/2" />
+      <AudioWaveform
+        projectName={projectName}
+        clipId={clip.id}
+        width={width}
+        height={blockHeight}
+        durationSeconds={durationSeconds}
+      />
       {width > 48 && (
-        <div className="absolute bottom-0.5 left-1 text-[9px] font-mono text-cyan-300/80 truncate max-w-[calc(100%-8px)] pointer-events-none">
+        <div className="absolute bottom-0.5 left-1 text-[9px] font-mono text-cyan-300/80 truncate max-w-[calc(100%-8px)] pointer-events-none z-10">
           {clip.id.replace(/^audio_clip_/, '')}
         </div>
       )}

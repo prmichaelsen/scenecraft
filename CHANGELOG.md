@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0] - 2026-04-19
+
+### Added
+- M9 Task 88 — Waveform rendering on audio clip blocks. Server computes float16 peak arrays (mono, 400 peaks/sec default) on demand via ffmpeg-decoded PCM; cached on disk under `audio_staging/.peaks/` keyed by source path + mtime + offset + duration + resolution.
+- `GET /api/projects/:name/audio-clips/:id/peaks?resolution=N` returns raw `application/octet-stream` float16 little-endian bytes with `X-Peak-Resolution` and `X-Peak-Duration` headers.
+- Frontend `waveform-cache.ts` fetches + caches peak arrays module-wide, decodes float16 → float32 inline, de-dupes concurrent requests for the same clip.
+- `AudioWaveform.tsx` canvas renderer: draws vertical mirrored peaks across the clip block width, max-pools when peaks > pixels, HiDPI-aware, skips below 16 px width.
+- `AudioLane` clip blocks now overlay the real waveform instead of the placeholder stripe.
+
 ## [0.11.0] - 2026-04-19
 
 ### Added

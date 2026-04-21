@@ -2428,7 +2428,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               {data.audioTracks && data.audioTracks.length > 0 && (
                 <div className="relative">
                   {[...data.audioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => (
-                    <AudioLane key={t.id} track={t} pxPerSec={pxPerSec} />
+                    <AudioLane key={t.id} projectName={data.projectName} track={t} pxPerSec={pxPerSec} />
                   ))}
                 </div>
               )}
