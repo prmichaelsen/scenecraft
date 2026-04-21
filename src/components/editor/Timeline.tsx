@@ -401,6 +401,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedTrackId, setSelectedTrackId] = useState<string>(data.tracks[0]?.id || 'track_1')
   const [selectedRuleSection, setSelectedRuleSection] = useState<RuleSection | null>(null)
   const [trackSettingsId, setTrackSettingsId] = useState<string | null>(null)
+  // Target-track highlight during body-drag (M10: cross-track drag visual feedback).
+  // Set by TransitionTrack via onTargetTracksChange; cleared on mouseup/cancel.
+  const [targetTrackIds, setTargetTrackIds] = useState<Set<string> | null>(null)
   // Drag overrides: keyframeId -> overridden timeSeconds (during drag only)
   const [dragOverrides] = useState<Record<string, number>>({})
   const [videoTrackHeight, setVideoTrackHeight] = useState(DEFAULT_VIDEO_HEIGHT)
@@ -2361,7 +2364,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                   />
                   {/* Track content */}
                   <div
-                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''}`}
+                    data-track-id={track.id}
+                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''} ${targetTrackIds?.has(track.id) ? 'bg-blue-500/10' : ''}`}
                     style={{ height: videoTrackHeight }}
                     onMouseDown={(e) => handleDragSelectDown(e, track.id)}
                     onClick={(e) => { if (dragSelectRef.current?.active || dragSelectRect) return; setSelectedTrackId(track.id); handleTrackClick(e) }}
@@ -2412,6 +2416,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                     <TransitionTrack
                       transitions={tTrs}
                       keyframes={tKfs}
+                      allTransitions={localTransitions}
+                      allKeyframes={keyframes}
+                      tracks={sortedTracks}
+                      trackRowHeight={videoTrackHeight}
+                      onTargetTracksChange={setTargetTrackIds}
                       pxPerSec={pxPerSec}
                       selectedId={selectedTransition?.id ?? null}
                       selectedIds={selectedTransitionIds}

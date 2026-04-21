@@ -2,12 +2,26 @@ import { useRef, useState, useCallback, useEffect, useMemo, memo } from 'react'
 import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
 import type { Transition } from '@/routes/project/$name/editor'
-import { postUpdateTransitionTrim, postClipTrimEdge, postMoveTransitions } from '@/lib/scenecraft-client'
+import { postUpdateTransitionTrim, postClipTrimEdge, postMoveTransitions, type Track } from '@/lib/scenecraft-client'
 import { TransitionFilmstrip } from './TransitionFilmstrip'
 
 type TransitionTrackProps = {
   transitions: Transition[]
   keyframes: KeyframeWithTime[]
+  // Full project-level lists used by body-drag for multi-clip (multi-track) ghost
+  // rendering + per-clip source-track-index lookup. For single-track rendering
+  // the primary `transitions`/`keyframes` props are still used.
+  allTransitions?: Transition[]
+  allKeyframes?: KeyframeWithTime[]
+  // Sorted tracks (same order as rendered in Timeline). Index into this list is
+  // the row position used for trackDelta arithmetic.
+  tracks?: Track[]
+  // Height of a single track row in px — used to offset ghost rects vertically
+  // by `trackDelta * trackRowHeight`.
+  trackRowHeight?: number
+  // Target-track highlight callback — during a body-drag, TransitionTrack reports
+  // which track IDs would receive a dropped clip so Timeline can tint those rows.
+  onTargetTracksChange?: (ids: Set<string> | null) => void
   pxPerSec: number
   selectedId: string | null
   duration: number
@@ -44,30 +58,51 @@ function secondsToTs(s: number): string {
  */
 type BoundaryZone = 'trim-out' | 'roll' | 'trim-in'
 
-// Active body-drag gesture state (kept in ref to avoid re-renders on every mousemove)
-type BodyDragState = {
-  trId: string
-  trWidth: number        // px width of the dragged clip
+// Per-clip snapshot captured at drag-start — used to render the multi-clip
+// ghost composite and to compute per-clip commit payloads.
+type DraggedClipInfo = {
+  id: string
   fromTimeSeconds: number
   toTimeSeconds: number
+  widthPx: number
+  sourceTrackIndex: number
+}
+
+// Active body-drag gesture state (kept in ref to avoid re-renders on every mousemove)
+type BodyDragState = {
+  primaryTrId: string
+  draggedIds: string[]              // all clips in the gesture (1 if primary not in selection)
+  clips: DraggedClipInfo[]          // snapshots for ghost/offset math, in same order as draggedIds
+  primary: DraggedClipInfo          // the clip under mousedown (source of truth for offsets)
   startX: number
   startY: number
   mode: 'move' | 'copy'
-  locked: boolean        // true once movement threshold crossed
+  locked: boolean                   // true once movement threshold crossed
+  numTracks: number                 // for trackDelta clamping
+  minTrackDelta: number             // = -min(sourceTrackIndex) across dragged clips
+  maxTrackDelta: number             // =  (numTracks - 1) - max(sourceTrackIndex)
 }
 
 // Ghost preview position + metadata (state, rendered by React)
 type GhostState = {
   cursorX: number
   cursorY: number
-  width: number
-  timeDelta: number      // clamped so from + delta >= 0
+  timeDelta: number                 // clamped so from + delta >= 0
+  trackDelta: number                // clamped to [minTrackDelta, maxTrackDelta]
   mode: 'move' | 'copy'
+  clips: DraggedClipInfo[]          // snapshot at drag-start (pinned so ghost doesn't flicker)
+  primary: DraggedClipInfo
+  targetTrackName: string           // e.g. "Track 2" — resolved on mousemove
 }
 
 export const TransitionTrack = memo(function TransitionTrack({
   transitions,
   keyframes,
+  allTransitions,
+  allKeyframes,
+  tracks,
+  trackRowHeight,
+  onTargetTracksChange,
   pxPerSec,
   selectedId,
   onTransitionClick,
@@ -358,6 +393,15 @@ export const TransitionTrack = memo(function TransitionTrack({
 
   // Body-drag handler — mousedown on a transition bar's interior (NOT the boundary zones,
   // which call stopPropagation in their own onMouseDown).
+  //
+  // This is the M10 multi-clip + cross-track gesture:
+  //   - If the clicked clip is in selectedIds, drag the whole selection (multi-clip).
+  //   - Otherwise drag only the clicked clip.
+  //   - On mousemove: Y-delta is hit-tested against Timeline's track rows
+  //     (`[data-track-id]`) to derive a uniform trackDelta applied to every dragged clip.
+  //   - trackDelta is clamped so no clip overflows the existing track range (Task 99
+  //     removes this clamp and adds auto-create-track previews).
+  //   - Mouseup commits a single postMoveTransitions call for the entire batch.
   const handleBodyDown = useCallback(
     (e: React.MouseEvent, tr: Transition, fromT: number, toT: number) => {
       // Only left-button drags
@@ -365,16 +409,66 @@ export const TransitionTrack = memo(function TransitionTrack({
       // Don't call e.preventDefault or e.stopPropagation here — we want a plain click
       // (no movement) to still reach the onClick handler.
       const mode: 'move' | 'copy' = (e.metaKey || e.ctrlKey) ? 'copy' : 'move'
-      const trWidth = (toT - fromT) * pxPerSec
-      bodyDragState.current = {
-        trId: tr.id,
-        trWidth,
+
+      // Resolve the set of clips participating in this gesture.
+      const inSelection = !!(selectedIds && selectedIds.has(tr.id))
+      const draggedIdSet = inSelection ? new Set(selectedIds!) : new Set([tr.id])
+
+      // Resolve source track index per clip via the `tracks` prop. We also need
+      // fromTime/toTime/width per clip, looked up from allTransitions + allKeyframes
+      // (falls back to the same-track lists passed in the primary props).
+      const trackList = tracks ?? []
+      const trackIndexById = new Map(trackList.map((t, i) => [t.id, i]))
+      const allTrs = allTransitions ?? transitions
+      const allKfs = allKeyframes ?? keyframes
+      const kfTimeById = new Map(allKfs.map((k) => [k.id, k.timeSeconds]))
+
+      const clips: DraggedClipInfo[] = []
+      for (const id of draggedIdSet) {
+        const t = allTrs.find((x) => x.id === id)
+        if (!t) continue
+        const fts = kfTimeById.get(t.from)
+        const tts = kfTimeById.get(t.to)
+        if (fts == null || tts == null) continue
+        const srcIdx = trackIndexById.get(t.trackId) ?? 0
+        clips.push({
+          id: t.id,
+          fromTimeSeconds: fts,
+          toTimeSeconds: tts,
+          widthPx: (tts - fts) * pxPerSec,
+          sourceTrackIndex: srcIdx,
+        })
+      }
+      // Primary = the clicked clip. Guaranteed present (we just looked it up from allTrs).
+      const primary = clips.find((c) => c.id === tr.id) ?? {
+        id: tr.id,
         fromTimeSeconds: fromT,
         toTimeSeconds: toT,
+        widthPx: (toT - fromT) * pxPerSec,
+        sourceTrackIndex: trackIndexById.get(tr.trackId) ?? 0,
+      }
+      // Guarantee primary is in clips (single-clip drag when not in selection)
+      if (!clips.some((c) => c.id === primary.id)) clips.push(primary)
+
+      // trackDelta clamp range derived from the dragged clip with the min/max source index.
+      const numTracks = Math.max(1, trackList.length)
+      const minSrcIdx = clips.reduce((m, c) => Math.min(m, c.sourceTrackIndex), Infinity)
+      const maxSrcIdx = clips.reduce((m, c) => Math.max(m, c.sourceTrackIndex), -Infinity)
+      const minTrackDelta = -minSrcIdx
+      const maxTrackDelta = (numTracks - 1) - maxSrcIdx
+
+      bodyDragState.current = {
+        primaryTrId: tr.id,
+        draggedIds: Array.from(draggedIdSet),
+        clips,
+        primary,
         startX: e.clientX,
         startY: e.clientY,
         mode,
         locked: false,
+        numTracks,
+        minTrackDelta,
+        maxTrackDelta,
       }
       didDrag.current = false
 
@@ -396,6 +490,7 @@ export const TransitionTrack = memo(function TransitionTrack({
         lastGhostRef.current = null
         setGhost(null)
         document.body.style.cursor = ''
+        onTargetTracksChange?.(null)
         document.removeEventListener('mousemove', onMouseMove)
         document.removeEventListener('mouseup', onMouseUp)
         document.removeEventListener('keydown', onKeyDown)
@@ -405,8 +500,40 @@ export const TransitionTrack = memo(function TransitionTrack({
         const st = bodyDragState.current
         if (!st) return 0
         const rawDelta = (clientX - st.startX) / pxPerSec
-        // Clamp: new_from = fromT + delta >= 0  =>  delta >= -fromT
-        return Math.max(-st.fromTimeSeconds, rawDelta)
+        // Clamp so new_from >= 0 across ALL dragged clips:
+        //   for every clip: fromTime + delta >= 0 => delta >= -fromTime
+        //   => delta >= -min(fromTime)  (tighter bound across the batch)
+        const minFrom = st.clips.reduce((m, c) => Math.min(m, c.fromTimeSeconds), Infinity)
+        return Math.max(-minFrom, rawDelta)
+      }
+
+      // Hit-test cursor Y against the rendered track rows. Returns the row index
+      // (position in `tracks`) under the cursor, or null if the cursor isn't over
+      // any track. Walks up from elementFromPoint looking for [data-track-id].
+      const hitTestTrackIndex = (clientX: number, clientY: number): number | null => {
+        if (typeof document === 'undefined') return null
+        let el = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+        while (el) {
+          const id = el.getAttribute?.('data-track-id')
+          if (id) {
+            const idx = trackIndexById.get(id)
+            return idx ?? null
+          }
+          el = el.parentElement
+        }
+        return null
+      }
+
+      const computeTrackDelta = (clientX: number, clientY: number): number => {
+        const st = bodyDragState.current
+        if (!st) return 0
+        const hit = hitTestTrackIndex(clientX, clientY)
+        // If cursor isn't over a track row, hold the last value implicit in ghost.
+        // Falling back to 0 would snap the ghost back to origin on stray mouseouts.
+        const target = hit != null ? hit : st.primary.sourceTrackIndex
+        const raw = target - st.primary.sourceTrackIndex
+        // Task 98: clamp to existing range; Task 99 adds auto-create-track preview.
+        return Math.max(st.minTrackDelta, Math.min(st.maxTrackDelta, raw))
       }
 
       const onMouseMove = (ev: MouseEvent) => {
@@ -421,12 +548,31 @@ export const TransitionTrack = memo(function TransitionTrack({
           document.body.style.cursor = 'grabbing'
         }
         const timeDelta = computeTimeDelta(ev.clientX)
+        const trackDelta = computeTrackDelta(ev.clientX, ev.clientY)
+        const targetTrackIdx = st.primary.sourceTrackIndex + trackDelta
+        const targetTrackName = trackList[targetTrackIdx]?.name || `Track ${targetTrackIdx + 1}`
+
+        // Publish target-track set for Timeline to tint. Each clip's landing track
+        // = sourceTrackIndex + trackDelta.
+        if (onTargetTracksChange) {
+          const targetIds = new Set<string>()
+          for (const c of st.clips) {
+            const ti = c.sourceTrackIndex + trackDelta
+            const id = trackList[ti]?.id
+            if (id) targetIds.add(id)
+          }
+          onTargetTracksChange(targetIds)
+        }
+
         commitGhost({
           cursorX: ev.clientX,
           cursorY: ev.clientY,
-          width: st.trWidth,
           timeDelta,
+          trackDelta,
           mode: st.mode,
+          clips: st.clips,
+          primary: st.primary,
+          targetTrackName,
         })
       }
 
@@ -441,7 +587,8 @@ export const TransitionTrack = memo(function TransitionTrack({
         }
 
         const timeDelta = computeTimeDelta(ev.clientX)
-        const trId = st.trId
+        const trackDelta = computeTrackDelta(ev.clientX, ev.clientY)
+        const draggedIds = [...st.draggedIds]
         const mode = st.mode
 
         // Clear visuals immediately; keep didDrag=true so the synthetic click is swallowed.
@@ -454,7 +601,7 @@ export const TransitionTrack = memo(function TransitionTrack({
         }
         document.addEventListener('click', stopClick, true)
 
-        if (Math.abs(timeDelta) < 0.01) {
+        if (Math.abs(timeDelta) < 0.01 && trackDelta === 0) {
           // No net movement — skip backend call.
           return
         }
@@ -465,9 +612,9 @@ export const TransitionTrack = memo(function TransitionTrack({
         try {
           await postMoveTransitions(projectName, {
             mode,
-            trackDelta: 0,
+            trackDelta,
             timeDeltaSeconds: timeDelta,
-            transitionIds: [trId],
+            transitionIds: draggedIds,
             autoCreateTracks: true,
           })
           onTrimChange?.()
@@ -490,7 +637,7 @@ export const TransitionTrack = memo(function TransitionTrack({
       document.addEventListener('mouseup', onMouseUp)
       document.addEventListener('keydown', onKeyDown)
     },
-    [pxPerSec, projectName, onTrimChange],
+    [pxPerSec, projectName, onTrimChange, selectedIds, tracks, allTransitions, allKeyframes, transitions, keyframes, onTargetTracksChange],
   )
 
   // Safety: release document-level cursor override if the component unmounts mid-drag.
@@ -700,18 +847,64 @@ export const TransitionTrack = memo(function TransitionTrack({
           </div>
         )
       })}
-      {/* Body-drag ghost preview — fixed-positioned at cursor bottom-right (cursor.x+4, cursor.y+4) */}
+      {/* Body-drag ghost preview — fixed-positioned at cursor bottom-right (cursor.x+4, cursor.y+4).
+          Multi-clip ghosts are composited relative to the primary clip's ghost: each rect is
+          offset by (clip.fromTime - primary.fromTime) * pxPerSec horizontally and
+          (clip.sourceTrackIndex - primary.sourceTrackIndex) * trackRowHeight vertically, plus
+          a shared trackDelta * trackRowHeight vertical shift for the cross-track portion. */}
       {ghost && typeof document !== 'undefined' && createPortal(
-        <div
-          className="pointer-events-none fixed z-50 bg-orange-500/30 border border-orange-500 rounded-t-sm"
-          style={{
-            left: ghost.cursorX + 4,
-            top: ghost.cursorY + 4,
-            width: ghost.width,
-            height: 12,
-            opacity: 0.5,
-          }}
-        />,
+        (() => {
+          const rowHeight = trackRowHeight ?? 96
+          const primaryFrom = ghost.primary.fromTimeSeconds
+          const primarySrcIdx = ghost.primary.sourceTrackIndex
+          const verticalShift = ghost.trackDelta * rowHeight
+          const originX = ghost.cursorX + 4
+          const originY = ghost.cursorY + 4
+          // Tooltip values
+          const startT = primaryFrom + ghost.timeDelta
+          const endT = ghost.primary.toTimeSeconds + ghost.timeDelta
+          const fmt = (s: number) => {
+            const safe = Math.max(0, s)
+            const m = Math.floor(safe / 60)
+            const secs = safe - m * 60
+            return `${m}:${secs.toFixed(2).padStart(5, '0')}`
+          }
+          const deltaLabel = `Δ${ghost.timeDelta >= 0 ? '+' : ''}${ghost.timeDelta.toFixed(2)}s`
+          const nClipsSuffix = ghost.clips.length > 1 ? ` · ${ghost.clips.length} clips` : ''
+          return (
+            <>
+              {ghost.clips.map((c) => {
+                const offsetX = (c.fromTimeSeconds - primaryFrom) * pxPerSec
+                const offsetY = (c.sourceTrackIndex - primarySrcIdx) * rowHeight + verticalShift
+                const isPrimary = c.id === ghost.primary.id
+                return (
+                  <div
+                    key={c.id}
+                    className={`pointer-events-none fixed z-50 rounded-t-sm border ${
+                      ghost.mode === 'copy'
+                        ? 'bg-green-500/30 border-green-500'
+                        : 'bg-orange-500/30 border-orange-500'
+                    } ${isPrimary ? 'ring-1 ring-white/40' : ''}`}
+                    style={{
+                      left: originX + offsetX,
+                      top: originY + offsetY,
+                      width: c.widthPx,
+                      height: 12,
+                      opacity: 0.5,
+                    }}
+                  />
+                )
+              })}
+              {/* Tooltip — top-left corner of primary ghost, offset (8, -20) so it sits above */}
+              <div
+                className="pointer-events-none fixed z-50 bg-gray-900 text-xs text-white font-mono px-2 py-1 rounded shadow-lg whitespace-nowrap border border-gray-700"
+                style={{ left: originX + 8, top: originY - 20 }}
+              >
+                {fmt(startT)} → {fmt(endT)} · {ghost.targetTrackName} · {deltaLabel}{nClipsSuffix}
+              </div>
+            </>
+          )
+        })(),
         document.body,
       )}
     </div>
