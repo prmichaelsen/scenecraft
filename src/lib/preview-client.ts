@@ -29,20 +29,21 @@ export class ScrubFetchError extends Error {
  * Fetch a single composited frame from the backend and decode it to an
  * ImageBitmap ready to blit onto a canvas.
  *
- * Requests are never canceled — the caller fires one per scrub tick and
- * relies on the backend's frame cache to warm for every visited t. Paint
- * correctness is gated on the caller side (drop the bitmap if the user
- * has moved on).
+ * Pass an AbortSignal to cancel in-flight fetches — used by the
+ * background prefetcher to drop stale work when the playhead moves.
+ * Primary scrub requests typically don't need cancellation (paint is
+ * gated by caller on the latest-t check).
  */
 export async function fetchScrubFrame(
   project: string,
   t: number,
   quality = 85,
+  signal?: AbortSignal,
 ): Promise<ImageBitmap> {
   const url =
     `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}` +
     `/render-frame?t=${t}&quality=${quality}`
-  const res = await fetch(url, { credentials: 'include' })
+  const res = await fetch(url, { credentials: 'include', signal })
   if (!res.ok) {
     throw new ScrubFetchError(res.status, await res.text().catch(() => ''))
   }

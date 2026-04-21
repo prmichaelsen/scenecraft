@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { openPreviewStream, type PreviewStream } from '@/lib/preview-client'
 
-const MIME_TYPE = 'video/mp4; codecs="avc1.42E01E"'
+// avc1.640028 = H.264 High Profile, Level 4.0 (max 1920×1080 @ ~30fps) —
+// matches what `libx264 preset=faster` emits for 1080p24 content. The
+// previous value `avc1.42E01E` was Baseline L3.0 (max 720p); browser
+// accepted the init but silently refused to decode our 1080p frames,
+// leaving readyState stuck at 1 (HAVE_METADATA) and canplay never firing.
+const MIME_TYPE = 'video/mp4; codecs="avc1.640028"'
 
 /**
  * Wire a <video> element to the backend's MSE playback stream.
@@ -139,15 +144,93 @@ export function useMSEPlayback(
     if (!videoEl) return
 
     if (playing) {
-      console.log('[useMSEPlayback] play action @', currentTimeRef.current)
+      const sb = sourceBufferRef.current
+      const bufferedEnd = sb && sb.buffered.length > 0
+        ? sb.buffered.end(sb.buffered.length - 1)
+        : 0
+      console.log(
+        '[useMSEPlayback] play action @', currentTimeRef.current,
+        'video.currentTime=', videoEl.currentTime.toFixed(3),
+        'buffered.end=', bufferedEnd.toFixed(3),
+        'readyState=', videoEl.readyState,
+      )
+      // Snap video.currentTime to the end of buffered content. In sb.mode =
+      // 'sequence' the video's currentTime is sequence-time (not project-
+      // time) and doesn't reset between play/pause cycles on the same mount.
+      // If stale, video could be positioned past the buffered end and wait
+      // forever for data that won't arrive.
+      if (bufferedEnd > 0) {
+        videoEl.currentTime = bufferedEnd
+      }
       stream?.play(currentTimeRef.current)
-      videoEl.play().catch(() => { /* autoplay may be blocked */ })
+
+      // video.play() on readyState=0 is a no-op in practice — the browser
+      // doesn't auto-start when data eventually arrives. First-play symptom
+      // was "black square." Play now if already ready; otherwise defer to
+      // the next 'canplay' event.
+      const attemptPlay = () => {
+        if (!playingRef.current) return
+        videoEl.play().catch((err) => {
+          console.warn('[useMSEPlayback] video.play() rejected:', err)
+        })
+      }
+      if (videoEl.readyState >= 2 /* HAVE_CURRENT_DATA */) {
+        attemptPlay()
+      } else {
+        console.log('[useMSEPlayback] readyState < 2, deferring play() to canplay')
+        videoEl.addEventListener('canplay', attemptPlay, { once: true })
+      }
     } else {
       console.log('[useMSEPlayback] pause action')
       stream?.pause()
       videoEl.pause()
     }
   }, [playing])
+
+  // Seek: when currentTime jumps (user clicks the playhead bar) during
+  // playback, send a seek action to the backend AND clear the buffered
+  // pre-seek fragments so the video doesn't play through the old buffer
+  // before arriving at the new position.
+  //
+  // Discontinuity detection: a Timeline rAF tick advances currentTime by
+  // ~16ms worth. Any jump >0.3s (or backward) is a user seek.
+  const lastObservedTimeRef = useRef(currentTime)
+  const seekDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!playing) {
+      lastObservedTimeRef.current = currentTime
+      return
+    }
+    const delta = currentTime - lastObservedTimeRef.current
+    lastObservedTimeRef.current = currentTime
+    if (Math.abs(delta) < 0.3) return // normal tick
+
+    console.log(`[useMSEPlayback] seek detected: delta=${delta.toFixed(3)} → ${currentTime.toFixed(3)}`)
+
+    if (seekDebounceRef.current) clearTimeout(seekDebounceRef.current)
+    seekDebounceRef.current = setTimeout(() => {
+      seekDebounceRef.current = null
+      const stream = streamRef.current
+      const sb = sourceBufferRef.current
+      if (!stream) return
+
+      console.log(`[useMSEPlayback] seek action @ ${currentTimeRef.current.toFixed(3)}`)
+      stream.seek(currentTimeRef.current)
+
+      // Clear pre-seek fragments so the new content plays immediately.
+      pendingFragments.current = []
+      if (sb && !sb.updating) {
+        try {
+          sb.abort()
+        } catch { /* noop */ }
+        try {
+          if (sb.buffered.length > 0) {
+            sb.remove(0, sb.buffered.end(sb.buffered.length - 1) + 1)
+          }
+        } catch { /* noop */ }
+      }
+    }, 150)
+  }, [currentTime, playing])
 
   function enqueueFragment(bytes: ArrayBuffer) {
     console.log('[useMSEPlayback] fragment received:', bytes.byteLength, 'bytes (queue now', pendingFragments.current.length + 1, ')')

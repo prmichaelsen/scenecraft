@@ -368,9 +368,14 @@ export function createAudioMixer(
         } else if (!inside && clipNode.active) {
           deactivateClip(clipNode)
         } else if (inside && clipNode.active && isPlaying && clipNode.audio) {
-          // Already active + playing — keep `audio.currentTime` approximately
-          // aligned with the playhead. Skipping the re-sync here avoids
-          // mid-playback hiccups; the browser streams smoothly once started.
+          // Already marked active. If pause() ran previously (which paused
+          // the <audio> element without flipping `active`), the element
+          // will be paused here and needs a fresh play() to resume.
+          if (clipNode.audio.paused) {
+            clipNode.audio.play().catch(() => { /* NotAllowedError — swallow */ })
+          }
+          // Otherwise: already streaming, leave currentTime alone to avoid
+          // mid-playback hiccups.
         }
       }
     }
