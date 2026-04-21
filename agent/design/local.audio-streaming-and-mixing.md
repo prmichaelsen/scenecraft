@@ -300,6 +300,23 @@ The legacy `AudioTrack` stays behind a settings toggle for one release (beats-on
 - **Loudness normalisation preview**: LUFS metering is a natural follow-up once meters land.
 - **Server-preview parity harness**: a scripted A/B that renders the same 10 s passage through the client mixer and server mixdown, and FFT-compares — guards against drift in curve math.
 
+### Audio time remapping
+
+Today an audio clip's timeline span is a simple `[start_time, end_time]` window over the source at `source_offset`. Transitions can have a non-linear time remap (`transitions.remap`) that stretches/compresses their video over the output range; audio on the linked track plays at its source rate and desyncs under any non-linear remap. A fuller model:
+
+- **Linked clips inherit their transition's remap.** When `audio_clip_links` exists, the mixdown reads the transition's remap and applies the same time warp to the audio samples (via phase-vocoder / sinc resample, or in preview via `playbackRate` + a small time-stretch approximation). Zero per-clip UI needed — the edit happens on the video side and audio follows.
+- **Unlinked clips own their own remap.** For standalone music/SFX placed without a transition link, `audio_clips.remap` (already in the schema, currently `{method: "linear", target_duration: 0}`) gets a real curve editor analogous to the transition remap editor: x is source-time, y is output-time, diagonal is 1:1.
+- **Unlinking carries the remap over.** If a user unlinks an audio clip from a transition whose remap was non-trivial, the clip's `audio_clips.remap` is populated from the transition's remap at unlink time. The clip keeps sounding the way it did before unlink. The user can reset to identity via the curve editor if that's not what they want.
+- **Linked + per-clip remap is a precedence question.** The link's remap always wins while the link exists; `audio_clips.remap` is dormant. On unlink, dormancy ends and the clip's own remap takes over.
+
+Implementation sketches:
+- **Engine (`audio/mixdown.py`)**: before resampling a clip, if a link exists, fetch the transition's remap and use `np.interp` to map output-time → source-time sample-by-sample. Falls back to the clip's own remap for unlinked clips. Linear remap stays a fast path (`np.arange`).
+- **Client mixer**: `HTMLAudioElement.playbackRate` handles constant-rate speedups/slowdowns (coarse, but adequate for preview). Non-linear remaps would fall back to "pre-render the warped clip" on the server for preview, keeping the editor loop snappy for the common linear case. Full client-side time-stretch is not worth the complexity.
+- **Unlink hook**: `db.remove_audio_clip_link(clip_id, transition_id)` becomes a two-step operation — copy the transition's current `remap` into `audio_clips.remap`, then delete the link row. Idempotent: a second unlink (no link row) is a no-op.
+- **UI**: the `AudioPropertiesPanel` already shows `remap: {method, target_duration}` as read-only metadata; add a "Time Remap" collapsible with the curve editor once unlinked-audio is a real workflow.
+
+This is a coherent feature, not an immediate need — linked-to-transition is today's primary path and the audio follows the video implicitly via the shared timeline. Track it as a future milestone (M13 candidate) when unlinked music/SFX editing becomes a pressure point.
+
 ---
 
 **Status**: Design Specification
