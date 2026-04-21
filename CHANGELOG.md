@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0] - 2026-04-19
+
+### Added
+- M9 Task 87 — Audio lanes on the Timeline. Multi-track audio tracks render inside the existing Audio section, sorted ascending by `display_order` (mirrored below video per the M9 design). Clips appear as positioned cyan blocks at their `start_time`/`end_time` scaled by `pxPerSec`; muted tracks/clips render dimmed. Track header (sticky left) shows `A{N} + name + muted` marker.
+- `src/lib/audio-client.ts` — REST client for audio tracks/clips (`fetchAudioTracks`, `fetchAudioClips`) with types (`AudioTrack`, `AudioClip`, `AudioClipLink`, `CurvePoint`). `AudioTrack.clips` is populated inline by the `/audio-tracks` endpoint so one SSR fetch covers both.
+- `src/components/editor/AudioLane.tsx` — per-track row component rendering clips as timeline-positioned blocks.
+- `EditorData.audioTracks` added to the server-fn preload — audio lanes render from SSR data with no client-side fetch and no loading flash (follows the `tanstack-cloudflare.ssr-preload` pattern).
+
 ## [0.10.0] - 2026-04-19
 
 ### Added

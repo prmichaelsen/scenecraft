@@ -43,6 +43,7 @@ import {
   type TimelineInfo,
 } from '@/lib/timeline-client'
 import { fetchSettings } from '@/lib/settings-client'
+import { fetchWorkspaceView } from '@/lib/workspace-client'
 
 export type { NarrativeSection, TimelineInfo } from '@/lib/timeline-client'
 
@@ -129,6 +130,10 @@ export type Transition = {
   candidateDetails: CandidateDetail[]  // authoritative list with stable pool_segment_id
   hasSelectedVideo: boolean
   selected: number | string | null  // pool_segment_id (preferred) or legacy variant rank
+  // Clip-trim model (see design/local.clip-trim-and-snap.md)
+  trimIn: number  // in-point into the source video (seconds)
+  trimOut: number | null  // out-point; null means "use full source_video_duration"
+  sourceVideoDuration: number | null  // probed duration of the selected video
   remap: { method: string; target_duration: number; curve_points?: [number, number, number?][] }
   trackId: string
   label: string
@@ -199,13 +204,16 @@ export type EditorData = {
   tracks: import('@/lib/scenecraft-client').Track[]
   audioOnsets: Record<string, Record<string, { time: number; strength: number }[]>>
   promptRoster: import('@/lib/scenecraft-client').PromptRosterEntry[]
+  savedLayout: import('@/components/panel-layout').LayoutNode | null
+  audioTracks: import('@/lib/audio-client').AudioTrack[]
 }
 
 const getEditorData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }): Promise<EditorData> => {
     // Split: heavy AI data is cached client-side, only light data refetched on invalidate
-    const [kfData, beatsData, effectsData, narrativeData, timelineData, settingsData, descriptionsData, promptRosterData] = await Promise.all([
+    const { fetchAudioTracks } = await import('@/lib/audio-client')
+    const [kfData, beatsData, effectsData, narrativeData, timelineData, settingsData, descriptionsData, promptRosterData, savedLayout, audioTracksData] = await Promise.all([
       fetchKeyframes(data.name).catch((e) => { console.error('[editor] fetchKeyframes failed:', e); return { meta: null, keyframes: [], transitions: [], audioFile: null } }),
       fetchBeats(data.name).catch((e) => { console.error('[editor] fetchBeats failed:', e); return { beats: [], sections: [] } }),
       fetchEffects(data.name).catch((e) => { console.error('[editor] fetchEffects failed:', e); return { effects: [], suppressions: [] } }),
@@ -214,6 +222,8 @@ const getEditorData = createServerFn({ method: 'GET' })
       fetchSettings(data.name).catch(() => ({ preview_quality: 50 })),
       fetchDescriptions(data.name).catch(() => [] as AudioDescription[]),
       fetchPromptRoster(data.name).catch(() => [] as import('@/lib/scenecraft-client').PromptRosterEntry[]),
+      fetchWorkspaceView(data.name, '_autosave_v3').then((v) => (v && typeof v === 'object' ? v as import('@/components/panel-layout').LayoutNode : null)).catch(() => null),
+      fetchAudioTracks(data.name).catch((e) => { console.error('[editor] fetchAudioTracks failed:', e); return [] as import('@/lib/audio-client').AudioTrack[] }),
     ])
     // AI data placeholder — loaded separately on client to avoid refetching 5MB on every invalidate
     const aiData = { activeFile: null as string | null, events: [] as AudioEvent[], sections: [] as { start_time: number; end_time: number; type: string; label: string; description: string }[], rules: [] as import('@/lib/scenecraft-client').AudioRule[], ruleCount: 0, onsets: {} as Record<string, Record<string, { time: number; strength: number }[]>> }
@@ -306,6 +316,9 @@ const getEditorData = createServerFn({ method: 'GET' })
           candidates,
           hasSelectedVideo,
           selected,
+          trimIn: (tr.trimIn as number) ?? 0,
+          trimOut: tr.trimOut != null ? (tr.trimOut as number) : null,
+          sourceVideoDuration: tr.sourceVideoDuration != null ? (tr.sourceVideoDuration as number) : null,
           remap: (tr.remap as Transition['remap']) || { method: 'linear', target_duration: 0 },
           trackId: (tr.trackId as string) || 'track_1',
           label: (tr.label as string) || '',
@@ -369,6 +382,8 @@ const getEditorData = createServerFn({ method: 'GET' })
         hidden: !!t.hidden,
       })),
       promptRoster: promptRosterData,
+      savedLayout,
+      audioTracks: audioTracksData,
     }
   })
 

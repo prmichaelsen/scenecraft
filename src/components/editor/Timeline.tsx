@@ -8,6 +8,7 @@ import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
 import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
+import { AudioLane } from './AudioLane'
 import { scenecraftFileUrl } from '@/lib/scenecraft-client'
 import { VideoTrack } from './VideoTrack'
 import { TransitionTrack } from './TransitionTrack'
@@ -57,19 +58,19 @@ const TrackHeader = memo(function TrackHeader({ track, isActive, scrollLeft, onS
       onClick={onSelect}
     >
       <div className="absolute top-0 h-full flex items-center gap-1.5 px-2 z-[5] bg-inherit" style={{ left: scrollLeft }}>
-      <button
-        onClick={(e) => { e.stopPropagation(); onUpdate({ enabled: !track.enabled }) }}
-        className={`text-[10px] px-1 rounded font-medium ${track.enabled ? 'text-green-400 hover:text-green-300' : 'text-gray-600 hover:text-gray-500'}`}
-        title={track.enabled ? 'Mute track (still shown on timeline)' : 'Unmute track'}
-      >{track.enabled ? 'Mute' : 'Muted'}</button>
-
       <span className="text-[10px] text-gray-400 font-medium truncate">{track.name}</span>
 
       <button
         onClick={(e) => { e.stopPropagation(); onOpenSettings?.() }}
         className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
-        title="Track settings"
-      >Settings</button>
+        title="Track properties"
+      >Properties</button>
+
+      <button
+        onClick={(e) => { e.stopPropagation(); onUpdate({ enabled: !track.enabled }) }}
+        className={`text-[10px] px-1 rounded font-medium ${track.enabled ? 'text-green-400 hover:text-green-300' : 'text-gray-600 hover:text-gray-500'}`}
+        title={track.enabled ? 'Mute track (still shown on timeline)' : 'Unmute track'}
+      >{track.enabled ? 'Mute' : 'Muted'}</button>
 
       {onMoveUp && <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>}
       {onMoveDown && <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>}
@@ -431,6 +432,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     if (!v2) return
     editorState.setSelectedTransition(selectedTransition)
   }, [v2, selectedTransition]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!v2) return
+    editorState.setTrackPropertiesId(trackSettingsId)
+  }, [v2, trackSettingsId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restore persisted heights from localStorage after mount (SSR-safe)
   useEffect(() => {
@@ -1144,27 +1150,36 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
   const handleKeyframeClick = useCallback((kf: KeyframeWithTime, shiftKey?: boolean) => {
     setSelectedTrackId(kf.trackId)
+    // Any kf click swaps the Properties panel away from track settings.
+    setTrackSettingsId(null)
     if (shiftKey) {
       // Shift-click: toggle in multi-select set
       setSelectedKeyframeIds((prev) => {
         const next = new Set(prev)
-        if (next.has(kf.id)) {
-          next.delete(kf.id)
-        } else {
-          next.add(kf.id)
-        }
+        if (next.has(kf.id)) next.delete(kf.id)
+        else next.add(kf.id)
         return next
       })
+      setSelectedKeyframe(kf)
       return
     }
-    // Normal click: clear multi-select, toggle single
-    setSelectedKeyframeIds(new Set())
+    // Normal click: seed the multi-select set with just this kf so subsequent
+    // shift-clicks extend from it. Clicking the same kf twice clears selection.
     closeAllPanels()
-    setSelectedKeyframe((prev) => prev?.id === kf.id ? null : kf)
+    setSelectedKeyframe((prev) => {
+      if (prev?.id === kf.id) {
+        setSelectedKeyframeIds(new Set())
+        return null
+      }
+      setSelectedKeyframeIds(new Set([kf.id]))
+      return kf
+    })
   }, [closeAllPanels])
 
   const handleTransitionClick = useCallback((tr: Transition, shiftKey?: boolean) => {
     setSelectedTrackId(tr.trackId)
+    // Any tr click swaps the Properties panel away from track settings.
+    setTrackSettingsId(null)
     if (shiftKey) {
       // Shift+click: toggle in multi-select
       setSelectedTransitionIds((prev) => {
@@ -1173,14 +1188,20 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         else next.add(tr.id)
         return next
       })
-      // Keep single selection for panel display
       setSelectedTransition(tr)
       return
     }
-    // Normal click: clear multi-select
-    setSelectedTransitionIds(new Set())
+    // Normal click: seed the multi-select set with this tr so subsequent
+    // shift-clicks extend from it. Clicking the same tr twice clears.
     closeAllPanels()
-    setSelectedTransition((prev) => prev?.id === tr.id ? null : tr)
+    setSelectedTransition((prev) => {
+      if (prev?.id === tr.id) {
+        setSelectedTransitionIds(new Set())
+        return null
+      }
+      setSelectedTransitionIds(new Set([tr.id]))
+      return tr
+    })
   }, [closeAllPanels])
 
   // Effects handlers
@@ -2403,6 +2424,14 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               <div className="sticky left-0 top-0 px-2 py-1 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
                 Audio
               </div>
+              {/* Multi-track audio lanes (M9) — mirrored below video, sorted ascending by display_order */}
+              {data.audioTracks && data.audioTracks.length > 0 && (
+                <div className="relative">
+                  {[...data.audioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => (
+                    <AudioLane key={t.id} track={t} pxPerSec={pxPerSec} />
+                  ))}
+                </div>
+              )}
               {/* Beat markers */}
               <BeatMarkers beats={data.beats} audioEvents={aiAudioEvents} pxPerSec={pxPerSec} />
               {data.audioFile && (
@@ -3137,7 +3166,7 @@ function SuppressionEditorPanel({ suppression, onUpdate, onUpdateSuppression, on
   )
 }
 
-function TrackSettingsPanel({ track, onClose, onUpdate }: {
+export function TrackSettingsPanel({ track, onClose, onUpdate }: {
   track: Track
   onClose: () => void
   onUpdate: (updates: Partial<Track>) => void
