@@ -3,7 +3,7 @@
 **Milestone**: [M10 — Clip Move Cross-Track](../../milestones/milestone-10-clip-move-cross-track.md)  
 **Design**: [local.clip-move-cross-track.md](../../design/local.clip-move-cross-track.md)  
 **Estimated Hours**: 3-4  
-**Status**: Not Started  
+**Status**: Completed  
 **Dependencies**: Task 95 (overlap resolution)  
 
 ---
@@ -61,15 +61,15 @@ Support `mode: "copy"` on `/move-transitions` — duplicate the dragged clips at
 
 ## Verification
 
-- [ ] `mode: "copy"` accepted; source clips unchanged after operation
-- [ ] New tr rows inserted with all fields cloned except `id`, `track_id`, `from_kf`/`to_kf`, `duration_seconds`
-- [ ] `tr_candidates` junction rows cloned for each copied tr (same `pool_segment_id`, `rank`, etc.)
-- [ ] No pool file duplication (both original and copy reference same files)
-- [ ] `selected_transitions/{new_tr_id}_slot_N.mp4` cache refreshed for each populated slot
-- [ ] Overlap resolution on target works identically to move mode
-- [ ] Response `movedTransitionIds` contains new tr IDs (the copies)
-- [ ] Undo reverts copy in one entry
-- [ ] All tests pass
+- [x] `mode: "copy"` accepted; source clips unchanged after operation
+- [x] New tr rows inserted with all fields cloned except `id`, `track_id`, `from_kf`/`to_kf`, `duration_seconds`
+- [x] `tr_candidates` junction rows cloned for each copied tr (same `pool_segment_id`, `rank`, etc.)
+- [x] No pool file duplication (both original and copy reference same files)
+- [x] `selected_transitions/{new_tr_id}_slot_N.mp4` cache refreshed for each populated slot
+- [x] Overlap resolution on target works identically to move mode
+- [x] Response `movedTransitionIds` contains new tr IDs (the copies)
+- [x] Undo reverts copy in one entry (single undo group wraps the whole operation)
+- [x] All tests pass (26/26 in `tests/test_move_transitions.py`, including 7 new copy-mode tests)
 
 ---
 
