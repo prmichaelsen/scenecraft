@@ -730,8 +730,8 @@ milestones:
         actual_hours: null
       - id: task-87
         name: Timeline audio lanes + mirrored layout
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-19T02:00:00Z
         file: agent/tasks/milestone-9-audio-tracks-and-clips/task-87-timeline-audio-lanes.md
         estimated_hours: 6
         actual_hours: null
@@ -829,6 +829,59 @@ milestones:
         started: null
         file: agent/tasks/milestone-10-clip-move-cross-track/task-99-frontend-overlap-preview-and-copy.md
         estimated_hours: 7
+        actual_hours: null
+
+  - id: milestone_11
+    name: Audio Isolation Plugin (First-Party MVP)
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-11-audio-isolation-plugin.md
+    tasks_total: 6
+    tasks_completed: 0
+    estimated_weeks: 2
+    tasks:
+      - id: task-100
+        name: Schema & audio_candidates helpers
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-100-schema-and-helpers.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-101
+        name: Plugin host scaffolding (plugin-api + PluginHost)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-101-plugin-host-scaffolding.md
+        estimated_hours: 4
+        actual_hours: null
+      - id: task-102
+        name: Backend isolate-vocals plugin (DFN3 + REST)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-102-backend-plugin.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-103
+        name: Frontend isolate-vocals plugin (manifest + descriptor + dialog + client)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-103-frontend-plugin.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-104
+        name: AudioClipPanel (candidates UI)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-104-audio-clip-panel.md
+        estimated_hours: 5
+        actual_hours: null
+      - id: task-105
+        name: Chat tool isolate_vocals + elicitation gate
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-105-chat-tool.md
+        estimated_hours: 2
         actual_hours: null
 
 tasks:
@@ -1406,6 +1459,55 @@ tasks:
       estimated_hours: 7
       actual_hours: null
       started: null
+  milestone_11:
+    - id: task-100
+      name: Schema & audio_candidates helpers
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-100-schema-and-helpers.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-101
+      name: Plugin host scaffolding (plugin-api + PluginHost)
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-101-plugin-host-scaffolding.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-102
+      name: Backend isolate-vocals plugin (DFN3 + REST)
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-102-backend-plugin.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-103
+      name: Frontend isolate-vocals plugin
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-103-frontend-plugin.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-104
+      name: AudioClipPanel (candidates UI)
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-104-audio-clip-panel.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-105
+      name: Chat tool isolate_vocals + elicitation gate
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-105-chat-tool.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
   unassigned:
     - id: task-13
       name: Polish Interactive Transform Handles
@@ -1491,6 +1593,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M11: Audio Isolation Plugin — first real plugin (DFN3 denoise); validates plugin seams (6 tasks, ~25 hours, 2 weeks)"
   - "M6: Git-Style Version Control — SSH auth, UUID migration, object store, branches, merge (15 tasks, ~85 hours)"
   - "M2: Dynamic Panel Layout — migrate all panels to 4-column dockview layout"
   - "M3: Contribution Points — backend/frontend placeholders, plugin manifest schema"
