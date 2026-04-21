@@ -1,7 +1,15 @@
 /**
- * Records a preview by capturing the BeatEffectPreview canvas + audio
- * using MediaRecorder API. Outputs a WebM file.
+ * Records a preview of the editor by capturing the active <PreviewViewport>
+ * surface (canvas when paused, <video> during MSE playback) plus audio, using
+ * the MediaRecorder API. Outputs a WebM file.
+ *
+ * The recorder delegates surface choice to the component handle — during scrub
+ * the canvas is on top and is what a user sees; during playback the video
+ * element is. Both expose `.captureStream()` so the rest of the pipeline is
+ * identical.
  */
+
+import type { PreviewViewportHandle } from '@/components/editor/PreviewViewport'
 
 export type RecordingState = {
   status: 'idle' | 'recording' | 'finishing'
@@ -11,17 +19,23 @@ export type RecordingState = {
 }
 
 export async function recordPreview(opts: {
-  canvas: HTMLCanvasElement
+  handle: PreviewViewportHandle
   audioElement: HTMLAudioElement
   startTime: number
   endTime: number
   onProgress: (progress: number) => void
 }): Promise<Blob> {
-  const { canvas, audioElement, startTime, endTime, onProgress } = opts
+  const { handle, audioElement, startTime, endTime, onProgress } = opts
   const duration = endTime - startTime
 
-  // Capture video stream from canvas
-  const videoStream = canvas.captureStream(24)
+  const surface = handle.getActiveSurface()
+  if (!surface) {
+    throw new Error('Preview surface not ready (no canvas or video yet)')
+  }
+
+  // Capture the current surface — works for both HTMLCanvasElement and
+  // HTMLVideoElement since both implement captureStream().
+  const videoStream = (surface as HTMLCanvasElement | HTMLVideoElement).captureStream(24)
 
   // Capture audio stream from audio element
   const audioCtx = new AudioContext()
@@ -49,8 +63,8 @@ export async function recordPreview(opts: {
   return new Promise<Blob>((resolve, reject) => {
     recorder.onstop = () => {
       // Disconnect audio routing
-      try { source.disconnect(dest) } catch {}
-      try { audioCtx.close() } catch {}
+      try { source.disconnect(dest) } catch { /* noop */ }
+      try { audioCtx.close() } catch { /* noop */ }
       resolve(new Blob(chunks, { type: 'video/webm' }))
     }
     recorder.onerror = (e) => reject(e)
