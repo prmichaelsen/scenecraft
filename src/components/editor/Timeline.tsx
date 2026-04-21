@@ -17,7 +17,6 @@ import { Playhead } from './Playhead'
 import { KeyframePanel, preloadStills } from './KeyframePanel'
 import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
-import { BeatEffectPreview, type BeatEffectPreviewHandle } from './BeatEffectPreview'
 import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { getPluginBlendModes } from '@/lib/plugin-api'
 import { useEditorState } from './EditorStateContext'
@@ -25,7 +24,7 @@ import { useCurrentTime } from './CurrentTimeContext'
 import { usePreview } from './PreviewContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
-import { preloadTransition, preloadKeyframeImage, getFrameAtProgress, getFrames, isLoaded, isInMemory, getLoadProgress, setPreviewResolution, setKeyTimestamp, setPlayheadPosition, setEvictionProtectWindow, setMaxConcurrentPreloads, invalidateEntry } from '@/lib/frame-cache'
+import { PreviewViewport, type PreviewViewportHandle } from './PreviewViewport'
 import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
@@ -496,13 +495,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     return () => ro.disconnect()
   }, [])
 
-  // Compute canvas resolution from quality percentage and project resolution
-  const canvasWidth = Math.round(data.meta.resolution[0] * previewQuality / 100)
-  const canvasHeight = Math.round(data.meta.resolution[1] * previewQuality / 100)
-
-  // Keep frame cache resolution in sync — called during render (not in effect)
-  // so globals are set before any preload effects read dbKey()
-  setPreviewResolution(canvasWidth, canvasHeight)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Drag-select state
   const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; metaKey: boolean; trackId: string | null; active: boolean; armed: boolean } | null>(null)
@@ -515,7 +507,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const audioDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
-  const previewRef = useRef<BeatEffectPreviewHandle>(null)
+  const previewRef = useRef<PreviewViewportHandle>(null)
   const localAudioElRef = useRef<HTMLAudioElement | null>(null)
   const audioElRef = ctxTime ? ctxTime.audioElRef : localAudioElRef
   const [recording, setRecording] = useState<{ progress: number } | null>(null)
@@ -565,19 +557,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Partial refetch — only keyframes + transitions + audio tracks (fast, ~500KB)
   const refreshTimeline = useCallback(() => {
     getTimelineData({ data: { name: data.projectName } }).then((tl) => {
-      // Invalidate frame cache for keyframes whose selected variant changed
-      const oldKfMap = new Map(localKeyframes.map((kf) => [kf.id, kf.selected]))
-      for (const kf of tl.keyframes) {
-        const oldSel = oldKfMap.get(kf.id)
-        if (oldSel !== kf.selected) {
-          invalidateEntry(`kf:${kf.id}`)
-        }
-      }
       setLocalKeyframes(tl.keyframes)
       setLocalTransitions(tl.transitions)
       if (tl.audioTracks) setLocalAudioTracks(tl.audioTracks)
     }).catch((e) => { console.error('refreshTimeline failed:', e); router.invalidate() })
-  }, [data.projectName, router, localKeyframes])
+  }, [data.projectName, router])
 
   const reloadAudioIntelligence = useCallback(() => {
     getAudioIntelligenceData({ data: { name: data.projectName } }).then((ai) => {
@@ -664,209 +648,18 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
   }, [localTransitions, kfMap, selectedTrackId, currentTime])
 
-  // Preload keyframe images and transition videos near the playhead.
-  // Runs on time changes and data changes — avoids enqueuing hundreds of decodes at once.
-  const [preloadWindow, setPreloadWindow] = useState(() => {
-    const metaVal = (data.meta as Record<string, unknown>).preload_window as number
-    if (metaVal) return metaVal
-    if (typeof window === 'undefined') return 30
-    const stored = localStorage.getItem('scenecraft-preload-window')
-    return stored ? parseInt(stored, 10) : 30
-  })
-  // Listen for settings changes (from SettingsPanel)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const val = (e as CustomEvent).detail as number
-      setPreloadWindow(val)
-    }
-    window.addEventListener('scenecraft-preload-window', handler)
-    return () => window.removeEventListener('scenecraft-preload-window', handler)
-  }, [])
-  const PRELOAD_WINDOW = preloadWindow
-  // Sync eviction protection to match the configured preload window
-  useEffect(() => { setEvictionProtectWindow(preloadWindow) }, [preloadWindow])
+  // Frame preloading and progress tracking used to live here. After the
+  // M11 backend-rendered preview migration, the backend owns frame
+  // assembly — the frontend no longer preloads keyframe images / transition
+  // videos, and there's no on-disk frame cache to drive render progress
+  // bars. Transition-level decode progress via the former `renderProgress`
+  // map is no longer emitted. If/when we want per-clip "is the backend
+  // render done?" UI, it should come from the backend's render-cache stats
+  // endpoint, not from local preloading.
+  const [renderProgress] = useState<Record<string, number>>({})
 
-  // Apply max concurrent preloads from project meta
-  useEffect(() => {
-    const v = (data.meta as Record<string, unknown>).max_concurrent_preloads as number
-    if (v) setMaxConcurrentPreloads(v)
-  }, [data.meta])
-  // Always keep timestamps fresh so eviction knows what's near the playhead
-  useEffect(() => {
-    for (const kf of keyframes) {
-      if (!kf.hasSelectedImage) continue
-      const key = `kf:${kf.id}`
-      setKeyTimestamp(key, kf.timeSeconds)
-    }
-    for (const tr of localTransitions) {
-      if (!tr.hasSelectedVideo) continue
-      const fromKf = kfMap.get(tr.from)
-      if (!fromKf) continue
-      const selectedVariant = tr.selected ?? 'none'
-      const key = `tr:${tr.id}:v${selectedVariant}`
-      setKeyTimestamp(key, fromKf.timeSeconds)
-    }
-  }, [keyframes, localTransitions, kfMap])
-
-  // Throttle preload enqueues — expensive decode work, not needed every frame
-  // Sort by proximity so nearest clips load first and aren't evicted by far ones
-  const lastPreloadTime = useRef(0)
-  const preloadReady = useRef(false)
-  useEffect(() => { const t = setTimeout(() => { preloadReady.current = true }, 2000); return () => clearTimeout(t) }, [])
-  useEffect(() => {
-    if (!preloadReady.current) return
-    if (Math.abs(currentTime - lastPreloadTime.current) < 1.0) return
-    lastPreloadTime.current = currentTime
-
-    const kfWork: { dist: number; run: () => void }[] = []
-    for (const kf of keyframes) {
-      if (!kf.hasSelectedImage) continue
-      const dist = Math.abs(kf.timeSeconds - currentTime)
-      if (dist > PRELOAD_WINDOW) continue
-      const key = `kf:${kf.id}`
-      if (!isInMemory(key)) {
-        kfWork.push({ dist, run: () => preloadKeyframeImage(key, scenecraftFileUrl(data.projectName, `selected_keyframes/${kf.id}.png`) + `?v=${kf.selected ?? 0}`) })
-      }
-    }
-
-    const trWork: { dist: number; run: () => void }[] = []
-    for (const tr of localTransitions) {
-      if (!tr.hasSelectedVideo) continue
-      const fromKf = kfMap.get(tr.from)
-      if (!fromKf) continue
-      const dist = Math.abs(fromKf.timeSeconds - currentTime)
-      if (dist > PRELOAD_WINDOW) continue
-      const selectedVariant = tr.selected ?? 'none'
-      const key = `tr:${tr.id}:v${selectedVariant}`
-      if (!isInMemory(key)) {
-        trWork.push({ dist, run: () => preloadTransition(key, scenecraftFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`)) })
-      }
-    }
-
-    // Process nearest first — ensures close clips load before far ones trigger eviction
-    for (const w of [...kfWork, ...trWork].sort((a, b) => a.dist - b.dist)) w.run()
-  }, [currentTime, localTransitions, localKeyframes, data.projectName, canvasWidth, canvasHeight])
-
-  // Update playhead position for proximity-based cache eviction
-  useEffect(() => {
-    setPlayheadPosition(currentTime)
-  }, [currentTime])
-
-  // Poll frame decode progress for render bars — show for all transitions in viewport
-  // Keys: tr_001, tr_002 (transition IDs) and kf_001, kf_002 (keyframe IDs) — no collisions
-  const [renderProgress, setRenderProgress] = useState<Record<string, number>>({})
-  const prevProgressRef = useRef<string>('')
-  useEffect(() => {
-    const BUFFER_SEC = 5 // small buffer beyond viewport edges
-    const viewStartSec = Math.max(0, scrollLeft / pxPerSec - BUFFER_SEC)
-    const viewEndSec = (scrollLeft + viewportWidth) / pxPerSec + BUFFER_SEC
-
-    const update = () => {
-      const progress: Record<string, number> = {}
-
-      for (const tr of localTransitions) {
-        if (!tr.hasSelectedVideo) continue
-        const fromKf = kfMap.get(tr.from)
-        const toKf = kfMap.get(tr.to)
-        if (!fromKf || !toKf) continue
-        // Skip if transition is entirely outside viewport
-        if (toKf.timeSeconds < viewStartSec || fromKf.timeSeconds > viewEndSec) continue
-        const selectedVariant = tr.selected ?? 'none'
-        const key = `tr:${tr.id}:v${selectedVariant}`
-        const p = getLoadProgress(key)
-        progress[tr.id] = p !== null ? p : isLoaded(key) ? 1 : 0
-      }
-
-      const serialized = JSON.stringify(progress)
-      if (serialized !== prevProgressRef.current) {
-        prevProgressRef.current = serialized
-        setRenderProgress(progress)
-      }
-    }
-    update()
-    const interval = setInterval(update, 250)
-    return () => clearInterval(interval)
-  }, [localTransitions, keyframes, scrollLeft, viewportWidth, pxPerSec])
-
-  // Build adjacency lookup: which transition comes before/after each transition?
-  const { trEndingAt, trStartingAt } = useMemo(() => {
-    const sorted = [...localTransitions]
-      .filter((tr) => tr.hasSelectedVideo && kfMap.has(tr.from) && kfMap.has(tr.to))
-      .sort((a, b) => kfMap.get(a.from)!.timeSeconds - kfMap.get(b.from)!.timeSeconds)
-    const ending = new Map<string, Transition>()
-    const starting = new Map<string, Transition>()
-    for (const tr of sorted) {
-      ending.set(tr.to, tr)
-      starting.set(tr.from, tr)
-    }
-    return { trEndingAt: ending, trStartingAt: starting }
-  }, [localTransitions, kfMap])
-
-  // Get crossfade frame pair for smooth transitions at all boundaries
-  const CROSSFADE_FRAMES = 4 // 4 frames each side = 8 frame overlap at 24fps (~333ms)
-  const crossfadeData = useMemo(() => {return (() => {
-    if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) {
-      // No transition — check if we're in a gap or at a keyframe hold
-      if (currentKeyframe) {
-        const hasOutgoing = localTransitions.some((tr) => tr.from === currentKeyframe.id)
-        const kfIdx = keyframes.findIndex((k) => k.id === currentKeyframe.id)
-        const nextKf = kfIdx >= 0 && kfIdx < keyframes.length - 1 ? keyframes[kfIdx + 1] : null
-        // Gap: no outgoing transition and we're past the keyframe
-        if (!hasOutgoing && nextKf && currentTime > currentKeyframe.timeSeconds + 0.1) {
-          return { frameA: null, frameB: null, blendFactor: 0 }
-        }
-        const kfKey = `kf:${currentKeyframe.id}`
-        const kfFrame = getFrameAtProgress(kfKey, 0)
-        if (kfFrame) return { frameA: kfFrame, frameB: null, blendFactor: 0 }
-      }
-      return { frameA: null, frameB: null, blendFactor: 0 }
-    }
-
-    const tStart = activeTransitionFrom.timeSeconds
-    const tEnd = activeTransitionTo.timeSeconds
-    const linearProgress = Math.max(0, Math.min(0.999, (currentTime - tStart) / (tEnd - tStart)))
-    const progress = activeTransition.remap.method === 'curve'
-      ? evaluateCurve(activeTransition.remap.curve_points, linearProgress)
-      : linearProgress
-
-    const selectedVariant = activeTransition.selected ?? 'none'
-    const key = `tr:${activeTransition.id}:v${selectedVariant}`
-    const entry = getFrames(key)
-    const totalFrames = entry?.frames.length ?? 0
-    const currentFrameIdx = totalFrames > 0
-      ? Math.min(Math.floor(progress * totalFrames), totalFrames - 1)
-      : 0
-    const frameA = getFrameAtProgress(key, progress)
-
-    // Crossfade at transition boundaries
-    const xfade = Math.min(CROSSFADE_FRAMES, Math.floor(totalFrames / 2))
-    if (xfade <= 0 || totalFrames === 0) {
-      return { frameA, frameB: null, blendFactor: 0 }
-    }
-
-    // Transition start: crossfade from previous keyframe image (skip if previous is a transition — its end zone handles it)
-    const prevTr = trEndingAt.get(activeTransition.from)
-    if (!prevTr && currentFrameIdx < xfade) {
-      const blend = currentFrameIdx / xfade
-      const kfKey = `kf:${activeTransition.from}`
-      return { frameA: getFrameAtProgress(kfKey, 0), frameB: frameA, blendFactor: blend }
-    }
-
-    // Transition end: crossfade to next transition's first frame or keyframe image
-    if (currentFrameIdx >= totalFrames - xfade) {
-      const blend = (currentFrameIdx - (totalFrames - xfade)) / xfade
-      const nextTr = trStartingAt.get(activeTransition.to)
-      if (nextTr) {
-        const nextVariant = nextTr.selected ?? 'none'
-        const nextKey = `tr:${nextTr.id}:v${nextVariant}`
-        return { frameA, frameB: getFrameAtProgress(nextKey, 0), blendFactor: blend }
-      }
-      const kfKey = `kf:${activeTransition.to}`
-      return { frameA, frameB: getFrameAtProgress(kfKey, 0), blendFactor: blend }
-    }
-
-    return { frameA, frameB: null, blendFactor: 0 }
-  })()}, [activeTransition, activeTransitionFrom, activeTransitionTo, currentKeyframe, currentTime, keyframes, localTransitions, trEndingAt, trStartingAt])
+  // Crossfade computation + adjacency lookup + local frame-pair assembly
+  // used to live here. Backend compositor now handles all crossfades.
 
   // Play audio from the active transition's video (Veo-generated audio)
   const transitionAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -927,134 +720,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     }
   }, [])
 
-  // Compute per-track layers for multi-track compositing
-  const trackLayers: import('./BeatEffectPreview').TrackLayer[] = useMemo(() => {return (() => {
-    // Always build layers — compositor handles 1 or N tracks uniformly
-    // Compositor: first layer with content becomes base, subsequent layers paint ON TOP.
-    // Track 1 (zOrder 0) = base, Track 2 (zOrder 1) = overlaid on top. Ascending order.
-    const layers = [...data.tracks]
-      .filter((t) => t.enabled)
-      .sort((a, b) => a.zOrder - b.zOrder)
-      .map((track) => {
-      const tKfs = trackKeyframes.get(track.id) || []
-      const tTrs = trackTransitions.get(track.id) || []
-      // Find current keyframe for this track
-      const curKf = [...tKfs].reverse().find((kf) => kf.timeSeconds <= currentTime)
-      // Find active transition for this track
-      const tKfMap = new Map(tKfs.map((kf) => [kf.id, kf]))
-      // Find transition spanning current time — highest z-index (last/highest ID) wins when overlapping
-      // Check if current time falls within any hidden transition — if so, skip this layer entirely
-      const inHiddenTr = tTrs.some((tr) => {
-        if (!tr.hidden) return false
-        const from = tKfMap.get(tr.from)
-        const to = tKfMap.get(tr.to)
-        if (!from || !to) return false
-        return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
-      })
-      if (inHiddenTr) {
-        return { frameA: null, frameB: null, blendFactor: 0, opacity: 0, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
-      }
-      const activeTr = tTrs.filter((tr) => {
-        const from = tKfMap.get(tr.from)
-        const to = tKfMap.get(tr.to)
-        if (!from || !to) return false
-        return currentTime >= from.timeSeconds && currentTime < to.timeSeconds
-      }).at(-1) ?? null
-      if (activeTr) {
-        const from = tKfMap.get(activeTr.from)!
-        const to = tKfMap.get(activeTr.to)!
-        const linearProgress = Math.max(0, Math.min(0.999, (currentTime - from.timeSeconds) / (to.timeSeconds - from.timeSeconds)))
-
-        // Evaluate curves shared by both normal and adjustment transitions
-        let trOpacity = activeTr.opacityCurve
-          ? evaluateCurve(activeTr.opacityCurve, linearProgress)
-          : activeTr.opacity != null ? activeTr.opacity : track.baseOpacity
-        const trElapsed = currentTime - from.timeSeconds
-        let trInvert = 0
-        for (const fx of activeTr.effects || []) {
-          if (!fx.enabled) continue
-          if (fx.type === 'strobe') {
-            const period = fx.params.period || (1 / (fx.params.frequency || 8))
-            const duty = fx.params.duty || 0.5
-            if ((trElapsed / period) % 1 > duty) trOpacity = 0
-          } else if (fx.type === 'invert') {
-            trInvert = fx.params.amount ?? 1
-          }
-        }
-        const trRed = activeTr.redCurve ? evaluateCurve(activeTr.redCurve, linearProgress) : 1
-        const trGreen = activeTr.greenCurve ? evaluateCurve(activeTr.greenCurve, linearProgress) : 1
-        const trBlue = activeTr.blueCurve ? evaluateCurve(activeTr.blueCurve, linearProgress) : 1
-        const trBlack = activeTr.blackCurve ? evaluateCurve(activeTr.blackCurve, linearProgress) : 0
-        const trSaturation = activeTr.saturationCurve ? evaluateCurve(activeTr.saturationCurve, linearProgress) : 1
-        const trHueShift = activeTr.hueShiftCurve ? evaluateCurve(activeTr.hueShiftCurve, linearProgress) : 0
-        const trInvertCurve = activeTr.invertCurve ? evaluateCurve(activeTr.invertCurve, linearProgress) : 0
-        trInvert = Math.min(1, trInvert + trInvertCurve)
-        const trBrightness = activeTr.brightnessCurve ? evaluateCurve(activeTr.brightnessCurve, linearProgress) : 0
-        const trContrast = activeTr.contrastCurve ? evaluateCurve(activeTr.contrastCurve, linearProgress) : 1
-        const trExposure = activeTr.exposureCurve ? evaluateCurve(activeTr.exposureCurve, linearProgress) : 0
-
-        const mask = activeTr.maskRadius != null ? {
-          centerX: activeTr.maskCenterX ?? 0.5,
-          centerY: activeTr.maskCenterY ?? 0.5,
-          radius: activeTr.maskRadius,
-          feather: activeTr.maskFeather ?? 0,
-        } : undefined
-        const trTransformX = activeTr.transformXCurve ? evaluateCurve(activeTr.transformXCurve, linearProgress) : (activeTr.transformX ?? 0)
-        const trTransformY = activeTr.transformYCurve ? evaluateCurve(activeTr.transformYCurve, linearProgress) : (activeTr.transformY ?? 0)
-        const trScale = activeTr.transformZCurve ? evaluateCurve(activeTr.transformZCurve, linearProgress) : 1.0
-        const hasAnchor = activeTr.anchorX != null || activeTr.anchorY != null
-        const hasTransform = trTransformX !== 0 || trTransformY !== 0 || trScale !== 1.0 || hasAnchor || activeTr.transformXCurve || activeTr.transformYCurve || activeTr.transformZCurve
-        const transform = hasTransform ? {
-          x: trTransformX,
-          y: trTransformY,
-          scale: trScale,
-          anchorX: activeTr.anchorX ?? 0.5,
-          anchorY: activeTr.anchorY ?? 0.5,
-        } : undefined
-
-        if (activeTr.isAdjustment) {
-          return { frameA: null, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: 'normal' as import('@/lib/scenecraft-client').BlendMode, isAdjustment: true, mask, transform } as import('./BeatEffectPreview').TrackLayer
-        }
-
-        const progress = activeTr.remap?.method === 'curve'
-          ? evaluateCurve(activeTr.remap.curve_points, linearProgress)
-          : linearProgress
-        let frameA: ImageBitmap | null = null
-        if (activeTr.hasSelectedVideo) {
-          const variant = activeTr.selected ?? 'none'
-          const key = `tr:${activeTr.id}:v${variant}`
-          frameA = getFrameAtProgress(key, progress)
-        }
-        // Fallback: show the from-keyframe image
-        if (!frameA) {
-          const kfKey = `kf:${from.id}`
-          frameA = getFrameAtProgress(kfKey, 0)
-        }
-        const trBlend = (activeTr.blendMode || curKf?.blendMode || track.blendMode) as import('@/lib/scenecraft-client').BlendMode
-        return { frameA, frameB: null, blendFactor: 0, opacity: trOpacity, red: trRed, green: trGreen, blue: trBlue, black: trBlack, saturation: trSaturation, hueShift: trHueShift, invert: trInvert, brightness: trBrightness, contrast: trContrast, exposure: trExposure, blendMode: trBlend, chromaKey: activeTr.chromaKey || track.chromaKey, mask, transform } as import('./BeatEffectPreview').TrackLayer
-      }
-      if (curKf) {
-        const kfKey = `kf:${curKf.id}`
-        const frameA = getFrameAtProgress(kfKey, 0)
-        if (!frameA && curKf.hasSelectedImage) {
-          console.warn(`[layer] ${track.id} curKf=${curKf.id} hasImage=true but frame=null (not loaded yet?)`)
-        }
-        const kfOpacity = curKf.opacity != null ? curKf.opacity : track.baseOpacity
-        const kfBlend = (curKf.blendMode || track.blendMode) as import('@/lib/scenecraft-client').BlendMode
-        return { frameA: curKf.hasSelectedImage ? frameA : null, frameB: null, blendFactor: 0, opacity: kfOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: kfBlend, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
-      }
-      return { frameA: null, frameB: null, blendFactor: 0, opacity: track.baseOpacity, red: 1, green: 1, blue: 1, black: 0, saturation: 1, hueShift: 0, invert: 0, brightness: 0, contrast: 1, exposure: 0, blendMode: track.blendMode, chromaKey: track.chromaKey } as import('./BeatEffectPreview').TrackLayer
-    })
-    return layers
-  })()}, [data.tracks, trackKeyframes, trackTransitions, currentTime, kfMap])
-
-  // Check if the active transition's frames are still loading
-  const isTransitionLoading = (() => {
-    if (!activeTransition || !activeTransitionFrom || !activeTransitionTo) return false
-    const selectedVariant = activeTransition.selected ?? 'none'
-    const key = `tr:${activeTransition.id}:v${selectedVariant}`
-    return !isLoaded(key)
-  })()
+  // trackLayers and isTransitionLoading used to be computed here from the
+  // frontend frame cache and pushed into PreviewContext. The backend
+  // compositor now owns per-track compositing, so Timeline no longer
+  // produces preview frames.
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -1473,13 +1142,12 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     refreshTimeline()
   }, [data.projectName, refreshTimeline])
 
-  const handleRetryRender = useCallback(async (tr: Transition) => {
-    const selectedVariant = tr.selected ?? 'none'
-    const key = `tr:${tr.id}:v${selectedVariant}`
-    setRenderProgress((prev) => ({ ...prev, [tr.id]: 0 }))
-    await invalidateEntry(key)
-    preloadTransition(key, scenecraftFileUrl(data.projectName, `selected_transitions/${tr.id}_slot_0.mp4`))
-  }, [data.projectName])
+  const handleRetryRender = useCallback(async (_tr: Transition) => {
+    // Backend owns frame rendering now and invalidates its cache on any
+    // DB write. Retry reduces to a refetch — the backend will re-render
+    // on the next scrub / playback request.
+    refreshTimeline()
+  }, [refreshTimeline])
 
   const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string, sourceTransitionId?: string) => {
     try {
@@ -1490,22 +1158,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const { postAssignPoolVideo } = await import('@/lib/scenecraft-client')
         await postAssignPoolVideo(data.projectName, transitionId, poolPath)
       }
-      // Invalidate old cached frames so new video is decoded
-      const tr = localTransitions.find((t) => t.id === transitionId)
-      if (tr) {
-        const oldVariant = tr.selected ?? 'none'
-        invalidateEntry(`tr:${transitionId}:v${oldVariant}`)
-      }
       refreshTimeline()
     } catch (e) {
       console.error('[drop] assign video to transition failed:', e)
     }
-  }, [data.projectName, localTransitions, refreshTimeline])
+  }, [data.projectName, refreshTimeline])
 
   const handleDropImageOnKeyframe = useCallback(async (keyframeId: string, imagePath: string) => {
     const { postAssignKeyframeImage } = await import('@/lib/scenecraft-client')
     await postAssignKeyframeImage(data.projectName, keyframeId, imagePath)
-    invalidateEntry(`kf:${keyframeId}`)
     refreshTimeline()
   }, [data.projectName, refreshTimeline])
 
@@ -1860,18 +1521,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [keyframes, handlePlayPause, selectedTransition])
 
 
-  // Push computed preview data up to PreviewContext so PreviewPanel can read it
-  useEffect(() => {
-    if (ctxPreview) {
-      ctxPreview.updatePreview({ crossfadeData, trackLayers, isTransitionLoading })
-    }
-  }, [ctxPreview, crossfadeData, trackLayers, isTransitionLoading])
-
   return (
     <div className="h-full flex">
       {/* Main timeline area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Preview — only in v1 mode; in v2 it's a separate dockview panel */}
+        {/* Preview — only in v1 mode; in v2 it's a separate dockview panel.
+            The M11 migration moved preview rendering to the backend; this
+            non-v2 embedded preview is a legacy code path kept alive only so
+            the v1 layout still mounts. Real preview lives in <PreviewPanel> →
+            <PreviewViewport>. */}
         {!v2 && <div
           className="bg-gray-950 flex items-center justify-center shrink-0 overflow-hidden"
           style={{ height: previewHeight }}
@@ -1884,36 +1542,12 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 <img src={hoverPreviewUrl} className="absolute inset-0 w-full h-full object-cover z-10" draggable={false} />
               )
             )}
-            {currentKeyframe?.hasSelectedImage || crossfadeData.frameA ? (
-              <BeatEffectPreview
-                ref={previewRef}
-                src={currentKeyframe?.hasSelectedImage
-                  ? scenecraftFileUrl(data.projectName, `selected_keyframes/${currentKeyframe.id}.png`) + `?v=${currentKeyframe.selected ?? 0}`
-                  : ''}
-                beats={data.beats}
-                audioEvents={filteredAudioEvents}
-                userEffects={userEffects}
-                suppressions={suppressions}
-                currentTime={currentTime}
-                isPlaying={isPlaying}
-                className="w-full h-full object-cover"
-                canvasWidth={canvasWidth}
-                canvasHeight={canvasHeight}
-                transitionFrameA={crossfadeData.frameA}
-                transitionFrameB={crossfadeData.frameB}
-                blendFactor={crossfadeData.blendFactor}
-                layers={trackLayers.length > 0 ? trackLayers : undefined}
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
-                No image
-              </div>
-            )}
-            {isTransitionLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
-                <span className="text-white/70 text-xs">Loading frames...</span>
-              </div>
-            )}
+            <PreviewViewport
+              ref={previewRef}
+              projectName={data.projectName}
+              currentTime={currentTime}
+              playing={isPlaying}
+            />
             <TransformHandles
               containerRef={previewContainerRef}
               transition={selectedTransition}
@@ -2404,7 +2038,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         try {
                           const { promoteStagedCandidate } = await import('@/routes/project/$name/editor')
                           await promoteStagedCandidate({ data: { projectName: data.projectName, keyframeId: kfId, stagingId, variant } })
-                          invalidateEntry(`kf:${kfId}`)
                           refreshTimeline()
                         } catch (e) { console.error('Drop staged image failed:', e) }
                       }}
@@ -2604,13 +2237,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           duration={effectiveDuration}
           recording={recording}
           onRecord={async (startTime, endTime) => {
-            const canvas = previewRef.current?.getCanvas()
+            const handle = previewRef.current
             const audio = audioElRef.current
-            if (!canvas || !audio) { alert('Preview canvas or audio not ready'); return }
+            if (!handle || !audio) { alert('Preview surface or audio not ready'); return }
             setRecording({ progress: 0 })
             try {
               const blob = await recordPreview({
-                canvas, audioElement: audio,
+                handle, audioElement: audio,
                 startTime, endTime,
                 onProgress: (p) => setRecording({ progress: p }),
               })
@@ -2666,7 +2299,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 if (isImage) {
                   const { postAssignKeyframeImage } = await import('@/lib/scenecraft-client')
                   await postAssignKeyframeImage(data.projectName, currentKeyframe.id, selection.entry.path)
-                  invalidateEntry(`kf:${currentKeyframe.id}`)
                 }
                 setPoolSelection(null)
                 refreshTimeline()
