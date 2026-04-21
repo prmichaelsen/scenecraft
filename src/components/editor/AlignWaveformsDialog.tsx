@@ -113,7 +113,14 @@ export function AlignWaveformsDialog({
   }
 
   return (
-    <Modal isOpen={open} onClose={isApplying ? () => {} : onClose} title="Align Waveforms" maxWidth="2xl" isLoading={isApplying}>
+    <Modal
+      isOpen={open}
+      onClose={isApplying ? () => {} : onClose}
+      title="Align Waveforms"
+      maxWidth="2xl"
+      isLoading={isApplying}
+      style={{ background: '#111827' }}
+    >
       <div className="space-y-4">
         <p className="text-sm text-gray-400">
           Pick an anchor clip (stays fixed). Other clips shift by the signed offset you enter — positive
