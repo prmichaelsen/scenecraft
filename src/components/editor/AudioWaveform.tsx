@@ -46,9 +46,17 @@ export function AudioWaveform({
     const canvas = canvasRef.current
     if (!canvas || !peaks || width < 16) return
 
+    // Clamp internal canvas buffer to a safe max per axis. Browsers cap canvas
+    // dimensions (Chrome ~32k, Safari ~16k); at very low zoom on a multi-hour
+    // clip we can easily exceed this, which invalidates the canvas and shows
+    // the browser's broken-image glyph. Cap at 16384 and let CSS scale the
+    // rendered output — waveform detail at that zoom level doesn't need more.
+    const MAX_CANVAS_PX = 16384
     const dpr = window.devicePixelRatio || 1
-    const pxW = Math.max(1, Math.floor(width * dpr))
-    const pxH = Math.max(1, Math.floor(height * dpr))
+    const rawPxW = Math.max(1, Math.floor(width * dpr))
+    const rawPxH = Math.max(1, Math.floor(height * dpr))
+    const pxW = Math.min(rawPxW, MAX_CANVAS_PX)
+    const pxH = Math.min(rawPxH, MAX_CANVAS_PX)
     canvas.width = pxW
     canvas.height = pxH
     canvas.style.width = `${width}px`
