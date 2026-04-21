@@ -888,6 +888,21 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     // Earliest start among dragged clips — used to clamp so no clip goes negative
     const minStart = Math.min(...Array.from(originalStarts.values()).map((s) => s.start))
 
+    // Cross-lane: track which audio track the cursor is over (if any). Applied
+    // per-clip as a trackDelta equal to targetLaneIndex - primaryLaneIndex.
+    const sortedAudioTracks = [...(localAudioTracks ?? [])].sort((a, b) => a.display_order - b.display_order)
+    const trackIndexOf = (tid: string) => sortedAudioTracks.findIndex((t) => t.id === tid)
+    const primarySourceTrackId = clip.track_id
+    const primarySourceIdx = trackIndexOf(primarySourceTrackId)
+    let currentTargetTrackId: string = primarySourceTrackId
+
+    const detectTargetLane = (me: MouseEvent): string => {
+      const el = document.elementFromPoint(me.clientX, me.clientY)
+      if (!el) return currentTargetTrackId
+      const laneEl = (el as HTMLElement).closest('[data-audio-track-id]') as HTMLElement | null
+      return laneEl?.dataset.audioTrackId ?? currentTargetTrackId
+    }
+
     let moved = false
     const THRESHOLD_PX = 4
     const SNAP_SECONDS = 1
@@ -904,6 +919,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const grid = me.shiftKey ? 0.1 : SNAP_SECONDS
         dt = Math.round(dt / grid) * grid
       }
+      currentTargetTrackId = detectTargetLane(me)
       setAudioDrag({ ids: dragIds, offsetSeconds: dt })
     }
 
@@ -923,16 +939,28 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const grid = ue.shiftKey ? 0.1 : SNAP_SECONDS
         dt = Math.round(dt / grid) * grid
       }
+      const finalTargetTrackId = detectTargetLane(ue)
+      const targetIdx = trackIndexOf(finalTargetTrackId)
+      // trackDelta = target - source (uniform across all dragged clips, mirrors M10)
+      const trackDelta = (targetIdx >= 0 && primarySourceIdx >= 0) ? (targetIdx - primarySourceIdx) : 0
       setAudioDrag(null)
-      if (dt === 0) return
+      if (dt === 0 && trackDelta === 0) return
       try {
         const { postUpdateAudioClip } = await import('@/lib/audio-client')
-        await Promise.all(Array.from(originalStarts.values()).map(({ clip: c, start, end }) =>
-          postUpdateAudioClip(data.projectName, c.id, {
+        await Promise.all(Array.from(originalStarts.values()).map(({ clip: c, start, end }) => {
+          // Per-clip target track: its own source index + trackDelta, clamped
+          // to the existing audio-track range. Out-of-range clips stay on
+          // their original track (no auto-create in this pass).
+          const srcIdx = trackIndexOf(c.track_id)
+          const tgtIdx = Math.max(0, Math.min(sortedAudioTracks.length - 1, srcIdx + trackDelta))
+          const tgtTrackId = sortedAudioTracks[tgtIdx]?.id ?? c.track_id
+          const update: import('@/lib/audio-client').AudioClipUpdate = {
             startTime: start + dt,
             endTime: end + dt,
-          })
-        ))
+          }
+          if (tgtTrackId !== c.track_id) update.trackId = tgtTrackId
+          return postUpdateAudioClip(data.projectName, c.id, update)
+        }))
         refreshTimeline()
       } catch (err) {
         console.error('Audio clip drag commit failed:', err)

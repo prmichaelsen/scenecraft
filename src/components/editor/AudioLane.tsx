@@ -56,6 +56,7 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
 
   return (
     <div
+      data-audio-track-id={track.id}
       className={`relative border-b border-gray-800/70 ${dimmed ? 'opacity-50' : ''} ${selected ? 'ring-1 ring-cyan-500/60' : ''}`}
       style={{ height }}
       onClick={(e) => {
