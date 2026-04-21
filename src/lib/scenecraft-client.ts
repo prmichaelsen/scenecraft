@@ -239,7 +239,8 @@ export type PoolEntry = {
 
   // New fields from pool_segments table (segments only)
   id?: string               // pool_segment_id (UUID)
-  kind?: 'generated' | 'imported'
+  kind?: 'generated' | 'imported'   // provenance — NOT media type. See mediaType below.
+  mediaType?: 'audio' | 'video' | 'image' | 'other'  // derived server-side from extension
   label?: string            // user-editable display name
   originalFilename?: string // preserved for imports; null for generated
   originalFilepath?: string // preserved for imports
@@ -820,6 +821,62 @@ export async function postImport(project: string, sourcePath: string, timestamp?
     imported: { keyframes: string[]; transitions: string[] }
     summary: string
   }>
+}
+
+/**
+ * Atomic trim + boundary move for a transition clip. Used by the clip-boundary
+ * drag handles in TransitionTrack. Any combination of trimIn/trimOut/
+ * fromKfTimestamp/toKfTimestamp can be provided; omitted fields are untouched.
+ *
+ * Backend applies all updates in one transaction and cascades to adjacent trs'
+ * duration_seconds so the timeline stays consistent.
+ */
+export async function postUpdateTransitionTrim(
+  project: string,
+  opts: {
+    transitionId: string
+    trimIn?: number
+    trimOut?: number
+    fromKfTimestamp?: string
+    toKfTimestamp?: string
+  },
+) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/update-transition-trim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) throw new Error(`Failed to update transition trim: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{
+    success: boolean
+    transitionId: string
+    trimIn: number | null
+    trimOut: number | null
+  }>
+}
+
+/**
+ * Design-correct clip-edge trim for `<]` / `[>` zones. Backend decides whether
+ * to insert a gap (shrink) or advance the neighbor's trim (extend) so that no
+ * transition's time_remap_factor changes as a side effect.
+ */
+export async function postClipTrimEdge(
+  project: string,
+  opts: {
+    transitionId: string
+    edge: 'right' | 'left'
+    newBoundaryTimestamp: string
+    newTrim: number
+    mode?: 'trim' | 'ripple'  // default 'trim'
+  },
+) {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/clip-trim-edge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) throw new Error(`Failed clip-trim-edge: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{ success: boolean; transitionId: string; mode: string }>
 }
 
 /**

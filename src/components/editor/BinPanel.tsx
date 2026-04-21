@@ -797,32 +797,66 @@ export function BinPanel({ projectName, onClose, onRestore, onPoolSelect, onInse
                   </div>
                 </div>
               )}
-              {poolSegments.length > 0 && (
-                <div>
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-                    Video Segments ({filterByTag(poolSegments).length})
-                  </div>
-                  <div className="grid grid-cols-2 gap-1">
-                    {sortByName(filterByTag(poolSegments)).map((entry) => {
-                      const entryKey = entry.id || entry.path
-                      const selectedKey = poolSelection?.entry.id || poolSelection?.entry.path
-                      const isSelected = poolSelection?.type === 'segment' && selectedKey === entryKey
-                      return (
-                        <PoolVideoCard
-                          key={entryKey}
-                          entry={entry}
-                          projectName={projectName}
-                          isSelected={isSelected}
-                          onSelect={() => onPoolSelect(isSelected ? null : { type: 'segment', entry })}
-                          onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
-                          onRename={(label) => handleRenamePoolSegment(entry, label)}
-                          draggable
-                        />
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
+              {(() => {
+                const visibleSegs = filterByTag(poolSegments)
+                const videoSegs = visibleSegs.filter((e) => !isAudioPath(e.path))
+                const audioSegs = visibleSegs.filter((e) => isAudioPath(e.path))
+                return (
+                  <>
+                    {videoSegs.length > 0 && (
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+                          Video Segments ({videoSegs.length})
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          {sortByName(videoSegs).map((entry) => {
+                            const entryKey = entry.id || entry.path
+                            const selectedKey = poolSelection?.entry.id || poolSelection?.entry.path
+                            const isSelected = poolSelection?.type === 'segment' && selectedKey === entryKey
+                            return (
+                              <PoolVideoCard
+                                key={entryKey}
+                                entry={entry}
+                                projectName={projectName}
+                                isSelected={isSelected}
+                                onSelect={() => onPoolSelect(isSelected ? null : { type: 'segment', entry })}
+                                onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
+                                onRename={(label) => handleRenamePoolSegment(entry, label)}
+                                draggable
+                              />
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {audioSegs.length > 0 && (
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+                          Audio Segments ({audioSegs.length})
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          {sortByName(audioSegs).map((entry) => {
+                            const entryKey = entry.id || entry.path
+                            const selectedKey = poolSelection?.entry.id || poolSelection?.entry.path
+                            const isSelected = poolSelection?.type === 'segment' && selectedKey === entryKey
+                            return (
+                              <PoolAudioCard
+                                key={entryKey}
+                                entry={entry}
+                                isSelected={isSelected}
+                                onSelect={() => onPoolSelect(isSelected ? null : { type: 'segment', entry })}
+                                onUpdateTags={(tags) => handleUpdatePoolTags(entry, tags)}
+                                onRename={(label) => handleRenamePoolSegment(entry, label)}
+                                draggable
+                              />
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
 
               {/* Insert buttons — only shown when a pool item is selected */}
               {poolSelection && (
@@ -1237,6 +1271,69 @@ function EditablePoolLabel({ entry, onRename }: { entry: PoolEntry; onRename?: (
       }}
       className="w-full text-[7px] text-gray-100 bg-gray-900 border border-blue-500 rounded px-1 py-0 font-sans outline-none"
     />
+  )
+}
+
+const AUDIO_EXTENSIONS = new Set(['wav', 'mp3', 'aac', 'm4a', 'flac', 'ogg', 'opus', 'aif', 'aiff'])
+/** Prefer the server-classified mediaType; fall back to extension sniff for older responses. */
+function isAudioEntry(entry: PoolEntry): boolean {
+  if (entry.mediaType) return entry.mediaType === 'audio'
+  const m = /\.([^./\\]+)$/.exec(entry.path || '')
+  if (!m) return false
+  return AUDIO_EXTENSIONS.has(m[1].toLowerCase())
+}
+
+function formatDuration(s: number | undefined | null): string {
+  if (s == null || !isFinite(s) || s <= 0) return ''
+  const mins = Math.floor(s / 60)
+  const secs = Math.floor(s % 60)
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60)
+    const m = mins % 60
+    return `${h}h ${m}m ${secs}s`
+  }
+  return `${mins}m ${secs}s`
+}
+
+function PoolAudioCard({ entry, isSelected, onSelect, onUpdateTags, onRename, draggable }: { entry: PoolEntry; isSelected: boolean; onSelect: () => void; onUpdateTags?: (tags: string[]) => void; onRename?: (newLabel: string) => void | Promise<void>; draggable?: boolean }) {
+  const dur = formatDuration(entry.durationSeconds)
+  const label = poolItemDisplayName(entry)
+  return (
+    <div
+      className={`relative rounded overflow-hidden bg-cyan-900/20 hover:bg-cyan-900/30 cursor-pointer border-2 transition-colors ${
+        isSelected ? 'border-orange-500' : 'border-cyan-900/40 hover:border-cyan-700'
+      }`}
+      draggable={!!draggable}
+      onDragStart={draggable ? (e) => {
+        e.dataTransfer.setData('application/x-scenecraft-pool-path', entry.path)
+        e.dataTransfer.effectAllowed = 'copy'
+      } : undefined}
+      onClick={onSelect}
+      title={label}
+    >
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        {/* Speaker-wave SVG icon */}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="flex-shrink-0 text-cyan-400">
+          <path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor"/>
+          <path d="M15.5 8.5c1.5 1 2.5 2.5 2.5 4.5s-1 3.5-2.5 4.5M18.5 5.5c3 2 5 5 5 8.5s-2 6.5-5 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
+        </svg>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] text-gray-200 truncate">
+            <EditablePoolLabel entry={entry} onRename={onRename} />
+          </div>
+          <div className="flex items-center gap-2 text-[9px] text-gray-500">
+            {dur && <span className="font-mono">{dur}</span>}
+            {entry.kind === 'imported' && <span className="text-blue-300/80">imported</span>}
+            {entry.kind === 'generated' && <span className="text-green-300/80">generated</span>}
+          </div>
+        </div>
+      </div>
+      {onUpdateTags && (
+        <div className="px-2 pb-1">
+          <PoolTagEditor tags={entry.tags || []} onUpdateTags={onUpdateTags} />
+        </div>
+      )}
+    </div>
   )
 }
 
