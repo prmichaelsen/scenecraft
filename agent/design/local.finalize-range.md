@@ -110,11 +110,22 @@ for each finalization where status='locked':
 
 "Restore range from finalization" is not a full-project checkpoint restore. It reads the checkpoint's snapshot, extracts the rows matching `pinned_clip_ids` + `pinned_global_state` keys, and overwrites just those in the current project state. Everything outside the pinned set is preserved.
 
+### Flow: revive an older version (append-only)
+
+Reviving `v{k}` while `v{n}` (n > k) exists **does not** flip an active pointer. It:
+
+1. Performs a splice-revert using `v{k}`'s checkpoint (restores the pinned content back into the working project)
+2. Creates a new finalization row `v{n+1}` with the restored state — a fresh checkpoint, re-captured pinned graph, re-rendered frame hashes
+3. Marks `v{n+1}` as the current sealed version for that range; `v{k}` and `v{n}` both remain in history
+
+Why append-only: history is only trustworthy if it's immutable. An "active version pointer" lets users silently swap what "current" means, which defeats the regression-detection purpose. Every user intent becomes a durable row.
+
 ### API surface (additions to `api_server.py`)
 
 - `GET  /api/projects/{p}/finalizations` → list
 - `POST /api/projects/{p}/finalize` → `{ range_start, range_end }` → creates + enqueues render
-- `POST /api/projects/{p}/finalizations/{id}/revert` → splice restore
+- `POST /api/projects/{p}/finalizations/{id}/revert` → splice restore (no new version; current sealed version remains the latest)
+- `POST /api/projects/{p}/finalizations/{id}/revive` → splice restore + append as v{n+1} (reviving older versions; see flow above)
 - `POST /api/projects/{p}/finalizations/{id}/accept-drift` → acknowledge output-hash mismatch, create new version
 - `POST /api/projects/{p}/finalizations/{id}/invalidate` → manually break seal
 - Mutation endpoints that touch pinned content check finalizations server-side and return a conflict response with the finalization ID; the UI surfaces the modal.
@@ -124,7 +135,31 @@ for each finalization where status='locked':
 - **Timeline ruler**: amber/gold overlay on finalized ranges with version label + status icon (locked / pending / invalidated / regressed).
 - **Warning modal** (Logic Pro Freeze pattern): "Editing X will break finalized range Y v{n}. Continue / Cancel."
 - **Regression dialog** (Jest-snapshot pattern): "Finalized range Y v{n} drifted. Accept new output as v{n+1} / Revert to v{n} / Cancel render."
-- **Finalizations panel**: side panel listing all finalizations with status, version history, diff actions.
+- **Finalizations panel**: see below.
+
+### Finalizations panel
+
+A new dockable panel (`finalizations` in the `PanelRegistry` alongside `checkpoints`, `bin`, etc.) that surfaces the history and lets the user browse/compare/revive.
+
+**Two view modes**, toggleable at the top:
+
+1. **At Playhead** (default) — filters to finalizations whose `[range_start, range_end]` contains the current playhead time. Updates live as the playhead moves. Useful for "show me what's been sealed at this point in the timeline."
+2. **All** — full list of every finalization row, grouped by range (e.g., "32s–48s: v1, v2, v3"), sortable by date / range start / status.
+
+**Per-finalization card shows**:
+- Range badge (`32.0s → 48.0s`) + version label (`v2`)
+- Status chip (`locked` / `pending_render` / `invalidated` / `regressed`) with color coding
+- Created timestamp + author
+- Checkpoint link (optional inline expander showing what snapshot backs this row)
+- Actions: **Diff** (compare two versions' pinned state), **Revive** (splice + append as new version), **Compare frames** (show stored frame hashes vs. current), **Invalidate** (manual seal break)
+
+**Revive action** invokes the append-only flow above: splice-restore from this version's checkpoint → create v{n+1} → re-render → re-hash. The UI shows a confirmation: "Revive v1's state as new v3? v2 will remain in history."
+
+**Panel registry wiring** (in `EditorPanelLayout.tsx`):
+```typescript
+finalizations: { component: FinalizationsPanelComponent, title: 'Finalizations' }
+```
+The panel uses `useCurrentTime()` to drive the "At Playhead" filter and `useEditorData()` to get `projectName` for API calls. It subscribes to finalization mutations via the existing scenecraft-socket so status flips (pending → locked after background render completes) update in real time.
 
 ---
 
@@ -150,11 +185,11 @@ for each finalization where status='locked':
 
 **Rationale**: Finalization is range-scoped; users expect revert to match that scope. A full-project revert would throw away unrelated in-progress work (including other finalizations created later). Splice requires stable identity for pinned clips, which is satisfied by the UUID migration (task-32) already on the roadmap.
 
-### Decision 4: Versioning over mutation
+### Decision 4: Versioning over mutation — strictly append-only
 
-**Decision**: Re-finalizing a range creates a new version row (v2); old versions stay in history.
+**Decision**: Every user intent that seals or re-seals a range creates a new version row. Old versions are never mutated, hidden, or swapped out via an "active version pointer." Reviving v1 while v2 exists produces v3 (splice of v1's state), leaving both v1 and v2 in history.
 
-**Rationale**: Audit trail for "when did this change?" and cheap comparison across versions. Matches the Nuke/Flame "publish a new version" pattern, not the Premiere "cache gets auto-invalidated silently" pattern. Storage cost is a checkpoint per version, which is acceptable (checkpoints are already user-facing, bounded by disk).
+**Rationale**: Audit trail is only trustworthy if it's immutable. An active-version pointer lets users silently swap what "current" means, which defeats regression detection — someone could "revert" a change with no visible record. Append-only makes every decision a durable, inspectable row. Matches Nuke's Write-node versioning and Flame's Multi-Version Clips exactly. Storage cost is one checkpoint per version, bounded by disk and cleanable via explicit user action.
 
 ### Decision 5: Warning modal, not hard block, on pinned-clip edits
 
