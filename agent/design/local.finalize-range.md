@@ -58,15 +58,19 @@ CREATE TABLE finalizations (
   range_end_seconds REAL NOT NULL,
   pinned_clip_ids TEXT NOT NULL,       -- JSON: ["kf_abc", "tr_xyz", ...]
   pinned_global_state TEXT NOT NULL,   -- JSON: { motionPrompt, trackConfigs, audioIntelligenceVersion, ... }
-  checkpoint_filename TEXT NOT NULL,   -- FK to checkpoints.filename
+  checkpoint_filename TEXT NOT NULL,   -- FK to checkpoints.filename; shared across revived rows
   frame_hashes TEXT,                   -- JSON: [{ frame: 0, sha256: "..." }, ...], null until render completes
-  version INTEGER NOT NULL DEFAULT 1,  -- increments on re-finalize of overlapping range
-  status TEXT NOT NULL DEFAULT 'pending_render',  -- 'pending_render' | 'locked' | 'invalidated'
+  rendered_preview_path TEXT,          -- e.g. "finalizations/{id}/range.mp4"; reused across revived rows
+  version INTEGER NOT NULL DEFAULT 1,  -- increments on every new row for a range (seal / re-seal / revive / accept-drift)
+  revived_from TEXT,                   -- FK to finalizations.id when this row was produced by a revive action; NULL otherwise
+  status TEXT NOT NULL DEFAULT 'pending_render',  -- 'pending_render' | 'locked' | 'invalidated' | 'regressed'
   created_at TEXT NOT NULL,
   created_by TEXT NOT NULL DEFAULT '',
-  invalidated_reason TEXT              -- set when status flips to 'invalidated'
+  invalidated_reason TEXT              -- set when status flips to 'invalidated' or 'regressed'
 );
 ```
+
+**Note on shared references**: `checkpoint_filename`, `frame_hashes`, and `rendered_preview_path` may be pointed to by multiple finalization rows (revive reuses them). Deletion of a checkpoint or a rendered preview must check the `finalizations` table for any row still referencing it before removing the file.
 
 ### Flow: create a finalization
 
@@ -77,7 +81,9 @@ CREATE TABLE finalizations (
    - Capture `pinned_global_state` — serialize motion prompt + track configs for tracks containing pinned clips + audio intelligence cut
    - Insert `finalizations` row with `status='pending_render'`
    - Enqueue background render of `[start, end]`
-3. Background render completes → compute SHA-256 per frame → store in `frame_hashes` → `status='locked'`
+3. Background render completes → write the rendered MP4 to `finalizations/{id}/range.mp4` → compute SHA-256 per frame → store in `frame_hashes` + `rendered_preview_path` → `status='locked'`
+
+The rendered MP4 is authoritative playback media for that version. It's what gets reused by a revived version (no re-render needed) and what the Finalizations panel streams into the source monitor.
 
 ### Flow: edit guards
 
@@ -110,15 +116,16 @@ for each finalization where status='locked':
 
 "Restore range from finalization" is not a full-project checkpoint restore. It reads the checkpoint's snapshot, extracts the rows matching `pinned_clip_ids` + `pinned_global_state` keys, and overwrites just those in the current project state. Everything outside the pinned set is preserved.
 
-### Flow: revive an older version (append-only)
+### Flow: revive an older version (append-only, no new checkpoint)
 
-Reviving `v{k}` while `v{n}` (n > k) exists **does not** flip an active pointer. It:
+Reviving `v{k}` while `v{n}` (n > k) exists **does not** flip an active pointer, **and does not create a new checkpoint or re-render**. It:
 
 1. Performs a splice-revert using `v{k}`'s checkpoint (restores the pinned content back into the working project)
-2. Creates a new finalization row `v{n+1}` with the restored state — a fresh checkpoint, re-captured pinned graph, re-rendered frame hashes
-3. Marks `v{n+1}` as the current sealed version for that range; `v{k}` and `v{n}` both remain in history
+2. Creates a new finalization row `v{n+1}` whose `checkpoint_filename`, `pinned_*`, `frame_hashes`, and `rendered_preview_path` fields **all reference `v{k}`'s** (shared — no duplication)
+3. The new row gets its own `id`, `created_at`, `created_by`, and adds `revived_from = v{k}.id`
+4. `v{n+1}` becomes the current sealed version for that range; `v{k}` and `v{n}` both remain in history
 
-Why append-only: history is only trustworthy if it's immutable. An "active version pointer" lets users silently swap what "current" means, which defeats the regression-detection purpose. Every user intent becomes a durable row.
+Why append-only without a new checkpoint: history is trustworthy because every *user intent* is a durable row, not because every row owns unique blob storage. Since revive produces an output byte-identical to `v{k}` (same pinned inputs → same deterministic splice), a fresh checkpoint would duplicate the same SQLite backup. Content-addressed thinking: when the content is identical, reuse the blob and distinguish rows by intent metadata. This rejects the active-version-pointer approach (which mutates history) while avoiding storage bloat.
 
 ### API surface (additions to `api_server.py`)
 
@@ -147,13 +154,22 @@ A new dockable panel (`finalizations` in the `PanelRegistry` alongside `checkpoi
 2. **All** — full list of every finalization row, grouped by range (e.g., "32s–48s: v1, v2, v3"), sortable by date / range start / status.
 
 **Per-finalization card shows**:
-- Range badge (`32.0s → 48.0s`) + version label (`v2`)
+- Range badge (`32.0s → 48.0s`) + version label (`v2`) + "revived from v1" badge if applicable
 - Status chip (`locked` / `pending_render` / `invalidated` / `regressed`) with color coding
 - Created timestamp + author
 - Checkpoint link (optional inline expander showing what snapshot backs this row)
-- Actions: **Diff** (compare two versions' pinned state), **Revive** (splice + append as new version), **Compare frames** (show stored frame hashes vs. current), **Invalidate** (manual seal break)
+- Actions: **Preview** (load into source monitor), **Diff** (compare two versions' pinned state), **Revive** (append new row referencing this version's blobs), **Compare frames** (show stored frame hashes vs. current), **Invalidate** (manual seal break)
 
-**Revive action** invokes the append-only flow above: splice-restore from this version's checkpoint → create v{n+1} → re-render → re-hash. The UI shows a confirmation: "Revive v1's state as new v3? v2 will remain in history."
+**Selecting a row loads the source monitor.** The source monitor is a secondary preview surface (alongside the main "program monitor" preview that plays the working project). When the user selects a finalization row:
+
+- The source monitor's `<video>` element is pointed at `{rendered_preview_path}` via `scenecraftFileUrl`
+- Scrubbing/playback in the source monitor is independent of the main timeline playhead
+- Deselecting or selecting a different finalization swaps the source
+- This matches the NLE "source vs program" pattern (Premiere, Avid, FCP) — the source monitor shows source material you're evaluating, the program monitor shows the active edit
+
+**Source monitor implementation**: add a `source-monitor` panel to the `PanelRegistry` driven by a new `useSourceMonitor()` context (path + play state). The Finalizations panel's row-click calls `setSource({ path: row.rendered_preview_path, label: `${row.range_label} v${row.version}` })`. If no source is set, the panel shows a "Select a finalization to preview" empty state.
+
+**Revive action** invokes the append-only flow above: splice-restore + append a new row that **reuses** this version's `checkpoint_filename`, `frame_hashes`, and `rendered_preview_path`. No re-render. Confirmation: "Revive v1's state as new v3? v1 and v2 will remain in history."
 
 **Panel registry wiring** (in `EditorPanelLayout.tsx`):
 ```typescript
@@ -225,7 +241,7 @@ The panel uses `useCurrentTime()` to drive the "At Playhead" filter and `useEdit
 ## Trade-offs
 
 - **Input-graph completeness is fuzzy**: deciding which global state "affects a range" requires an explicit allowlist that we'll have to grow as we find gaps. Start with (motion prompt, tracks overlapping pinned clips, audio intelligence cut) and expand.
-- **Storage cost**: one full-project checkpoint per finalization version. For a 3-minute project with 10 finalized ranges × 2 versions each, that's ~20 SQLite backups. Manageable, but needs a cleanup UX long-term.
+- **Storage cost**: one checkpoint + rendered MP4 per *unique-content* finalization. Revived versions reuse their source's blobs, so reviving v1 to produce v3 costs zero new storage. For a 3-minute project with 10 finalized ranges × 2 unique versions each, that's ~20 SQLite backups + ~20 MP4 range renders. Rendered MP4s are cleanable via explicit "Delete finalization" (which must refuse if a revived row still references it).
 - **Non-determinism edge case**: if the user's render pipeline changes (new ffmpeg version, new effect library), *every* finalization's output hash drifts. We should support "mass re-baseline" when the user intentionally changes the pipeline.
 - **UUID dependency**: splice revert requires stable clip IDs. Works cleanly once M6 task-32 (UUID migration) lands; before that, falls back to restoring the whole checkpoint.
 
