@@ -7,7 +7,6 @@ import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyf
 import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 import { useAudioMixer } from '@/hooks/useAudioMixer'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
-import { applyRulesClient, type OnsetData } from '@/lib/apply-rules-client'
 import { AudioTrack } from './AudioTrack'
 import { AudioLane } from './AudioLane'
 import { scenecraftFileUrl } from '@/lib/scenecraft-client'
@@ -21,11 +20,9 @@ import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { getPluginBlendModes } from '@/lib/plugin-api'
 import { useEditorState } from './EditorStateContext'
 import { useCurrentTime } from './CurrentTimeContext'
-import { usePreview } from './PreviewContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { PreviewViewport, type PreviewViewportHandle } from './PreviewViewport'
-import { evaluateCurve } from '@/lib/remap-curve'
 import { ImportDialog } from './ImportDialog'
 import { EffectsTrack } from './EffectsTrack'
 import { SuppressionTrack } from './SuppressionTrack'
@@ -341,7 +338,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // In v2 mode, currentTime/isPlaying/refs are shared via context so PreviewPanel can read them.
   // In v1 mode, they're local state.
   const ctxTime = v2 ? useCurrentTime() : null // eslint-disable-line react-hooks/rules-of-hooks
-  const ctxPreview = v2 ? usePreview() : null // eslint-disable-line react-hooks/rules-of-hooks
   const [localCurrentTime, setLocalCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
     const stored = localStorage.getItem(`scenecraft-playhead-${data.projectName}`)
@@ -388,7 +384,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [showCheckpoints, setShowCheckpoints] = useState(false)
   const [showDownloadPreview, setShowDownloadPreview] = useState(false)
   const [selectedAudioDescription, setSelectedAudioDescription] = useState<import('@/lib/scenecraft-client').AudioDescription | null>(null)
-  const [previewQuality, setPreviewQuality] = useState(data.previewQuality)
   const [userEffects, setUserEffects] = useState<UserEffect[]>(data.userEffects)
   const [suppressions, setSuppressions] = useState<BeatSuppression[]>(data.beatSuppressions)
   const [selectedSuppressionId, setSelectedSuppressionId] = useState<string | null>(null)
@@ -521,7 +516,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Load AI data once (heavy — 5MB with onsets, not refetched on router.invalidate)
   const [aiAudioEvents, setAiAudioEvents] = useState(data.audioEvents)
   const [aiAudioRules, setAiAudioRules] = useState(data.audioRules)
-  const [aiAudioOnsets, setAiAudioOnsets] = useState(data.audioOnsets)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_aiAudioOnsets, setAiAudioOnsets] = useState(data.audioOnsets)
   const [aiAudioDescriptions] = useState(data.audioDescriptions)
   const aiLoadedRef = useRef(false)
   useEffect(() => {
@@ -579,30 +575,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Group by track
   // Client-side rule application for instant preview
   // When rules are edited locally, recompute events from onsets without backend round-trip
-  const [localRules, setLocalRules] = useState(aiAudioRules)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_localRules, setLocalRules] = useState(aiAudioRules)
   useEffect(() => { setLocalRules(aiAudioRules) }, [aiAudioRules])
-
-  const filteredAudioEvents = useMemo(() => {
-    const hasOnsets = aiAudioOnsets && Object.keys(aiAudioOnsets).length > 0
-    console.log(`[Timeline] audioOnsets: ${hasOnsets ? Object.keys(aiAudioOnsets).length + ' stems' : 'EMPTY'}, localRules: ${localRules.length}`)
-    if (hasOnsets) {
-      const events = applyRulesClient(aiAudioOnsets as OnsetData, localRules)
-      console.log(`[Timeline] Client-side apply: ${localRules.length} rules → ${events.length} events`)
-      return events
-    }
-    // Fallback: filter disabled rules from server events
-    const disabledRules = localRules.filter((r) => (r as Record<string, unknown>)._disabled)
-    if (disabledRules.length === 0) return aiAudioEvents
-    const disabled = disabledRules.map((r) => ({
-      key: `${r.stem}/${r.band}:${r.effect}`,
-      start: r._group_start ?? r._start ?? 0,
-      end: r._group_end ?? r._end ?? Infinity,
-    }))
-    return aiAudioEvents.filter((ev) => {
-      const evKey = `${ev.stem_source}:${ev.effect}`
-      return !disabled.some((d) => d.key === evKey && ev.time >= d.start && ev.time <= d.end)
-    })
-  }, [aiAudioEvents, aiAudioOnsets, localRules])
 
   // Sort tracks by zOrder descending — highest z (top of compositor) at top of track list
   const sortedTracks = [...data.tracks].sort((a, b) => b.zOrder - a.zOrder)
@@ -2269,7 +2244,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           projectName={data.projectName}
           onClose={() => setShowSettings(false)}
           onSave={() => router.invalidate()}
-          onPreviewQualityChange={(q) => setPreviewQuality(q)}
         />
       ) : showVersions ? (
         <VersionHistoryPanel

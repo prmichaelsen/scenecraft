@@ -34,8 +34,9 @@ export async function recordPreview(opts: {
   }
 
   // Capture the current surface — works for both HTMLCanvasElement and
-  // HTMLVideoElement since both implement captureStream().
-  const videoStream = (surface as HTMLCanvasElement | HTMLVideoElement).captureStream(24)
+  // HTMLVideoElement since both implement captureStream(). TS's HTMLVideoElement
+  // lib types omit it, so cast to the common shape.
+  const videoStream = (surface as unknown as { captureStream: (fps?: number) => MediaStream }).captureStream(24)
 
   // Capture audio stream from audio element
   const audioCtx = new AudioContext()
