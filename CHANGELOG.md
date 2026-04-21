@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.16.0] - 2026-04-21
+
+### Added
+- M14 Task 115 — Mixer module skeleton + curve math TS port + unit tests.
+  - `src/lib/audio-curves.ts` — TS twin of `scenecraft.audio.curves`: `dbToLinear`, `sampleCurveDb`, `sampleCurveLinear`, `sampleClipDb/LinearAtPlayhead`, `sampleTrackDb/LinearAtPlayhead`. Linear-interp-between-points semantics, endpoint-clamp outside range — matches `np.interp`.
+  - `src/lib/audio-mixer.ts` — `createAudioMixer(project, tracks): AudioMixer` skeleton with full public API (`play/pause/seek/updateClip/updateTrack/rebuild/dispose`). Internal `ClipNode`/`TrackNode` typing in place. No-op impl pending Tasks 116/117.
+- Vitest test framework (new devDep). `src/lib/__tests__/audio-curves.test.ts` (18 tests) + `src/lib/__tests__/audio-mixer.test.ts` (6 tests). All 24 pass.
+- `test` / `test:watch` npm scripts; `vitest.config.ts` with happy-dom environment.
+
 ## [0.15.0] - 2026-04-21
 
 ### Added

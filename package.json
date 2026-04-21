@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite dev --port 3400 --host",
     "build": "vite build",
-    "start": "vite preview --host"
+    "start": "vite preview --host",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@prmichaelsen/pretty-toasts": "^3.0.6",
@@ -28,9 +30,11 @@
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^5.0.4",
+    "happy-dom": "^20.9.0",
     "tailwindcss": "^4.0.6",
     "typescript": "^5.8.3",
     "vite": "^7.1.7",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^4.1.5"
   }
 }

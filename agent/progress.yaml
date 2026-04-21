@@ -981,21 +981,23 @@ milestones:
 
   - id: milestone_14
     name: In-Editor Audio Playback
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-21
     completed: null
     file: agent/milestones/milestone-14-in-editor-audio-playback.md
     tasks_total: 4
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 1
     tasks:
       - id: task-115
         name: Mixer module skeleton + curve math TS port + unit tests
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T11:20:00Z
+        completed_date: 2026-04-21T11:35:00Z
         file: agent/tasks/milestone-14-in-editor-audio-playback/task-115-mixer-module-skeleton.md
         estimated_hours: 3
-        actual_hours: null
+        actual_hours: 0.25
+        notes: "audio-curves.ts (dbToLinear, sampleCurveDb + helpers) mirrors engine curves.py; audio-mixer.ts skeleton with full public API; 24 vitest tests pass; added vitest + happy-dom + test scripts."
       - id: task-116
         name: WebAudio graph + streaming source management + scheduling loop
         status: not_started
