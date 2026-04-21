@@ -79,7 +79,18 @@
       "Bash(curl -s -m 3 http://localhost:8888/api/projects)",
       "Bash(cp /tmp/sync_lipsync_output.mp4 /mnt/storage/prmichaelsen/beatlab_work/test/sync_lipsync_output.mp4)",
       "Bash(curl -sI -m 3 \"http://localhost:8888/api/projects/test/files/sync_lipsync_output.mp4\")",
-      "Bash(.venv/bin/python -m pytest tests/test_vcs_cli.py::test_init_command tests/test_vcs_cli.py::test_org_members -v --no-header)"
+      "Bash(.venv/bin/python -m pytest tests/test_vcs_cli.py::test_init_command tests/test_vcs_cli.py::test_org_members -v --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/test_candidate_pool.py tests/test_candidate_pool_endpoints.py tests/test_keyframes.py tests/test_vcs_cli.py --no-header -q)",
+      "Bash(python -c \"from scenecraft.api_server import _log; print\\('ok'\\)\")",
+      "Bash(sort -t- -k2 -n)",
+      "Bash(sort -u -t- -k2 -n)",
+      "Bash(/home/prmichaelsen/.acp/projects/scenecraft-engine/.venv/bin/python3 *)",
+      "Bash(.venv/bin/python3 -c ' *)",
+      "Bash(python -m pytest tests/test_audio_mixdown.py -x -q)",
+      "Bash(./.venv/bin/pytest tests/test_audio_mixdown.py -x -q)",
+      "Bash(./.venv/bin/pytest tests/ -x -q --ignore=tests/test_audio_mixdown.py)",
+      "Bash(PYTHONPATH=/home/prmichaelsen/.acp/projects/scenecraft-engine-task-100/src /home/prmichaelsen/.acp/projects/scenecraft-engine/.venv/bin/python -m pytest tests/test_candidate_pool.py tests/test_migrations.py tests/test_multitrack.py -v --tb=short)",
+      "Bash(npm i *)"
     ]
   }
 }
