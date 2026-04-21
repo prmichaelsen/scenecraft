@@ -986,7 +986,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-14-in-editor-audio-playback.md
     tasks_total: 4
-    tasks_completed: 2
+    tasks_completed: 3
     estimated_weeks: 1
     tasks:
       - id: task-115
@@ -1009,11 +1009,13 @@ milestones:
         notes: "Lazy AudioContext; per-track GainNode + per-clip HTMLAudio→MediaElementAudioSource→clipGain→crossfadeGain→track chain. Seek-driven activation (no internal rAF). Injection hooks for testing. 12 new tests, 36 total pass."
       - id: task-117
         name: Curve automation + equal-power crossfade on same-track overlap
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T11:40:00Z
+        completed_date: 2026-04-21T11:45:00Z
         file: agent/tasks/milestone-14-in-editor-audio-playback/task-117-curve-automation-and-crossfade.md
         estimated_hours: 3
-        actual_hours: null
+        actual_hours: 0.1
+        notes: "scheduleClipCurve/scheduleTrackCurve emit cancelScheduledValues + setValueAtTime anchor + linearRampToValueAtTime breakpoints; mute→0. Equal-power crossfade on overlapping same-track activation via cos/sin Float32Array setValueCurveAtTime. 9 new tests, 45 total pass."
       - id: task-118
         name: Timeline integration behind feature flag + perceptual A/B
         status: not_started

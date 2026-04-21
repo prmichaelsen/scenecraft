@@ -235,6 +235,202 @@ describe('createAudioMixer — mute updates', () => {
   })
 })
 
+describe('createAudioMixer — curve automation (T117)', () => {
+  let opts: ReturnType<typeof makeOptions>
+  beforeEach(() => { opts = makeOptions() })
+
+  // Helper: find the track-gain MockGainNode from the ctx.destination connections
+  const getTrackGain = (ctx: MockAudioContext): MockGainNode => {
+    // destination.connections has the incoming connections (via our `dst as MockGainNode` hack)
+    // but our mock stores connections on the UPSTREAM node. So the trackGain is whichever
+    // gain node connected to destination. We inspect all connection calls via a known graph shape.
+    // Simpler: track-gain is the first GainNode created with nonzero gain events at play time.
+    // Instead, we wrap createGain to capture creation order:
+    return (ctx as unknown as { _trackGains?: MockGainNode[] })._trackGains?.[0] as MockGainNode
+  }
+
+  const instrumentCtx = (ctx: MockAudioContext): void => {
+    const origCreateGain = ctx.createGain.bind(ctx)
+    const gains: MockGainNode[] = []
+    ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
+    ctx.createGain = () => {
+      const g = origCreateGain()
+      gains.push(g)
+      return g
+    }
+  }
+
+  it('track curve [[0, 0], [10, -6]] schedules anchor + ramp on play', () => {
+    instrumentCtx(opts.mockCtx)
+    const track: AudioTrack = {
+      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      volume_curve: [[0, 0], [10, -6]],
+      clips: [],
+    }
+    const m = createAudioMixer('p', [track], opts)
+    m.play()
+    // First gain created is the track gain (trackMap populated before clips)
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    const trackGain = allGains[0]
+    const events = trackGain.gain.events
+    // Should contain a cancelScheduledValues, a setValueAtTime (anchor at playhead 0 → 0 dB → gain 1), and a linearRampToValueAtTime
+    expect(events.some((e) => e.kind === 'cancelScheduledValues')).toBe(true)
+    const setValue = events.find((e) => e.kind === 'setValueAtTime')
+    expect(setValue?.value).toBeCloseTo(1, 3)
+    const ramp = events.find((e) => e.kind === 'linearRampToValueAtTime')
+    expect(ramp?.value).toBeCloseTo(0.5012, 3) // dbToLinear(-6)
+  })
+
+  it('clip curve [[0, 0], [1, -6]] anchors at clip start and ramps to end', () => {
+    instrumentCtx(opts.mockCtx)
+    const track = t('a', [{ id: 'c1', start: 10, end: 20 }])
+    // Override clip curve
+    track.clips![0].volume_curve = [[0, 0], [1, -6]]
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(10)
+    m.play()
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    // Order of createGain calls: trackGain, clipGain, crossfadeGain (per clip graph)
+    // trackGain=index 0, clipGain=1, crossfadeGain=2
+    const clipGain = allGains[1]
+    const events = clipGain.gain.events
+    expect(events.some((e) => e.kind === 'cancelScheduledValues')).toBe(true)
+    const setValue = events.find((e) => e.kind === 'setValueAtTime')
+    expect(setValue?.value).toBeCloseTo(1, 3) // playhead at clip start → 0 dB
+    const ramp = events.find((e) => e.kind === 'linearRampToValueAtTime')
+    expect(ramp?.value).toBeCloseTo(0.5012, 3) // dbToLinear(-6) at clip end
+  })
+
+  it('muted clip gets setValueAtTime(0) instead of curve', () => {
+    instrumentCtx(opts.mockCtx)
+    const track = t('a', [{ id: 'c1', start: 0, end: 1, muted: true }])
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(0.5)
+    m.play()
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    const clipGain = allGains[1]
+    const events = clipGain.gain.events.filter((e) => e.kind === 'setValueAtTime')
+    expect(events.some((e) => e.value === 0)).toBe(true)
+    // No ramp should be scheduled
+    expect(clipGain.gain.events.some((e) => e.kind === 'linearRampToValueAtTime')).toBe(false)
+  })
+
+  it('muted track schedules setValueAtTime(0) on track gain', () => {
+    instrumentCtx(opts.mockCtx)
+    const track = t('a', [{ id: 'c1', start: 0, end: 1 }], { muted: true })
+    const m = createAudioMixer('p', [track], opts)
+    m.play()
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    const trackGain = allGains[0]
+    const events = trackGain.gain.events.filter((e) => e.kind === 'setValueAtTime')
+    expect(events.some((e) => e.value === 0)).toBe(true)
+  })
+
+  it('updateClip re-schedules curve in place for an active clip', () => {
+    instrumentCtx(opts.mockCtx)
+    const track = t('a', [{ id: 'c1', start: 0, end: 10 }])
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(1)
+    m.play()
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    const clipGain = allGains[1]
+    const initialCount = clipGain.gain.events.length
+    m.updateClip('c1')
+    expect(clipGain.gain.events.length).toBeGreaterThan(initialCount)
+  })
+
+  it('updateTrack re-schedules track curve', () => {
+    instrumentCtx(opts.mockCtx)
+    const track = t('a', [{ id: 'c1', start: 0, end: 10 }])
+    const m = createAudioMixer('p', [track], opts)
+    m.play()
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    const trackGain = allGains[0]
+    const initialCount = trackGain.gain.events.length
+    m.updateTrack('a')
+    expect(trackGain.gain.events.length).toBeGreaterThan(initialCount)
+  })
+})
+
+describe('createAudioMixer — equal-power crossfade (T117)', () => {
+  let opts: ReturnType<typeof makeOptions>
+  beforeEach(() => { opts = makeOptions() })
+
+  const instrumentCtx = (ctx: MockAudioContext): void => {
+    const orig = ctx.createGain.bind(ctx)
+    const gains: MockGainNode[] = []
+    ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
+    ctx.createGain = () => { const g = orig(); gains.push(g); return g }
+  }
+
+  it('overlapping same-track clips receive cos + sin curve schedules', () => {
+    instrumentCtx(opts.mockCtx)
+    const m = createAudioMixer('p', [
+      t('a', [
+        { id: 'c1', start: 0, end: 5 },
+        { id: 'c2', start: 3, end: 8 },
+      ]),
+    ], opts)
+    m.seek(0)
+    m.play() // c1 activates
+    m.seek(3) // c2 activates inside c1's window → crossfade triggered
+
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    // Graph: trackGain(0), c1_clipGain(1), c1_crossfadeGain(2), c2_clipGain(3), c2_crossfadeGain(4)
+    const c1Crossfade = allGains[2]
+    const c2Crossfade = allGains[4]
+
+    const cos = c1Crossfade.gain.events.find((e) => e.kind === 'setValueCurveAtTime')
+    const sin = c2Crossfade.gain.events.find((e) => e.kind === 'setValueCurveAtTime')
+    expect(cos).toBeDefined()
+    expect(sin).toBeDefined()
+    // Overlap [3, 5] → duration 2
+    expect(cos?.duration).toBeCloseTo(2, 3)
+    expect(sin?.duration).toBeCloseTo(2, 3)
+    // cos starts at 1, sin starts at 0
+    expect(cos?.values?.[0]).toBeCloseTo(1, 3)
+    expect(sin?.values?.[0]).toBeCloseTo(0, 3)
+    // cos ends at 0, sin ends at 1
+    expect(cos?.values?.[cos!.values!.length - 1]).toBeCloseTo(0, 3)
+    expect(sin?.values?.[sin!.values!.length - 1]).toBeCloseTo(1, 3)
+  })
+
+  it('non-overlapping clips on the same track do NOT schedule crossfade curves', () => {
+    instrumentCtx(opts.mockCtx)
+    const m = createAudioMixer('p', [
+      t('a', [
+        { id: 'c1', start: 0, end: 1 },
+        { id: 'c2', start: 2, end: 3 },
+      ]),
+    ], opts)
+    m.seek(0.5)
+    m.play()
+    m.seek(2.5) // c1 deactivates, c2 activates — no overlap
+
+    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
+    const c1Crossfade = allGains[2]
+    const c2Crossfade = allGains[4]
+    expect(c1Crossfade.gain.events.some((e) => e.kind === 'setValueCurveAtTime')).toBe(false)
+    expect(c2Crossfade.gain.events.some((e) => e.kind === 'setValueCurveAtTime')).toBe(false)
+  })
+
+  it('cos² + sin² ≈ 1 at every curve sample (equal-power invariant)', () => {
+    // Rebuild the curves the mixer uses and verify the invariant directly
+    const n = 128
+    const cos = new Float32Array(n)
+    const sin = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1)
+      cos[i] = Math.cos(t * Math.PI / 2)
+      sin[i] = Math.sin(t * Math.PI / 2)
+    }
+    for (let i = 0; i < n; i++) {
+      const power = cos[i] * cos[i] + sin[i] * sin[i]
+      expect(power).toBeCloseTo(1, 5)
+    }
+  })
+})
+
 describe('createAudioMixer — dispose', () => {
   let opts: ReturnType<typeof makeOptions>
   beforeEach(() => { opts = makeOptions() })

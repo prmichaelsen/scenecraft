@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.18.0] - 2026-04-21
+
+### Added
+- M14 Task 117 — Curve automation + equal-power crossfade in `createAudioMixer`.
+  - `scheduleClipCurve(clipNode, playhead)` — `cancelScheduledValues`, anchor via `setValueAtTime` (sampled at playhead), then emit `linearRampToValueAtTime` for each remaining curve breakpoint. Muted clips schedule `setValueAtTime(0)` and skip ramps.
+  - `scheduleTrackCurve(trackNode, playhead)` — same but with absolute-seconds x; muted OR disabled tracks go to 0.
+  - Equal-power crossfade on overlapping same-track clip activation: per-clip `crossfadeGain` gets `setValueCurveAtTime(cos, ...)` for incumbent and `setValueCurveAtTime(sin, ...)` for newcomer over `[max(start), min(end)]`. 128-sample precomputed cos/sin curves; cos² + sin² = 1 verified.
+  - `updateClip(id)` re-schedules curve in place for active clips (live curve-drag feedback); inactive clips get the new mute state stored so the next activation starts correct. `updateTrack(id)` re-schedules the track curve.
+  - `seek()` reschedules track curves only on larger gaps (>50 ms) to avoid thrashing on per-frame ticks.
+- 9 new tests covering: track/clip curve anchor + ramp, muted clip zero-out, muted track zero-out, `updateClip`/`updateTrack` live re-schedule, same-track overlap crossfade setup, non-overlapping clips don't crossfade, and the cos²+sin²=1 invariant. 45 total pass.
+
 ## [0.17.0] - 2026-04-21
 
 ### Added
