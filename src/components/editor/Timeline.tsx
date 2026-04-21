@@ -726,31 +726,27 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       e.preventDefault()
       const factor = e.deltaY > 0 ? 0.85 : 1.18
       const el = scrollRef.current
-      // Minimum zoom: "fit entire timeline in viewport". Zooming out further
-      // just wastes space. Falls back to the old 0.1 floor if duration or
-      // viewport isn't known yet.
-      const fitZoom = effectiveDuration > 0 && viewportWidth > 0
-        ? viewportWidth / effectiveDuration
-        : 0.1
-      const minZoom = Math.max(0.01, fitZoom)
+      // No zoom-out floor. A tiny epsilon guards against zero / negative
+      // multiplicative collapse — nothing else.
+      const EPSILON = 1e-6
       if (el) {
         // Zoom around the playhead: keep playhead at the same viewport position
         const playheadX = currentTimeRef.current * pxPerSec
         const viewportOffset = playheadX - el.scrollLeft
-        const newPxPerSec = Math.max(minZoom, pxPerSec * factor)
+        const newPxPerSec = Math.max(EPSILON, pxPerSec * factor)
         const newPlayheadX = currentTimeRef.current * newPxPerSec
         el.scrollLeft = newPlayheadX - viewportOffset
         setPxPerSec(newPxPerSec)
         localStorage.setItem('scenecraft-zoom', String(newPxPerSec))
       } else {
         setPxPerSec((prev) => {
-          const next = Math.max(minZoom, prev * factor)
+          const next = Math.max(EPSILON, prev * factor)
           localStorage.setItem('scenecraft-zoom', String(next))
           return next
         })
       }
     }
-  }, [pxPerSec, effectiveDuration, viewportWidth])
+  }, [pxPerSec])
 
   const handleTrackClick = useCallback(
     (e: React.MouseEvent) => {
