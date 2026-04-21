@@ -682,12 +682,12 @@ milestones:
 
   - id: milestone_9
     name: Audio Tracks and Audio Clips
-    status: in_progress
+    status: completed
     started: 2026-04-19
-    completed: null
+    completed: 2026-04-21T03:45:00Z
     file: agent/milestones/milestone-9-audio-tracks-and-clips.md
     tasks_total: 11
-    tasks_completed: 10
+    tasks_completed: 11
     estimated_weeks: 3
     tasks:
       - id: task-82
@@ -771,11 +771,13 @@ milestones:
         notes: "VolumeCurveEditor canvas component (dB axis, normalized OR seconds X); AudioPropertiesPanel dispatches on audio-clip/track selection; EditorStateContext gained selectedAudioClipId/TrackId with mutex; AudioLane clicks wire selection. Saves debounced 200ms via existing /audio-clips/update and /audio-tracks/update endpoints."
       - id: task-91
         name: Multi-track mixdown + equal-power crossfade
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T03:00:00Z
+        completed_date: 2026-04-21T03:45:00Z
         file: agent/tasks/milestone-9-audio-tracks-and-clips/task-91-mixdown-renderer.md
         estimated_hours: 7
-        actual_hours: null
+        actual_hours: 0.75
+        notes: "audio/curves.py (evaluate_curve_db/linear, db_to_linear) + audio/mixdown.py (render_project_audio + _equal_power_crossfade_inplace). Integrated into narrative.assemble_final: renders mixdown.wav, falls back to legacy single-file path on failure. 9 tests pass (curve interp/clamp, crossfade sum-of-squares invariant, muted track zero, two-clip E2E with ffmpeg)."
       - id: task-92
         name: Veo auto-link integration
         status: completed

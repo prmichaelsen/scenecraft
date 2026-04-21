@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0] - 2026-04-21
+
+### Added
+- M9 Task 91 — Multi-track audio mixdown (backend). `scenecraft.audio.curves.evaluate_curve_db` / `db_to_linear` / `evaluate_curve_linear` evaluate per-clip and per-track dB curves via `np.interp` (clamps to nearest endpoint outside the point range).
+- `scenecraft.audio.mixdown.render_project_audio(project_dir, total_seconds, out_path, sr=48000)` decodes each clip via ffmpeg → stereo float32 → applies source_offset/length → clip curve → equal-power crossfade on same-track overlaps (cos/sin pair, sum of squares = 1) → track curve → sums into master → peak-limits at -0.1 dBFS → writes 16-bit PCM stereo WAV.
+- `narrative.assemble_final` now calls `render_project_audio` before `_mux_audio`. Falls back to the legacy single-audio-file path on failure or when no enabled tracks with clips exist — zero-impact on un-migrated projects.
+- `tests/test_audio_mixdown.py` — 9 tests (curve evaluation, crossfade invariant, muted track, two-clip end-to-end). All pass.
+
 ## [0.14.0] - 2026-04-21
 
 ### Added
