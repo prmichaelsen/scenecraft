@@ -1,6 +1,8 @@
-import { useRef, useState, useCallback, memo } from 'react'
+import { useRef, useState, useCallback, useEffect, memo } from 'react'
+import { createPortal } from 'react-dom'
 import type { KeyframeWithTime } from './Timeline'
 import type { Transition } from '@/routes/project/$name/editor'
+import { postMoveTransitions } from '@/lib/scenecraft-client'
 
 type TransitionTrackProps = {
   transitions: Transition[]
@@ -8,17 +10,40 @@ type TransitionTrackProps = {
   pxPerSec: number
   selectedId: string | null
   duration: number
+  projectName?: string
   onTransitionClick: (tr: Transition, shiftKey?: boolean) => void
   selectedIds?: Set<string>
-  onBoundaryDrag: (keyframeId: string, newTimeSeconds: number) => void
-  onBoundaryDragEnd: (keyframeId: string, newTimeSeconds: number) => void
-  onRemapChange: (transitionId: string, targetDuration: number) => void
+  onBoundaryDrag?: (keyframeId: string, newTimeSeconds: number) => void
+  onBoundaryDragEnd?: (keyframeId: string, newTimeSeconds: number) => void
+  onRemapChange?: (transitionId: string, targetDuration: number) => void
+  onTrimChange?: () => void
   onRetryRender?: (tr: Transition) => void
   onDropVideo?: (transitionId: string, poolPath: string, sourceTransitionId?: string) => void
   renderProgress?: Record<string, number>
   scrollLeft: number
   viewportWidth: number
   isActiveTrack?: boolean
+}
+
+// Active body-drag gesture state (kept in ref to avoid re-renders on every mousemove)
+type BodyDragState = {
+  trId: string
+  trWidth: number        // px width of the dragged clip
+  fromTimeSeconds: number
+  toTimeSeconds: number
+  startX: number
+  startY: number
+  mode: 'move' | 'copy'
+  locked: boolean        // true once movement threshold crossed
+}
+
+// Ghost preview position + metadata (state, rendered by React)
+type GhostState = {
+  cursorX: number
+  cursorY: number
+  width: number
+  timeDelta: number      // clamped so from + delta >= 0
+  mode: 'move' | 'copy'
 }
 
 export const TransitionTrack = memo(function TransitionTrack({
@@ -31,10 +56,12 @@ export const TransitionTrack = memo(function TransitionTrack({
   onBoundaryDrag,
   onBoundaryDragEnd,
   onRemapChange,
+  onTrimChange,
   onRetryRender,
   onDropVideo,
   renderProgress,
   duration,
+  projectName,
   scrollLeft,
   viewportWidth,
   isActiveTrack,
@@ -43,6 +70,12 @@ export const TransitionTrack = memo(function TransitionTrack({
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const dragState = useRef<{ dragging: boolean; keyframeId: string; transitionId: string; otherKfTime: number; startX: number; startTime: number; minTime: number; maxTime: number } | null>(null)
   const didDrag = useRef(false)
+
+  // Body-drag (move) gesture state — ref-based to avoid per-mousemove re-renders
+  const bodyDragState = useRef<BodyDragState | null>(null)
+  const [ghost, setGhost] = useState<GhostState | null>(null)
+  const ghostRafRef = useRef<number | null>(null)
+  const lastGhostRef = useRef<GhostState | null>(null)
 
   const handleEdgeDown = useCallback((e: React.MouseEvent, keyframeId: string, transitionId: string, otherKfTime: number, currentTime: number, minTime: number, maxTime: number) => {
     e.stopPropagation()
@@ -55,7 +88,7 @@ export const TransitionTrack = memo(function TransitionTrack({
       const deltaX = ev.clientX - dragState.current.startX
       if (Math.abs(deltaX) > 2) didDrag.current = true
       const newTime = Math.max(dragState.current.minTime, Math.min(dragState.current.maxTime, dragState.current.startTime + deltaX / pxPerSec))
-      onBoundaryDrag(dragState.current.keyframeId, newTime)
+      onBoundaryDrag?.(dragState.current.keyframeId, newTime)
     }
 
     const handleMouseUp = (ev: MouseEvent) => {
@@ -63,10 +96,10 @@ export const TransitionTrack = memo(function TransitionTrack({
         const deltaX = ev.clientX - dragState.current.startX
         const newTime = Math.max(dragState.current.minTime, Math.min(dragState.current.maxTime, dragState.current.startTime + deltaX / pxPerSec))
         console.log(`[TransitionTrack] mouseUp ${dragState.current.keyframeId}: startTime=${dragState.current.startTime.toFixed(2)} deltaX=${deltaX} pxPerSec=${pxPerSec} rawTime=${(dragState.current.startTime + deltaX / pxPerSec).toFixed(2)} clampedTime=${newTime.toFixed(2)} min=${dragState.current.minTime.toFixed(2)} max=${dragState.current.maxTime.toFixed(2)}`)
-        onBoundaryDragEnd(dragState.current.keyframeId, newTime)
+        onBoundaryDragEnd?.(dragState.current.keyframeId, newTime)
         // Compute new timeline duration and update remap
         const newDuration = Math.abs(newTime - dragState.current.otherKfTime)
-        onRemapChange(dragState.current.transitionId, newDuration)
+        onRemapChange?.(dragState.current.transitionId, newDuration)
         // Swallow the synthetic click that would otherwise bubble to parent handlers
         // (e.g., track onClick that seeks the playhead)
         const stopClick = (ce: MouseEvent) => {
@@ -82,7 +115,156 @@ export const TransitionTrack = memo(function TransitionTrack({
 
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [pxPerSec, onBoundaryDrag, onBoundaryDragEnd])
+  }, [pxPerSec, onBoundaryDrag, onBoundaryDragEnd, onRemapChange])
+
+  // Body-drag handler — mousedown on a transition bar's interior (NOT the boundary zones,
+  // which call stopPropagation in their own onMouseDown).
+  const handleBodyDown = useCallback(
+    (e: React.MouseEvent, tr: Transition, fromT: number, toT: number) => {
+      // Only left-button drags
+      if (e.button !== 0) return
+      // Don't call e.preventDefault or e.stopPropagation here — we want a plain click
+      // (no movement) to still reach the onClick handler.
+      const mode: 'move' | 'copy' = (e.metaKey || e.ctrlKey) ? 'copy' : 'move'
+      const trWidth = (toT - fromT) * pxPerSec
+      bodyDragState.current = {
+        trId: tr.id,
+        trWidth,
+        fromTimeSeconds: fromT,
+        toTimeSeconds: toT,
+        startX: e.clientX,
+        startY: e.clientY,
+        mode,
+        locked: false,
+      }
+      didDrag.current = false
+
+      const commitGhost = (next: GhostState) => {
+        lastGhostRef.current = next
+        if (ghostRafRef.current != null) return
+        ghostRafRef.current = requestAnimationFrame(() => {
+          ghostRafRef.current = null
+          if (lastGhostRef.current) setGhost(lastGhostRef.current)
+        })
+      }
+
+      const cleanup = () => {
+        bodyDragState.current = null
+        if (ghostRafRef.current != null) {
+          cancelAnimationFrame(ghostRafRef.current)
+          ghostRafRef.current = null
+        }
+        lastGhostRef.current = null
+        setGhost(null)
+        document.body.style.cursor = ''
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+        document.removeEventListener('keydown', onKeyDown)
+      }
+
+      const computeTimeDelta = (clientX: number) => {
+        const st = bodyDragState.current
+        if (!st) return 0
+        const rawDelta = (clientX - st.startX) / pxPerSec
+        // Clamp: new_from = fromT + delta >= 0  =>  delta >= -fromT
+        return Math.max(-st.fromTimeSeconds, rawDelta)
+      }
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const st = bodyDragState.current
+        if (!st) return
+        const dx = ev.clientX - st.startX
+        const dy = ev.clientY - st.startY
+        if (!st.locked) {
+          if (Math.hypot(dx, dy) < 4) return
+          st.locked = true
+          didDrag.current = true
+          document.body.style.cursor = 'grabbing'
+        }
+        const timeDelta = computeTimeDelta(ev.clientX)
+        commitGhost({
+          cursorX: ev.clientX,
+          cursorY: ev.clientY,
+          width: st.trWidth,
+          timeDelta,
+          mode: st.mode,
+        })
+      }
+
+      const onMouseUp = async (ev: MouseEvent) => {
+        const st = bodyDragState.current
+        if (!st) { cleanup(); return }
+        const wasLocked = st.locked
+        if (!wasLocked) {
+          // No drag occurred — let the normal click handler fire.
+          cleanup()
+          return
+        }
+
+        const timeDelta = computeTimeDelta(ev.clientX)
+        const trId = st.trId
+        const mode = st.mode
+
+        // Clear visuals immediately; keep didDrag=true so the synthetic click is swallowed.
+        cleanup()
+
+        // Swallow the synthetic click that follows mouseup on the bar.
+        const stopClick = (ce: MouseEvent) => {
+          ce.stopPropagation()
+          document.removeEventListener('click', stopClick, true)
+        }
+        document.addEventListener('click', stopClick, true)
+
+        if (Math.abs(timeDelta) < 0.01) {
+          // No net movement — skip backend call.
+          return
+        }
+        if (!projectName) {
+          console.error('[TransitionTrack] body-drag commit missing projectName, skipping move')
+          return
+        }
+        try {
+          await postMoveTransitions(projectName, {
+            mode,
+            trackDelta: 0,
+            timeDeltaSeconds: timeDelta,
+            transitionIds: [trId],
+            autoCreateTracks: true,
+          })
+          onTrimChange?.()
+        } catch (err) {
+          console.error('[TransitionTrack] postMoveTransitions failed:', err)
+        }
+      }
+
+      const onKeyDown = (ev: KeyboardEvent) => {
+        if (ev.key === 'Escape') {
+          // Cancel: clear state, no backend call.
+          ev.preventDefault()
+          ev.stopPropagation()
+          // Preserve didDrag so the upcoming click (if any) is swallowed.
+          cleanup()
+        }
+      }
+
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+      document.addEventListener('keydown', onKeyDown)
+    },
+    [pxPerSec, projectName, onTrimChange],
+  )
+
+  // Safety: release document-level cursor override if the component unmounts mid-drag.
+  useEffect(() => {
+    return () => {
+      if (bodyDragState.current) {
+        document.body.style.cursor = ''
+      }
+      if (ghostRafRef.current != null) {
+        cancelAnimationFrame(ghostRafRef.current)
+      }
+    }
+  }, [])
 
   const BUFFER_PX = 300
 
@@ -145,13 +327,22 @@ export const TransitionTrack = memo(function TransitionTrack({
 
             {/* Transition bar */}
             <div
-              className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm cursor-pointer pointer-events-auto transition-colors border-t ${
+              className={`absolute bottom-0 left-0 right-0 h-3 rounded-t-sm pointer-events-auto transition-colors border-t ${
+                isActiveTrack !== false ? 'cursor-grab' : 'cursor-pointer'
+              } ${
                 dropTarget === tr.id
                   ? 'bg-green-500/30 border-green-500/60 ring-1 ring-green-500'
                   : tr.hidden
                     ? `bg-yellow-500/10 hover:bg-yellow-500/15 border-yellow-500/20 border-dashed ${isSelected ? 'ring-1 ring-yellow-500' : ''}`
                     : `bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/30 ${isSelected ? 'ring-1 ring-orange-500' : ''}`
               }`}
+              onMouseDown={(e) => {
+                // Body-drag only initiates on active tracks; skip on inactive.
+                if (isActiveTrack === false) return
+                // The boundary zones below stopPropagation in their own handlers,
+                // so this fires only when mousedown lands on the bar interior.
+                handleBodyDown(e, tr, fromKf.timeSeconds, toKf.timeSeconds)
+              }}
               onClick={(e) => {
                 if (didDrag.current) { didDrag.current = false; return }
                 e.stopPropagation()
@@ -216,6 +407,20 @@ export const TransitionTrack = memo(function TransitionTrack({
           </div>
         )
       })}
+      {/* Body-drag ghost preview — fixed-positioned at cursor bottom-right (cursor.x+4, cursor.y+4) */}
+      {ghost && typeof document !== 'undefined' && createPortal(
+        <div
+          className="pointer-events-none fixed z-50 bg-orange-500/30 border border-orange-500 rounded-t-sm"
+          style={{
+            left: ghost.cursorX + 4,
+            top: ghost.cursorY + 4,
+            width: ghost.width,
+            height: 12,
+            opacity: 0.5,
+          }}
+        />,
+        document.body,
+      )}
     </div>
   )
 })
