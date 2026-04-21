@@ -3,8 +3,9 @@
 **Milestone**: [M10 — Clip Move Cross-Track](../../milestones/milestone-10-clip-move-cross-track.md)  
 **Design**: [local.clip-move-cross-track.md](../../design/local.clip-move-cross-track.md)  
 **Estimated Hours**: 6-8  
-**Status**: Not Started  
+**Status**: Completed (2026-04-21)  
 **Dependencies**: Task 93 (endpoint skeleton)  
+**Backend commit**: scenecraft-engine 5a1ab7b  
 
 ---
 
