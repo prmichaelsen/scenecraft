@@ -682,21 +682,22 @@ milestones:
 
   - id: milestone_9
     name: Audio Tracks and Audio Clips
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-19
     completed: null
     file: agent/milestones/milestone-9-audio-tracks-and-clips.md
     tasks_total: 11
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 3
     tasks:
       - id: task-82
         name: Schema migration (greenfield)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-19T00:00:00Z
+        completed_date: 2026-04-19T01:00:00Z
         file: agent/tasks/milestone-9-audio-tracks-and-clips/task-82-schema-migration.md
         estimated_hours: 4
-        actual_hours: null
+        actual_hours: 1.0
       - id: task-83
         name: Audio-stream extract via ffmpeg
         status: not_started
@@ -1198,12 +1199,13 @@ tasks:
   milestone_9:
     - id: task-82
       name: Schema migration (greenfield)
-      status: not_started
+      status: completed
       milestone_id: milestone_9
       file: agent/tasks/milestone-9-audio-tracks-and-clips/task-82-schema-migration.md
       estimated_hours: 4
-      actual_hours: null
-      started: null
+      actual_hours: 1.0
+      started: 2026-04-19T00:00:00Z
+      completed_date: 2026-04-19T01:00:00Z
     - id: task-83
       name: Audio-stream extract via ffmpeg
       status: not_started
