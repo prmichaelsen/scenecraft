@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0] - 2026-04-21
+
+### Added
+- M9 Task 89 — Drop-to-auto-link audio. Dropping a pool video onto an existing transition, or duplicating another transition's video, now extracts + links its audio automatically. Backend: `_handle_assign_pool_video` and `duplicate-transition-video` both call `link_audio_for_transition(replace=True)` after success (non-fatal on failure); response now includes `audioLink`.
+- `getTimelineData` server-fn now also fetches `audioTracks` so `refreshTimeline()` picks up new audio clips after any drop/assign/duplicate.
+- `Timeline.tsx` uses `localAudioTracks` state (mirrors `localKeyframes`/`localTransitions`) so the audio lane updates without a full route invalidate.
+
 ## [0.12.0] - 2026-04-19
 
 ### Added

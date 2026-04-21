@@ -545,10 +545,12 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Local keyframe/transition state for fast partial refetches
   const [localKeyframes, setLocalKeyframes] = useState(data.keyframes)
   const [localTransitions, setLocalTransitions] = useState(data.transitions)
+  const [localAudioTracks, setLocalAudioTracks] = useState(data.audioTracks)
   useEffect(() => { setLocalKeyframes(data.keyframes) }, [data.keyframes])
   useEffect(() => { setLocalTransitions(data.transitions) }, [data.transitions])
+  useEffect(() => { setLocalAudioTracks(data.audioTracks) }, [data.audioTracks])
 
-  // Partial refetch — only keyframes + transitions (fast, ~500KB)
+  // Partial refetch — only keyframes + transitions + audio tracks (fast, ~500KB)
   const refreshTimeline = useCallback(() => {
     getTimelineData({ data: { name: data.projectName } }).then((tl) => {
       // Invalidate frame cache for keyframes whose selected variant changed
@@ -561,6 +563,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       }
       setLocalKeyframes(tl.keyframes)
       setLocalTransitions(tl.transitions)
+      if (tl.audioTracks) setLocalAudioTracks(tl.audioTracks)
     }).catch((e) => { console.error('refreshTimeline failed:', e); router.invalidate() })
   }, [data.projectName, router, localKeyframes])
 
@@ -2425,9 +2428,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 Audio
               </div>
               {/* Multi-track audio lanes (M9) — mirrored below video, sorted ascending by display_order */}
-              {data.audioTracks && data.audioTracks.length > 0 && (
+              {localAudioTracks && localAudioTracks.length > 0 && (
                 <div className="relative">
-                  {[...data.audioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => (
+                  {[...localAudioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => (
                     <AudioLane key={t.id} projectName={data.projectName} track={t} pxPerSec={pxPerSec} />
                   ))}
                 </div>

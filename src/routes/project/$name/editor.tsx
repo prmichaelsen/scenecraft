@@ -391,8 +391,13 @@ const getEditorData = createServerFn({ method: 'GET' })
 export const getTimelineData = createServerFn({ method: 'GET' })
   .inputValidator((input: { name: string }) => input)
   .handler(async ({ data }) => {
-    const kfData = await fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null, tracks: [] }))
+    const { fetchAudioTracks } = await import('@/lib/audio-client')
+    const [kfData, audioTracksData] = await Promise.all([
+      fetchKeyframes(data.name).catch(() => ({ meta: null, keyframes: [], transitions: [], audioFile: null, tracks: [] })),
+      fetchAudioTracks(data.name).catch(() => [] as import('@/lib/audio-client').AudioTrack[]),
+    ])
     return {
+      audioTracks: audioTracksData,
       keyframes: (kfData.keyframes || []).map((kf: Record<string, unknown>) => ({
         id: kf.id as string,
         timestamp: kf.timestamp as string,
