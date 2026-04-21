@@ -65,7 +65,9 @@ Alternatively: gate every call (simpler). User can disable gating in settings la
 
 ### Cancellation
 
-If the user closes the chat connection or explicitly declines, the job should be cancelled via the existing `JobManager.cancel_job`. Wire `ws.wait_closed` + `asyncio.shield` around the job await so a disconnect cancels the job.
+**Decision (2026-04-18): do not cancel on WS disconnect.** The user has already paid the Imagen/Veo cost at kickoff; wasting that spend benefits no one. If the chat panel closes mid-generation, let the job keep running — candidates will appear in the bin/pool next time the editor opens. `ws.send` inside the progress loop is wrapped in `try/except` so broken-pipe errors don't bubble.
+
+Explicit decline during elicitation (before kickoff) is still honored — the job never starts.
 
 ---
 
@@ -179,7 +181,7 @@ Add to `chat-client.ts` `ServerMessage`:
 
 ### 7. Cancellation Path
 
-Wrap the `await run_*_generation(...)` call in `asyncio.shield` and register a cleanup that fires `JobManager.cancel_job(job_id)` if the WebSocket closes before completion. If the tool was declined in elicitation, never kick off the job in the first place.
+If the tool is declined in elicitation, never kick off the job. Once kicked off, the job runs to completion regardless of chat state (see "Cancellation" note above).
 
 ### 8. Tests
 
@@ -199,6 +201,6 @@ Wrap the `await run_*_generation(...)` call in `asyncio.shield` and register a c
 - [ ] Declining elicitation aborts the generation before any API call
 - [ ] `tool_progress` events stream while the job runs, frontend badge shows % progress
 - [ ] Tool result contains new `pool_segment_ids` that Claude can immediately use with `assign_keyframe_image` / `assign_pool_video`
-- [ ] WS disconnect mid-generation cancels the upstream job
+- [ ] WS disconnect mid-generation does NOT cancel the job — candidates still land in the DB on completion
 - [ ] No duplicate generation jobs fire if Claude retries within the same turn
 - [ ] API cost gate configurable via env var (defer: `CHAT_REQUIRE_GENERATION_CONFIRM=1` default)
