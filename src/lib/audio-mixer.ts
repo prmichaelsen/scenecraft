@@ -358,24 +358,29 @@ export function createAudioMixer(
     clipNode.active = false
   }
 
-  const reevaluateClips = (playhead: number): void => {
+  const reevaluateClips = (playhead: number, hardSeek: boolean): void => {
     for (const trackNode of trackMap.values()) {
       for (const clipNode of trackNode.clips.values()) {
-        const { start_time, end_time } = clipNode.clip
+        const { start_time, end_time, source_offset } = clipNode.clip
+        const effOffset = clipNode.clip.effective_source_offset ?? source_offset
+        const rate = clipNode.clip.playback_rate ?? 1
         const inside = playhead >= start_time && playhead < end_time
         if (inside && !clipNode.active) {
           activateClip(clipNode, playhead)
         } else if (!inside && clipNode.active) {
           deactivateClip(clipNode)
-        } else if (inside && clipNode.active && isPlaying && clipNode.audio) {
-          // Already marked active. If pause() ran previously (which paused
-          // the <audio> element without flipping `active`), the element
-          // will be paused here and needs a fresh play() to resume.
-          if (clipNode.audio.paused) {
+        } else if (inside && clipNode.active && clipNode.audio) {
+          // Already marked active. On a hard seek (scrub / jump), resync the
+          // <audio> element's currentTime to honor the new playhead. During
+          // normal frame-by-frame playback (hardSeek=false), leave the
+          // streaming position alone to avoid audible hiccups.
+          if (hardSeek) {
+            const sourcePosition = Math.max(0, effOffset + (playhead - start_time) * rate)
+            try { clipNode.audio.currentTime = sourcePosition } catch { /* ignore */ }
+          }
+          if (isPlaying && clipNode.audio.paused) {
             clipNode.audio.play().catch(() => { /* NotAllowedError — swallow */ })
           }
-          // Otherwise: already streaming, leave currentTime alone to avoid
-          // mid-playback hiccups.
         }
       }
     }
@@ -393,8 +398,11 @@ export function createAudioMixer(
       isPlaying = true
       ensureGraph()
       scheduleAllTrackCurves(lastPlayhead)
-      // Activate any clips already inside the playhead window
-      reevaluateClips(lastPlayhead)
+      // Activate any clips already inside the playhead window. Force
+      // currentTime resync — user pressed play expecting audio to start AT
+      // the playhead, not from whatever position the <audio> element last
+      // paused at.
+      reevaluateClips(lastPlayhead, /* hardSeek */ true)
       log(`play() @${lastPlayhead.toFixed(3)}s`)
     },
 
@@ -416,11 +424,12 @@ export function createAudioMixer(
       const crossedLargeGap = Math.abs(seconds - lastPlayhead) > 0.05
       lastPlayhead = seconds
       if (!audioCtx) return
-      // On a real seek (not a small forward tick), reschedule track curves so
-      // anchor values reflect the new position. Small forward ticks are no-op
-      // — the ramps scheduled at play-time still run correctly.
+      // On a real seek (user scrubbing the playhead, not just a per-frame
+      // tick), reschedule track curves and hard-resync each active clip's
+      // <audio> element so it honors the new playhead. Small forward ticks
+      // leave streaming position alone to avoid hiccups.
       if (crossedLargeGap) scheduleAllTrackCurves(seconds)
-      reevaluateClips(seconds)
+      reevaluateClips(seconds, /* hardSeek */ crossedLargeGap)
     },
 
     updateClip(clipId: string) {
@@ -461,7 +470,7 @@ export function createAudioMixer(
         // refreshTimeline() after drags / trims / align-apply / etc.) don't
         // silently drop audio that should keep playing.
         scheduleAllTrackCurves(lastPlayhead)
-        reevaluateClips(lastPlayhead)
+        reevaluateClips(lastPlayhead, /* hardSeek */ true)
       }
       log(`rebuild(${nextTracks.length} tracks)`)
     },

@@ -48,17 +48,20 @@ export function useAudioMixer(
     mixerRef.current?.rebuild(tracks)
   }, [tracks])
 
+  // Seek on every playhead change. Runs BEFORE the play/pause effect below
+  // so that when a render batch flips both (e.g. user scrubs then presses
+  // play in the same frame), `play()` sees the updated lastPlayhead instead
+  // of a stale one — otherwise audio starts from the previous position.
+  useEffect(() => {
+    mixerRef.current?.seek(currentTime)
+  }, [currentTime])
+
   // Play/pause
   useEffect(() => {
     if (!mixerRef.current) return
     if (isPlaying) mixerRef.current.play()
     else mixerRef.current.pause()
   }, [isPlaying])
-
-  // Seek on every playhead change
-  useEffect(() => {
-    mixerRef.current?.seek(currentTime)
-  }, [currentTime])
 
   return mixer
 }
