@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react'
 import { ArrowRightFromLine } from 'lucide-react'
 import type { LayoutNode, SplitNode, PanelId, PanelRegistry } from './types'
 import { SplitContainer } from './SplitContainer'
@@ -8,6 +8,14 @@ type PanelLayoutProps = {
   panels: PanelRegistry
   defaultLayout: LayoutNode
   onLayoutChange?: (layout: LayoutNode) => void
+}
+
+export type PanelLayoutHandle = {
+  /** Activate the tab for a given panelId. Respects group lock (no-op on locked groups).
+   *  Expands the containing group/column if collapsed. */
+  activatePanel: (panelId: PanelId) => void
+  /** Programmatically toggle a group's lock state. */
+  setGroupLocked: (groupId: string, locked: boolean) => void
 }
 
 type CollapseDir = 'left' | 'right' | 'up' | 'down'
@@ -54,6 +62,14 @@ function findGroupPath(node: LayoutNode, groupId: string, path: number[] = []): 
   const left = findGroupPath(node.children[0], groupId, [...path, 0])
   if (left) return left
   return findGroupPath(node.children[1], groupId, [...path, 1])
+}
+
+// Find the path to the group that owns a given panelId, regardless of collapse state.
+function findPanelOwnerPath(node: LayoutNode, panelId: PanelId, path: number[] = []): number[] | null {
+  if (node.type === 'group') return node.tabs.includes(panelId) ? path : null
+  const left = findPanelOwnerPath(node.children[0], panelId, [...path, 0])
+  if (left) return left
+  return findPanelOwnerPath(node.children[1], panelId, [...path, 1])
 }
 
 // --- Collapse direction ---
@@ -227,9 +243,13 @@ const EXPAND_ROTATION: Record<string, string> = {
 
 // --- Component ---
 
-export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayoutProps) {
+export const PanelLayout = forwardRef<PanelLayoutHandle, PanelLayoutProps>(function PanelLayout({ panels, defaultLayout, onLayoutChange }, ref) {
   const [layout, setLayout] = useState<LayoutNode>(defaultLayout)
   const rootRef = useRef<HTMLDivElement>(null)
+  // Keep a ref to the latest layout so the imperative activatePanel always sees fresh state
+  // (React's setState inside imperative callbacks can race with stale closures).
+  const layoutRef = useRef(layout)
+  layoutRef.current = layout
 
   const allPanelIds = useMemo(() => Object.keys(panels), [panels])
 
@@ -502,6 +522,70 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
     }))
   }, [layout, update])
 
+  const handleToggleLocked = useCallback((groupId: string, locked: boolean) => {
+    const path = findGroupPath(layout, groupId)
+    if (!path) return
+    update(updateNode(layout, path, (node) => {
+      if (node.type !== 'group') return node
+      return { ...node, locked }
+    }))
+  }, [layout, update])
+
+  // Imperative API: programmatically focus a panel + toggle group lock.
+  useImperativeHandle(ref, () => ({
+    activatePanel: (panelId: PanelId) => {
+      const current = layoutRef.current
+      const ownerPath = findPanelOwnerPath(current, panelId)
+      if (!ownerPath) return
+      const ownerGroup = getNode(current, ownerPath)
+      if (ownerGroup.type !== 'group') return
+      // Respect lock — caller opted out of auto-activation
+      if (ownerGroup.locked) return
+      // No-op if the target tab is already active and nothing is collapsed
+      // (avoid an unnecessary state update + onLayoutChange save).
+      let newLayout = current
+      // Expand any collapsed ancestors (column-collapsed splits)
+      for (let depth = 0; depth < ownerPath.length; depth++) {
+        const ancestorPath = ownerPath.slice(0, depth)
+        const ancestor = getNode(newLayout, ancestorPath)
+        if (ancestor.type === 'split' && ancestor.collapsed) {
+          const collapseKey = ancestorPath.join(',')
+          newLayout = updateNode(newLayout, ancestorPath, (n) => ({ ...n, collapsed: false }))
+          // Restore saved ratios at this level and deeper
+          for (let d = ancestorPath.length; d >= 0; d--) {
+            const p = ancestorPath.slice(0, d)
+            const n = getNode(newLayout, p)
+            if (n.type === 'split' && n.savedRatios?.[collapseKey] !== undefined) {
+              const savedRatio = n.savedRatios[collapseKey]
+              newLayout = updateNode(newLayout, p, (nn) => {
+                if (nn.type !== 'split') return nn
+                const { [collapseKey]: _, ...rest } = nn.savedRatios || {}
+                return { ...nn, ratio: savedRatio, savedRatios: Object.keys(rest).length > 0 ? rest : undefined }
+              })
+            }
+          }
+        }
+      }
+      // Expand the group itself if collapsed, then set active tab
+      newLayout = updateNode(newLayout, ownerPath, (node) => {
+        if (node.type !== 'group') return node
+        if (node.collapsed) return { ...node, collapsed: false, activeTab: panelId }
+        if (node.activeTab === panelId) return node
+        return { ...node, activeTab: panelId }
+      })
+      if (newLayout !== current) update(newLayout)
+    },
+    setGroupLocked: (groupId: string, locked: boolean) => {
+      const current = layoutRef.current
+      const path = findGroupPath(current, groupId)
+      if (!path) return
+      update(updateNode(current, path, (node) => {
+        if (node.type !== 'group') return node
+        return { ...node, locked }
+      }))
+    },
+  }), [update])
+
   function renderNode(node: LayoutNode, path: number[] = []): React.ReactNode {
     if (node.type === 'group') {
       const collapseDir = getCollapseDir(layout, path)
@@ -536,6 +620,7 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
           onCollapse={handleCollapse}
           onExpand={handleExpand}
           onExpandAndActivate={handleExpandAndActivate}
+          onToggleLocked={handleToggleLocked}
           showCollapseColumn={showCollapseColumn}
           columnCollapseDirection={columnCollapseDirection}
           onCollapseColumn={columnSplitPath ? () => handleCollapseColumn(columnSplitPath) : undefined}
@@ -634,4 +719,4 @@ export function PanelLayout({ panels, defaultLayout, onLayoutChange }: PanelLayo
       {renderNode(layout)}
     </div>
   )
-}
+})

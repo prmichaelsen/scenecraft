@@ -17,6 +17,9 @@ export type GroupNode = {
   activeTab: PanelId
   collapsed?: boolean
   preCollapseSize?: number
+  // When true, external `activatePanel(...)` calls skip this group so the user's
+  // current tab/active selection isn't stolen by auto-activation.
+  locked?: boolean
 }
 
 export type LayoutNode = SplitNode | GroupNode

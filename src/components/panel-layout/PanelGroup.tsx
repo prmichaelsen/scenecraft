@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ArrowRightFromLine } from 'lucide-react'
+import { ArrowRightFromLine, Pin, PinOff } from 'lucide-react'
 import type { GroupNode, PanelId, PanelRegistry } from './types'
 
 type PanelGroupProps = {
@@ -13,6 +13,7 @@ type PanelGroupProps = {
   onCollapse: (groupId: string) => void
   onExpand: (groupId: string) => void
   onExpandAndActivate?: (groupId: string, tabId: PanelId) => void
+  onToggleLocked?: (groupId: string, locked: boolean) => void
   // Column-level collapse (collapses the entire parent vertical split)
   onCollapseColumn?: () => void
   showCollapseColumn?: boolean
@@ -41,7 +42,7 @@ const EXPAND_ROTATION: Record<string, string> = {
 export function PanelGroup({
   group, panels, allPanelIds, collapseDirection,
   onTabActivate, onTabClose, onTabAdd, onCollapse, onExpand,
-  onExpandAndActivate,
+  onExpandAndActivate, onToggleLocked,
   onCollapseColumn, showCollapseColumn, columnCollapseDirection,
   onTabDragStart, onTabDrop, onSplitDrop,
 }: PanelGroupProps) {
@@ -193,8 +194,19 @@ export function PanelGroup({
           {dragOverIndex === group.tabs.length && <div className="w-0.5 h-4 bg-blue-500 shrink-0 rounded-full self-center" />}
         </div>
 
-        {/* Right actions: inner collapse + column collapse + add menu */}
+        {/* Right actions: lock + inner collapse + column collapse + add menu */}
         <div className="flex items-center gap-0 px-1 shrink-0 self-center">
+          {onToggleLocked && (
+            <button
+              onClick={() => onToggleLocked(group.id, !group.locked)}
+              className={`flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 ${
+                group.locked ? 'text-amber-400 hover:text-amber-300' : 'text-gray-500 hover:text-gray-200'
+              }`}
+              title={group.locked ? 'Unlock group (allow auto-activation)' : 'Lock group (prevent auto-activation)'}
+            >
+              {group.locked ? <Pin size={12} className="fill-current" /> : <PinOff size={12} />}
+            </button>
+          )}
           {/* Inner collapse — collapses this group within its split */}
           {collapseDirection && (
             <button
