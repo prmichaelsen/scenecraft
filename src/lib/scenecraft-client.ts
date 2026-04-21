@@ -489,11 +489,11 @@ export async function postDuplicateTransitionVideo(project: string, sourceId: st
   return res.json()
 }
 
-export async function postPasteGroup(project: string, keyframeIds: string[], targetTime: string, targetTrackId: string) {
+export async function postPasteGroup(project: string, keyframeIds: string[], targetTime: string, targetTrackId: string, audioClipIds: string[] = []) {
   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/paste-group`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keyframeIds, targetTime, targetTrackId }),
+    body: JSON.stringify({ keyframeIds, audioClipIds, targetTime, targetTrackId }),
   })
   if (!res.ok) throw new Error(`Failed: ${res.status}`)
   return res.json()

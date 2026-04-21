@@ -43,6 +43,8 @@ class MockHTMLAudioElement {
   paused = true
   preload = ''
   crossOrigin: string | null = null
+  playbackRate = 1
+  preservesPitch: boolean | undefined = undefined
   playCalls: number[] = []
   pauseCalls = 0
   play() { this.paused = false; this.playCalls.push(this.currentTime); return Promise.resolve() }

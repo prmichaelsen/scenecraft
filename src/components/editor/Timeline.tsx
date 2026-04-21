@@ -9,6 +9,8 @@ import { useAudioMixer } from '@/hooks/useAudioMixer'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
 import { AudioTrack } from './AudioTrack'
 import { AudioLane } from './AudioLane'
+import { AlignWaveformsDialog } from './AlignWaveformsDialog'
+import type { AudioClip as AudioClipType } from '@/lib/audio-client'
 import { scenecraftFileUrl } from '@/lib/scenecraft-client'
 import { VideoTrack } from './VideoTrack'
 import { TransitionTrack } from './TransitionTrack'
@@ -373,6 +375,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [selectedTransitionIds, setSelectedTransitionIds] = useState<Set<string>>(new Set())
   const [selectedAudioClipIds, setSelectedAudioClipIds] = useState<Set<string>>(new Set())
+  // Align-waveforms dialog state — opened from audio clip right-click menu
+  const [alignWaveformsDialog, setAlignWaveformsDialog] = useState<{ open: boolean; clipIds: string[] }>({ open: false, clipIds: [] })
   const [transformMode, setTransformMode] = useState(false)
   const previewContainerRef = useRef<HTMLDivElement>(null)
   const [showBin, setShowBin] = useState(false)
@@ -1200,6 +1204,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
   // Keyframe group clipboard for copy/paste
   const kfClipboard = useRef<string[]>([])
+  const audioClipClipboard = useRef<string[]>([])
 
   // Transition clipboard for copy/paste (stores source transition ID)
   const trClipboard = useRef<string | null>(null)
@@ -1277,9 +1282,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
       // Copy selected keyframes, transition, suppression, or effects
       if (matchesHotkey(e, 'copy')) {
-        if (selectedKeyframeIds.size > 0) {
+        if (selectedKeyframeIds.size > 0 || selectedAudioClipIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = [...selectedKeyframeIds]
+          audioClipClipboard.current = [...selectedAudioClipIds]
           trClipboard.current = null
           supClipboard.current = []
           effectClipboard.current = []
@@ -1296,6 +1302,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             }
           }
           kfClipboard.current = [...neighborIds]
+          audioClipClipboard.current = []
+          trClipboard.current = null
+          supClipboard.current = []
+          effectClipboard.current = []
+        } else if (editorState.selectedAudioClipId) {
+          // Single audio clip selected without multi-set → copy just this clip.
+          e.preventDefault()
+          kfClipboard.current = []
+          audioClipClipboard.current = [editorState.selectedAudioClipId]
           trClipboard.current = null
           supClipboard.current = []
           effectClipboard.current = []
@@ -1303,6 +1318,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           e.preventDefault()
           trClipboard.current = selectedTransition.id
           kfClipboard.current = []
+          audioClipClipboard.current = []
           supClipboard.current = []
           effectClipboard.current = []
         } else if (selectedSuppressionIds.size > 0 || selectedSuppressionId) {
@@ -1313,11 +1329,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             const minFrom = Math.min(...selected.map((s) => s.from))
             supClipboard.current = selected.map((s) => ({ ...s, from: s.from - minFrom, to: s.to - minFrom }))
             kfClipboard.current = []
+            audioClipClipboard.current = []
             effectClipboard.current = []
           }
         } else if (selectedEffectIds.size > 0) {
           e.preventDefault()
           kfClipboard.current = []
+          audioClipClipboard.current = []
           supClipboard.current = []
           const selected = userEffects.filter((fx) => selectedEffectIds.has(fx.id))
           if (selected.length > 0) {
@@ -1336,10 +1354,16 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste transition style failed:', err); alert(`Paste style failed: ${err.message}`) })
           })
-        } else if (kfClipboard.current.length > 0) {
+        } else if (kfClipboard.current.length > 0 || audioClipClipboard.current.length > 0) {
           e.preventDefault()
           import('@/lib/scenecraft-client').then(({ postPasteGroup }) => {
-            postPasteGroup(data.projectName, kfClipboard.current, secondsToTimestamp(currentTimeRef.current), selectedTrackId)
+            postPasteGroup(
+              data.projectName,
+              kfClipboard.current,
+              secondsToTimestamp(currentTimeRef.current),
+              selectedTrackId,
+              audioClipClipboard.current,
+            )
               .then(() => refreshTimeline())
               .catch((err: Error) => { console.error('Paste group failed:', err); alert(`Paste failed: ${err.message}`) })
           })
@@ -2190,6 +2214,30 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       pxPerSec={pxPerSec}
                       selectedIds={selectedAudioClipIds}
                       onClipClick={handleAudioClipClick}
+                      onRequestAlignWaveforms={(clipIds) => {
+                        // Promote right-clicked clip into selection (AudioLane did this
+                        // eagerly in the list it passes us). Mirror that in state so
+                        // the dialog shows the same set.
+                        setSelectedAudioClipIds(new Set(clipIds))
+                        setAlignWaveformsDialog({ open: true, clipIds })
+                      }}
+                      onRequestDeleteClip={async (clipId) => {
+                        try {
+                          const { postDeleteAudioClip } = await import('@/lib/audio-client')
+                          await postDeleteAudioClip(data.projectName, clipId)
+                          setSelectedAudioClipIds((prev) => {
+                            const next = new Set(prev)
+                            next.delete(clipId)
+                            return next
+                          })
+                          if (editorState.selectedAudioClipId === clipId) {
+                            editorState.setSelectedAudioClipId(null)
+                          }
+                          refreshTimeline()
+                        } catch (err) {
+                          console.error('Failed to delete audio clip:', err)
+                        }
+                      }}
                     />
                   ))}
                 </div>
