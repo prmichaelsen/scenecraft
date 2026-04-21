@@ -375,6 +375,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [selectedTransition, setSelectedTransition] = useState<Transition | null>(null)
   const [selectedTransitionIds, setSelectedTransitionIds] = useState<Set<string>>(new Set())
   const [selectedAudioClipIds, setSelectedAudioClipIds] = useState<Set<string>>(new Set())
+  // Audio clip body-drag state. When active: set of clip IDs being moved +
+  // the live offset in seconds. AudioLane renders the optimistic CSS transform
+  // via props; commit happens on mouseup.
+  const [audioDrag, setAudioDrag] = useState<{ ids: Set<string>; offsetSeconds: number } | null>(null)
   // Align-waveforms dialog state — opened from audio clip right-click menu
   const [alignWaveformsDialog, setAlignWaveformsDialog] = useState<{ open: boolean; clipIds: string[] }>({ open: false, clipIds: [] })
   const [transformMode, setTransformMode] = useState(false)
@@ -856,6 +860,102 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       return kf
     })
   }, [closeAllPanels])
+
+  const handleAudioClipMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, e: React.MouseEvent) => {
+    // Only left-click on the block body. Shift-click is for selection (the
+    // synthetic click event after mousedown will be handled by onClipClick
+    // unless the drag actually moves the cursor past threshold).
+    if (e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey) return
+    e.preventDefault()
+    const startX = e.clientX
+    const pxPerSecAtStart = pxPerSec
+
+    // Build the drag set: if the primary clip is already in the multi-select
+    // set, move the whole set together; otherwise just this one clip.
+    const primaryId = clip.id
+    const dragIds = selectedAudioClipIds.has(primaryId)
+      ? new Set(selectedAudioClipIds)
+      : new Set<string>([primaryId])
+    // Snapshot current start_time per clip so we can commit deltas on mouseup
+    const originalStarts = new Map<string, { clip: import('@/lib/audio-client').AudioClip; start: number; end: number }>()
+    for (const track of (localAudioTracks ?? [])) {
+      for (const c of (track.clips ?? [])) {
+        if (dragIds.has(c.id)) originalStarts.set(c.id, { clip: c, start: c.start_time, end: c.end_time })
+      }
+    }
+    if (originalStarts.size === 0) return
+
+    // Earliest start among dragged clips — used to clamp so no clip goes negative
+    const minStart = Math.min(...Array.from(originalStarts.values()).map((s) => s.start))
+
+    let moved = false
+    const THRESHOLD_PX = 4
+    const SNAP_SECONDS = 1
+
+    const onMove = (me: MouseEvent) => {
+      const dxPx = me.clientX - startX
+      if (!moved && Math.abs(dxPx) < THRESHOLD_PX) return
+      moved = true
+      let dt = dxPx / pxPerSecAtStart
+      // Clamp so earliest clip stays ≥ 0
+      dt = Math.max(dt, -minStart)
+      // Snap: default 1s, shift = 0.1s, alt = none
+      if (!me.altKey) {
+        const grid = me.shiftKey ? 0.1 : SNAP_SECONDS
+        dt = Math.round(dt / grid) * grid
+      }
+      setAudioDrag({ ids: dragIds, offsetSeconds: dt })
+    }
+
+    const onUp = async (ue: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('keydown', onKey)
+      if (!moved) {
+        setAudioDrag(null)
+        return
+      }
+      // Snapshot the final delta so we don't depend on stale state
+      const dxPx = ue.clientX - startX
+      let dt = dxPx / pxPerSecAtStart
+      dt = Math.max(dt, -minStart)
+      if (!ue.altKey) {
+        const grid = ue.shiftKey ? 0.1 : SNAP_SECONDS
+        dt = Math.round(dt / grid) * grid
+      }
+      setAudioDrag(null)
+      if (dt === 0) return
+      try {
+        const { postUpdateAudioClip } = await import('@/lib/audio-client')
+        await Promise.all(Array.from(originalStarts.values()).map(({ clip: c, start, end }) =>
+          postUpdateAudioClip(data.projectName, c.id, {
+            startTime: start + dt,
+            endTime: end + dt,
+          })
+        ))
+        refreshTimeline()
+      } catch (err) {
+        console.error('Audio clip drag commit failed:', err)
+        alert(`Drag failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      // Swallow the synthetic click after drag so it doesn't toggle selection
+      const stopClick = (ce: MouseEvent) => { ce.stopPropagation(); document.removeEventListener('click', stopClick, true) }
+      document.addEventListener('click', stopClick, true)
+    }
+
+    const onKey = (ke: KeyboardEvent) => {
+      if (ke.key === 'Escape') {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        window.removeEventListener('keydown', onKey)
+        setAudioDrag(null)
+      }
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('keydown', onKey)
+  }, [pxPerSec, selectedAudioClipIds, localAudioTracks, data.projectName, refreshTimeline])
 
   const handleAudioClipClick = useCallback((clip: import('@/lib/audio-client').AudioClip, shiftKey: boolean) => {
     // Any audio-clip click swaps the Properties panel away from track settings.
@@ -2214,6 +2314,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       pxPerSec={pxPerSec}
                       selectedIds={selectedAudioClipIds}
                       onClipClick={handleAudioClipClick}
+                      onClipMouseDown={handleAudioClipMouseDown}
+                      dragOffsetSeconds={audioDrag?.offsetSeconds ?? 0}
+                      draggingIds={audioDrag?.ids}
                       onRequestAlignWaveforms={(clipIds) => {
                         // Promote right-clicked clip into selection (AudioLane did this
                         // eagerly in the list it passes us). Mirror that in state so
@@ -2683,6 +2786,27 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           onImported={() => router.invalidate()}
         />
       )}
+
+      {/* Align-waveforms dialog — opened from audio clip right-click menu */}
+      {alignWaveformsDialog.open && (() => {
+        const allClips: AudioClipType[] = (localAudioTracks ?? []).flatMap((t) => t.clips ?? [])
+        const dialogClips = alignWaveformsDialog.clipIds
+          .map((id) => allClips.find((c) => c.id === id))
+          .filter((c): c is AudioClipType => !!c)
+        if (dialogClips.length < 2) return null
+        const tracksById: Record<string, typeof localAudioTracks[number] | undefined> = {}
+        for (const t of localAudioTracks ?? []) tracksById[t.id] = t
+        return (
+          <AlignWaveformsDialog
+            open={alignWaveformsDialog.open}
+            projectName={data.projectName}
+            clips={dialogClips}
+            tracksById={tracksById}
+            onClose={() => setAlignWaveformsDialog({ open: false, clipIds: [] })}
+            onApplied={() => refreshTimeline()}
+          />
+        )
+      })()}
     </div>
   )
 }
