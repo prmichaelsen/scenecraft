@@ -50,3 +50,41 @@ export async function fetchAudioClips(project: string, trackId?: string): Promis
   const data = await res.json() as { audioClips?: AudioClip[]; clips?: AudioClip[]; audio_clips?: AudioClip[] }
   return data.audioClips || data.clips || data.audio_clips || []
 }
+
+export type AudioClipUpdate = Partial<{
+  trackId: string
+  sourcePath: string
+  startTime: number
+  endTime: number
+  sourceOffset: number
+  volumeCurve: CurvePoint[]
+  muted: boolean
+  remap: { method: string; target_duration: number }
+}>
+
+export async function postUpdateAudioClip(project: string, clipId: string, update: AudioClipUpdate): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-clips/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: clipId, ...update }),
+  })
+  if (!res.ok) throw new Error(`audio-clips/update failed: ${res.status}`)
+}
+
+export type AudioTrackUpdate = Partial<{
+  name: string
+  displayOrder: number
+  enabled: boolean
+  hidden: boolean
+  muted: boolean
+  volumeCurve: CurvePoint[]
+}>
+
+export async function postUpdateAudioTrack(project: string, trackId: string, update: AudioTrackUpdate): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-tracks/update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: trackId, ...update }),
+  })
+  if (!res.ok) throw new Error(`audio-tracks/update failed: ${res.status}`)
+}

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.0] - 2026-04-21
+
+### Added
+- M9 Task 90 — Volume curve editor. Click an audio clip or audio track on the Timeline to select it; the Properties panel shows a canvas-based `VolumeCurveEditor` with dB axis (range [-60, +12], gridlines at -48/-24/-12/-6/0/+6/+12, unity dashed at 0 dB).
+  - **Clips**: normalized x (0..1) curve, mute toggle, source/duration/offset readout.
+  - **Tracks**: seconds x (0..project_duration) curve, mute + enabled toggles, name/order readout.
+  - Interaction: click empty area to add, drag to move, right-click to remove (min 2 points), endpoints locked at boundaries. Saves debounced 200 ms via `POST /audio-clips/update` / `/audio-tracks/update`.
+- `EditorStateContext` gained `selectedAudioClipId` / `selectedAudioTrackId` with mutex against existing selections; `AudioLane` + `AudioClipBlock` handle clicks.
+- Properties panel auto-activates on audio selection (via `AutoActivatePropertiesEffect`).
+
 ## [0.13.0] - 2026-04-21
 
 ### Added

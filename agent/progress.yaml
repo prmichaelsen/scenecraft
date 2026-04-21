@@ -687,7 +687,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-9-audio-tracks-and-clips.md
     tasks_total: 11
-    tasks_completed: 9
+    tasks_completed: 10
     estimated_weeks: 3
     tasks:
       - id: task-82
@@ -762,11 +762,13 @@ milestones:
         notes: "Hooked link_audio_for_transition(replace=True) into assign-pool-video + duplicate-transition-video; getTimelineData now returns audioTracks; Timeline uses localAudioTracks so refreshTimeline picks up new clips after drop. Ghost UI and cross-highlight deferred as polish."
       - id: task-90
         name: Volume curve editor (clips + tracks)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T02:30:00Z
+        completed_date: 2026-04-21T03:00:00Z
         file: agent/tasks/milestone-9-audio-tracks-and-clips/task-90-volume-curve-editor.md
         estimated_hours: 5
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "VolumeCurveEditor canvas component (dB axis, normalized OR seconds X); AudioPropertiesPanel dispatches on audio-clip/track selection; EditorStateContext gained selectedAudioClipId/TrackId with mutex; AudioLane clicks wire selection. Saves debounced 200ms via existing /audio-clips/update and /audio-tracks/update endpoints."
       - id: task-91
         name: Multi-track mixdown + equal-power crossfade
         status: not_started

@@ -1,13 +1,14 @@
 import { useRef, useCallback, useEffect, forwardRef, useImperativeHandle, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData } from '@/routes/project/$name/editor'
-import { PanelLayout, validateLayout, type LayoutNode, type PanelRegistry } from '@/components/panel-layout'
+import { PanelLayout, validateLayout, type LayoutNode, type PanelRegistry, type PanelLayoutHandle } from '@/components/panel-layout'
 import { CurrentTimeProvider } from './CurrentTimeContext'
 import { PreviewProvider } from './PreviewContext'
 import { EditorStateProvider, useEditorState } from './EditorStateContext'
 import { EditorDataProvider, useEditorData } from './EditorDataContext'
 import { usePreview } from './PreviewContext'
-import { Timeline } from './Timeline'
+import { Timeline, TrackSettingsPanel } from './Timeline'
+import { postUpdateTrack } from '@/lib/scenecraft-client'
 import { PreviewPanel } from './PreviewPanel'
 import { LogPanel } from './LogPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
@@ -19,7 +20,8 @@ import { KeyframePanel } from './KeyframePanel'
 import { TransitionPanel } from './TransitionPanel'
 import { ChatPanel } from './ChatPanel'
 import { MCPPanel } from './MCPPanel'
-import { saveWorkspaceView, fetchWorkspaceView } from '@/lib/workspace-client'
+import { AudioPropertiesPanel } from './AudioPropertiesPanel'
+import { saveWorkspaceView } from '@/lib/workspace-client'
 
 // --- Panel wrapper ---
 
@@ -91,9 +93,41 @@ function BinPanelComponent() {
 
 function PropertiesPanelComponent() {
   const data = useEditorData()
-  const { selectedKeyframe, selectedTransition, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
+  const { selectedKeyframe, selectedTransition, trackPropertiesId, selectedAudioClipId, selectedAudioTrackId, setTrackPropertiesId, onKeyframeDelete, onKeyframeDataChange, onTransitionDelete, onTransitionDataChange } = useEditorState()
   const { setHoverPreviewUrl, setHoverVideo } = usePreview()
   const router = useRouter()
+
+  if (selectedAudioClipId || selectedAudioTrackId) {
+    const projectDuration = estimateProjectDuration(data)
+    return (
+      <Panel>
+        <AudioPropertiesPanel
+          projectName={data.projectName}
+          audioTracks={data.audioTracks ?? []}
+          projectDurationSeconds={projectDuration}
+          onChanged={() => router.invalidate()}
+        />
+      </Panel>
+    )
+  }
+
+  if (trackPropertiesId) {
+    const track = data.tracks.find((t) => t.id === trackPropertiesId) || data.tracks[0]
+    if (!track) {
+      return <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-[#111827]">Track not found</div>
+    }
+    return (
+      <Panel>
+        <TrackSettingsPanel
+          track={track}
+          onClose={() => setTrackPropertiesId(null)}
+          onUpdate={(updates) => {
+            postUpdateTrack(data.projectName, track.id, updates as never).then(() => router.invalidate())
+          }}
+        />
+      </Panel>
+    )
+  }
 
   if (selectedKeyframe) {
     return (
@@ -160,6 +194,34 @@ function ChatPanelComponent() {
 
 function MCPPanelComponent() {
   return <Panel><MCPPanel onClose={() => {}} /></Panel>
+}
+
+// Auto-focus the Properties tab when anything becomes selected (kf / tr / track / audio).
+// Respects group locks — user can pin the Properties group to another tab.
+function AutoActivatePropertiesEffect({ panelLayoutRef }: { panelLayoutRef: React.RefObject<PanelLayoutHandle | null> }) {
+  const { selectedKeyframe, selectedTransition, trackPropertiesId, selectedAudioClipId, selectedAudioTrackId } = useEditorState()
+  useEffect(() => {
+    if (selectedKeyframe || selectedTransition || trackPropertiesId || selectedAudioClipId || selectedAudioTrackId) {
+      panelLayoutRef.current?.activatePanel('properties')
+    }
+  }, [selectedKeyframe, selectedTransition, trackPropertiesId, selectedAudioClipId, selectedAudioTrackId, panelLayoutRef])
+  return null
+}
+
+function estimateProjectDuration(data: EditorData): number {
+  const parse = (ts: string): number => {
+    const parts = ts.split(':')
+    if (parts.length === 1) return parseFloat(parts[0]) || 0
+    if (parts.length === 2) return parseFloat(parts[0]) * 60 + parseFloat(parts[1])
+    if (parts.length === 3) return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2])
+    return 0
+  }
+  let max = 0
+  for (const kf of data.keyframes) {
+    const t = parse(kf.timestamp)
+    if (t > max) max = t
+  }
+  return Math.max(max, 1)
 }
 
 // --- Panel registry ---
@@ -233,32 +295,24 @@ type EditorPanelLayoutProps = {
 }
 
 export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanelLayoutProps>(function EditorPanelLayout({ data }, ref) {
-  const layoutRef = useRef<LayoutNode>(defaultLayout)
+  // Resolve initial layout from the SSR-loaded savedLayout (falls back to default).
+  // Saved layouts from older schemas or with tabs referring to removed panels
+  // would crash the tree-traversal inside PanelLayout, so the saved tree is
+  // sanitised by validateLayout.
+  const resolvedInitial = useRef<LayoutNode | null>(null)
+  if (resolvedInitial.current === null) {
+    const saved = data.savedLayout as unknown
+    const validated = saved ? validateLayout(saved, panels) : null
+    if (saved && !validated) {
+      console.warn('[EditorPanelLayout] saved _autosave_v3 failed validation, resetting to default')
+      saveWorkspaceView(data.projectName, '_autosave_v3', defaultLayout).catch(() => {})
+    }
+    resolvedInitial.current = validated ?? defaultLayout
+  }
+  const layoutRef = useRef<LayoutNode>(resolvedInitial.current)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const loadedRef = useRef(false)
-  const [initialLayout, setInitialLayout] = useState<LayoutNode>(defaultLayout)
-
-  // Load saved layout on mount. Saved layouts from older schemas or with
-  // tabs referring to removed panels would crash the tree-traversal inside
-  // PanelLayout (e.g. `children[0]` on an undefined split node), so the
-  // saved tree is sanitised by validateLayout. If it fails validation, we
-  // fall back to the default layout and discard the stale save.
-  useEffect(() => {
-    if (loadedRef.current) return
-    loadedRef.current = true
-    fetchWorkspaceView(data.projectName, '_autosave_v3')
-      .then((saved) => {
-        if (!saved) return
-        const validated = validateLayout(saved, panels)
-        if (validated) {
-          setInitialLayout(validated)
-        } else {
-          console.warn('[EditorPanelLayout] saved _autosave_v3 failed validation, resetting to default')
-          saveWorkspaceView(data.projectName, '_autosave_v3', defaultLayout).catch(() => {})
-        }
-      })
-      .catch(() => {})
-  }, [data.projectName])
+  const [initialLayout, setInitialLayout] = useState<LayoutNode>(resolvedInitial.current)
+  const panelLayoutRef = useRef<PanelLayoutHandle>(null)
 
   useImperativeHandle(ref, () => ({
     resetLayout() {
@@ -297,8 +351,10 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
     <CurrentTimeProvider>
     <PreviewProvider>
     <EditorStateProvider>
+      <AutoActivatePropertiesEffect panelLayoutRef={panelLayoutRef} />
       <PanelLayout
-        key={JSON.stringify(initialLayout).slice(0, 50)}
+        ref={panelLayoutRef}
+        key={JSON.stringify(initialLayout)}
         panels={panels}
         defaultLayout={initialLayout}
         onLayoutChange={handleLayoutChange}
