@@ -978,6 +978,29 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const trackDelta = (targetIdx >= 0 && primarySourceIdx >= 0) ? (targetIdx - primarySourceIdx) : 0
       setAudioDrag(null)
       if (dt === 0 && trackDelta === 0) return
+
+      // Cross-type: also shift selected keyframes by the same timeDelta. The
+      // propagation chokepoint in db.update_keyframe (Task 85) handles linked
+      // audio clips — so we DROP any clip from the direct-move set whose
+      // from_kf is in the kf drag set to avoid double-shifting.
+      const shiftKfs: Array<{ id: string; oldTs: number }> = []
+      const kfsThatWillShift = new Set<string>()
+      if (selectedKeyframeIds.size > 0 && dt !== 0) {
+        for (const kf of localKeyframes) {
+          if (!selectedKeyframeIds.has(kf.id)) continue
+          const oldTs = kf.timestamp.split(':').reduce((acc, part, i) => acc + parseFloat(part) * [3600, 60, 1][i], 0)
+          shiftKfs.push({ id: kf.id, oldTs })
+          kfsThatWillShift.add(kf.id)
+        }
+      }
+      // A clip linked to a transition whose from_kf is shifting → propagation
+      // will move it. Skip the manual move for such clips.
+      const trFromKfShifting = new Set<string>()
+      if (kfsThatWillShift.size > 0) {
+        for (const tr of localTransitions) {
+          if (kfsThatWillShift.has(tr.from)) trFromKfShifting.add(tr.id)
+        }
+      }
       try {
         const { postUpdateAudioClip } = await import('@/lib/audio-client')
         await Promise.all(Array.from(originalStarts.values()).map(({ clip: c, start, end }) => {
@@ -987,13 +1010,26 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
           const srcIdx = trackIndexOf(c.track_id)
           const tgtIdx = Math.max(0, Math.min(sortedAudioTracks.length - 1, srcIdx + trackDelta))
           const tgtTrackId = sortedAudioTracks[tgtIdx]?.id ?? c.track_id
-          const update: import('@/lib/audio-client').AudioClipUpdate = {
-            startTime: start + dt,
-            endTime: end + dt,
+          const isLinkedToShiftingKf = c.linked_transition_id && trFromKfShifting.has(c.linked_transition_id)
+          const update: import('@/lib/audio-client').AudioClipUpdate = {}
+          // Skip time shift for clips that will auto-shift via propagation.
+          // Track change is orthogonal and always applies explicitly.
+          if (!isLinkedToShiftingKf && dt !== 0) {
+            update.startTime = start + dt
+            update.endTime = end + dt
           }
           if (tgtTrackId !== c.track_id) update.trackId = tgtTrackId
+          if (Object.keys(update).length === 0) return Promise.resolve()
           return postUpdateAudioClip(data.projectName, c.id, update)
         }))
+        // Shift kfs AFTER clip moves settle — propagation on each kf update
+        // will then move any still-linked clips (clips that weren't manually
+        // moved above).
+        if (shiftKfs.length > 0) {
+          await Promise.all(shiftKfs.map(({ id, oldTs }) =>
+            updateKeyframeTimestamp({ data: { projectName: data.projectName, keyframeId: id, newTimestamp: secondsToTimestamp(oldTs + dt) } })
+          ))
+        }
         refreshTimeline()
       } catch (err) {
         console.error('Audio clip drag commit failed:', err)
@@ -1016,7 +1052,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     window.addEventListener('keydown', onKey)
-  }, [pxPerSec, selectedAudioClipIds, localAudioTracks, data.projectName, refreshTimeline])
+  }, [pxPerSec, selectedAudioClipIds, localAudioTracks, selectedKeyframeIds, localKeyframes, localTransitions, data.projectName, refreshTimeline])
 
   const handleAudioClipClick = useCallback((clip: import('@/lib/audio-client').AudioClip, shiftKey: boolean) => {
     // Any audio-clip click swaps the Properties panel away from track settings.
