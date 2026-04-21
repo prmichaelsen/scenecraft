@@ -877,6 +877,44 @@ export async function postSplitTransition(project: string, transitionId: string,
   return res.json() as Promise<{ success: boolean; keyframeId: string; transition1: string; transition2: string }>
 }
 
+export async function postMoveTransitions(
+  project: string,
+  opts: {
+    mode?: 'move' | 'copy'
+    trackDelta: number
+    timeDeltaSeconds: number
+    transitionIds: string[]
+    autoCreateTracks?: boolean
+  },
+): Promise<{
+  success: boolean
+  movedTransitionIds: string[]
+  createdTrackIds: string[]
+  consumedTransitionIds: string[]
+  splitTransitionIds: string[]
+}> {
+  const body = {
+    mode: opts.mode ?? 'move',
+    trackDelta: opts.trackDelta,
+    timeDeltaSeconds: opts.timeDeltaSeconds,
+    transitionIds: opts.transitionIds,
+    autoCreateTracks: opts.autoCreateTracks ?? true,
+  }
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/move-transitions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`Failed to move transitions: ${res.status} ${await res.text()}`)
+  return res.json() as Promise<{
+    success: boolean
+    movedTransitionIds: string[]
+    createdTrackIds: string[]
+    consumedTransitionIds: string[]
+    splitTransitionIds: string[]
+  }>
+}
+
 export type BenchItem = {
   id: string
   type: 'keyframe' | 'transition'
