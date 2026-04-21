@@ -22,7 +22,7 @@ It also validates the plugin architecture: the `plugin.yaml` manifest, the `plug
 ### 1. Schema Additions
 - `audio_candidates(audio_clip_id, pool_segment_id, added_at, source)` junction table
 - `audio_clips.selected` column (`pool_segment_id` of currently-selected candidate, NULL = source)
-- `pool_segments.kind = 'audio'` (reuses existing column)
+- Audio segments share the existing `pool_segments` table; `kind` carries provenance (`'generated'` for plugin output), media type is inferred from file extension
 - `add_audio_candidate` / `get_audio_candidates` / `assign_audio_candidate` DB helpers
 
 ### 2. Plugin Scaffolding
@@ -68,7 +68,7 @@ It also validates the plugin architecture: the `plugin.yaml` manifest, the `plug
 - [ ] Job progress streams over WS; a toast + a spinner on the clip show status
 - [ ] On completion, a new `audio_candidate` row is inserted and `audio_clips.selected` points to it
 - [ ] The AudioClipPanel shows the new candidate and marks it as selected
-- [ ] `pool_segments.kind = 'audio'` is accepted by existing import/export/bin paths
+- [ ] Plugin-output pool_segments (kind=`'generated'`, created_by=`'isolate-vocals'`) are accepted by existing import/export/bin paths
 - [ ] Running the operation twice produces two candidates; the latest is auto-selected; earlier ones remain for A/B
 - [ ] Chat tool `isolate_vocals` fires the elicitation; decline leaves state unchanged; accept runs the job and the assistant message includes the new pool_segment_id
 - [ ] All mutations appear in `undo_groups` and can be undone

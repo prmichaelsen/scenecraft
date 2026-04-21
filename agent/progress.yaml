@@ -857,17 +857,18 @@ milestones:
     completed: null
     file: agent/milestones/milestone-11-audio-isolation-plugin.md
     tasks_total: 6
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 2
     tasks:
       - id: task-100
         name: Schema & audio_candidates helpers
-        status: in_progress
+        status: completed
         started: 2026-04-19T06:00:00Z
+        completed_date: 2026-04-19T06:30:00Z
+        actual_hours: 0.5
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-100-schema-and-helpers.md
         estimated_hours: 3
-        actual_hours: null
-        notes: "worktree: ../scenecraft-engine-task-100 · branch: task/m11-100-schema"
+        notes: "Done via worktree task/m11-100-schema (commit 8ac3f6a, merged as 451ff2d). Agent caught that pool_segments.kind is provenance ('generated'|'imported'), not media type — patched design + task-102 docs accordingly."
       - id: task-101
         name: Plugin host scaffolding (plugin-api + PluginHost)
         status: not_started

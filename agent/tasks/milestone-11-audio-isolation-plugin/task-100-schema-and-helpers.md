@@ -131,7 +131,7 @@ Don't change every call site in this task — just introduce the helper and upda
 
 New file: `scenecraft-engine/tests/test_audio_candidates.py` with a minimal fixture DB:
 
-- Create an audio_clip + 2 pool_segments of kind='audio'
+- Create an audio_clip + 2 pool_segments (use kind='generated' / 'imported' — `kind` is provenance, not media type; 'audio' is NOT a valid value for `pool_segments.kind`)
 - `add_audio_candidate` for both; verify `get_audio_candidates` returns them in the expected order
 - `assign_audio_candidate` sets `audio_clips.selected`; verify via raw SQL
 - `remove_audio_candidate` deletes the junction row AND clears `selected` if it pointed at the removed segment

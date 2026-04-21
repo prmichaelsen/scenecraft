@@ -154,7 +154,7 @@ def run(entity_type: str, entity_id: str, context: dict) -> dict:
                 conn.execute(
                     """INSERT INTO pool_segments
                        (id, pool_path, kind, created_by, created_at)
-                       VALUES (?, ?, 'audio', 'isolate-vocals', ?)""",
+                       VALUES (?, ?, 'generated', 'isolate-vocals', ?)""",
                     (seg_id, f"pool/segments/{out_filename}", now_iso),
                 )
                 conn.commit()
@@ -270,7 +270,7 @@ if result is not None:
 - Poll `job_manager.get_job(job_id)` until completed
 - Assert:
   - File at `pool/segments/{seg_id}.wav` exists
-  - `pool_segments` row created with `kind='audio'` and `created_by='isolate-vocals'`
+  - `pool_segments` row created with `kind='generated'` and `created_by='isolate-vocals'` (NB: `kind` is provenance, not media type — 'audio' is NOT a valid value)
   - `audio_candidates` row created with `source='plugin'`
   - `audio_clips.selected` is set to the new pool_segment_id
   - `undo_groups` has a matching "Isolate vocals: ..." entry

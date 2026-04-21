@@ -72,7 +72,7 @@ This design also extends the contribution-points model (`local.contribution-poin
 │           │ writes                                               │
 │  ┌────────▼─────────────────────────────────────────────────┐    │
 │  │  project.db:                                             │    │
-│  │    pool_segments (kind='audio')                          │    │
+│  │    pool_segments (kind='generated', created_by='isolate-vocals')│
 │  │    audio_candidates (NEW junction)                       │    │
 │  │    audio_clips.selected (NEW column)                     │    │
 │  └──────────────────────────────────────────────────────────┘    │
@@ -114,7 +114,7 @@ contributes:
 
 Parallels how keyframes (`candidates` JSON array) and transitions (`tr_candidates` junction + `pool_segments`) already work. Audio uses the **transitions-style junction** because:
 - Future generated audio (TTS, music gen) needs per-candidate provenance / seed / params — inline JSON can't carry that cleanly
-- `pool_segments` is already the "named asset" abstraction in scenecraft; adding `kind='audio'` reuses import/export/bin/pool logic
+- `pool_segments` is already the "named asset" abstraction in scenecraft; audio segments reuse the same table (provenance carried by `kind` + `created_by`, media type disambiguated by file extension / context)
 - The transitions pattern is the newer, fuller model; the keyframe inline pattern predates `pool_segments` and is effectively legacy
 
 ### MVP Pipeline
@@ -122,7 +122,7 @@ Parallels how keyframes (`candidates` JSON array) and transitions (`tr_candidate
 ```
 ┌──────────────┐   ffmpeg   ┌────────────┐   DFN3   ┌────────────┐   ffmpeg   ┌──────────────┐
 │ source clip  │─── wav ───▶│  wav_in    │─── → ──▶│  wav_out   │─── mp3 ──▶│ pool_segment │
-│ (any codec)  │            │  (PCM 48k) │          │ (denoised) │            │  kind='audio'│
+│ (any codec)  │            │  (PCM 48k) │          │ (denoised) │            │  pool_segment│
 └──────────────┘            └────────────┘          └────────────┘            └───────┬──────┘
                                                                                        │
                                                                               ┌────────▼────────┐
@@ -272,7 +272,7 @@ def run(entity_type: str, entity_id: str, context: dict) -> dict:
         # 1. ffmpeg: source → wav
         # 2. DFN3 inference (lazy-load model, CPU or GPU)
         # 3. ffmpeg: wav → mp3 (or keep wav)
-        # 4. add_pool_segment(kind="audio", ...)
+        # 4. add_pool_segment(kind="generated", created_by="isolate-vocals", ...)
         # 5. add_audio_candidate(audio_clip_id, pool_segment_id, source="plugin")
         # 6. assign_audio_candidate(audio_clip_id, pool_segment_id)  # auto-select
         # 7. complete_job(job_id, result={...})
@@ -409,7 +409,7 @@ No data migration: existing projects gain the new schema with empty candidate li
 |---|---|---|
 | Output shape | New candidate on the same entity, auto-selected | Matches keyframe/transition patterns. No new track, no timeline reconciliation, no track-layout rules. |
 | Audio candidate storage | Junction table (`audio_candidates`) + `pool_segments` | Transitions pattern, not the keyframe inline-JSON pattern. Future generated audio needs per-candidate provenance/seed/params. |
-| `pool_segments.kind='audio'` | Reuse existing `kind` column | Column exists; adding a new value is cheaper than a new table. |
+| Audio segments share `pool_segments` | Reuse existing table; provenance via `kind`+`created_by`, media type by extension | `kind` is provenance ('generated'/'imported'), NOT media type — don't confuse the two. Existing check constraint limits `kind` to those two values. |
 | `audio_clips.selected` semantics | NULL = use original source; else pool_segment_id | Existing audio_clips migrate cleanly; candidates are purely additive. |
 | Re-run behavior | Append new candidate, auto-select latest | Previous candidates stay for A/B. Same as generate_* tools. |
 
