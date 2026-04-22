@@ -7,6 +7,7 @@ import { updateKeyframeTimestamp, secondsToTimestamp, addKeyframe, duplicateKeyf
 import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 import { useAudioMixer } from '@/hooks/useAudioMixer'
 import { fetchMarkers, postAddMarker, postUpdateMarker, postRemoveMarker, postUpdateTrack, postAddTrack, type Track } from '@/lib/scenecraft-client'
+import { snapDelta } from '@/lib/snap'
 import { AudioTrack } from './AudioTrack'
 import { AudioLane } from './AudioLane'
 import { AlignWaveformsDialog } from './AlignWaveformsDialog'
@@ -396,10 +397,19 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const [audioDrag, setAudioDrag] = useState<{ ids: Set<string>; offsetSeconds: number; trackDelta: number } | null>(null)
   // Audio clip trim state. `edge` = which handle; offsetSeconds is applied to
   // start_time (left) or end_time (right) via AudioClipBlock's display math,
-  // and committed on mouseup via postUpdateAudioClip.
-  const [audioTrim, setAudioTrim] = useState<{ clipId: string; edge: 'left' | 'right'; offsetSeconds: number } | null>(null)
+  // and committed on mouseup via postUpdateAudioClip. `clipIds` is the set of
+  // clips participating in the ripple trim (one for single-clip drag, many
+  // when the clicked edge's clip is in the multi-selection).
+  const [audioTrim, setAudioTrim] = useState<{ clipIds: Set<string>; edge: 'left' | 'right'; offsetSeconds: number } | null>(null)
   // Align-waveforms dialog state — opened from audio clip right-click menu
   const [alignWaveformsDialog, setAlignWaveformsDialog] = useState<{ open: boolean; clipIds: string[] }>({ open: false, clipIds: [] })
+  // Optimistic extraction ghost (Task 125). When a user drops a pool video
+  // onto a transition (or duplicates one), the backend auto-extracts + links
+  // audio; to avoid a ~1-2s dead period before refreshTimeline picks up the
+  // new clip, we render a striped "generating audio…" placeholder on the
+  // paired audio track at [from_kf.ts, to_kf.ts] immediately. Entries are
+  // keyed by transitionId and removed after refresh or a 10s safety timeout.
+  const [pendingAudioGhosts, setPendingAudioGhosts] = useState<Map<string, { trackId: string; startTime: number; endTime: number; createdAt: number }>>(new Map())
   const [transformMode, setTransformMode] = useState(false)
   const previewContainerRef = useRef<HTMLDivElement>(null)
   const [showBin, setShowBin] = useState(false)
@@ -576,6 +586,31 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   useEffect(() => { setLocalKeyframes(data.keyframes) }, [data.keyframes])
   useEffect(() => { setLocalTransitions(data.transitions) }, [data.transitions])
   useEffect(() => { setLocalAudioTracks(data.audioTracks) }, [data.audioTracks])
+
+  // Task 125 safety: drop any extraction ghost that has been pending > 10s.
+  // Shouldn't happen in practice — the POST resolves well inside that window
+  // — but guards against stuck phantoms if the backend hangs or errors out
+  // after the request starts. Interval only runs while at least one ghost is
+  // active so the common case pays no polling cost.
+  useEffect(() => {
+    if (pendingAudioGhosts.size === 0) return
+    const iv = setInterval(() => {
+      const now = Date.now()
+      setPendingAudioGhosts((prev) => {
+        let changed = false
+        const next = new Map(prev)
+        for (const [id, g] of prev) {
+          if (now - g.createdAt > 10_000) {
+            console.warn(`[ghost] dropping stale extraction ghost for transition ${id} (>10s)`)
+            next.delete(id)
+            changed = true
+          }
+        }
+        return changed ? next : prev
+      })
+    }, 1000)
+    return () => clearInterval(iv)
+  }, [pendingAudioGhosts])
 
   // M14: WebAudio streaming mixer — plays audio clips in real time, driven
   // by isPlaying + currentTime. When `data.audioFile` exists, the legacy
@@ -914,36 +949,87 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
    * together (shrinks content from the start); right edge adjusts end_time
    * only (shrinks content from the end). Clamps: min clip length 0.1 s,
    * source_offset ≥ 0 for left edge, non-negative end_time for right edge.
+   *
+   * Multi-clip ripple: when the clicked clip is part of the multi-selection,
+   * the drag's Δ is applied to every selected clip (linked-to-transition
+   * clips are skipped from the batch — their start/end is driven by the
+   * transition's kfs). Clamping considers ALL batch clips; the strictest
+   * per-clip limit wins.
    */
   const handleAudioClipTrimMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, edge: 'left' | 'right', e: React.MouseEvent) => {
     if (e.button !== 0) return
     e.preventDefault()
     const startX = e.clientX
     const pxPerSecAtStart = pxPerSec
-    const origStart = clip.start_time
-    const origEnd = clip.end_time
-    const origOffset = clip.source_offset ?? 0
     const MIN_CLIP_SECONDS = 0.1
     let moved = false
     const THRESHOLD_PX = 4
 
+    // Build the batch: if the clicked clip is in the multi-selection, the
+    // whole set participates in ripple trim; otherwise just this clip.
+    // Linked-to-transition clips are filtered out unless they're the only
+    // candidate (single-clip batch on a linked clip is still allowed as a
+    // direct action).
+    const primaryInSelection = selectedAudioClipIds.has(clip.id)
+    const candidateIds: Set<string> = primaryInSelection
+      ? new Set(selectedAudioClipIds)
+      : new Set([clip.id])
+    // Snapshot original values so clamping and commit use the real baseline
+    // (not stale values that could drift between move and up).
+    type BatchEntry = {
+      clip: import('@/lib/audio-client').AudioClip
+      origStart: number
+      origEnd: number
+      origOffset: number
+    }
+    const batch: BatchEntry[] = []
+    for (const track of (localAudioTracks ?? [])) {
+      for (const c of (track.clips ?? [])) {
+        if (!candidateIds.has(c.id)) continue
+        batch.push({
+          clip: c,
+          origStart: c.start_time,
+          origEnd: c.end_time,
+          origOffset: c.source_offset ?? 0,
+        })
+      }
+    }
+    // Filter linked-to-transition clips unless they're the only entry (i.e.
+    // the user explicitly grabbed a linked clip edge with no multi-select).
+    let activeBatch: BatchEntry[]
+    if (batch.length <= 1) {
+      activeBatch = batch
+    } else {
+      const unlinked = batch.filter((b) => !b.clip.linked_transition_id)
+      activeBatch = unlinked.length > 0 ? unlinked : batch
+    }
+    if (activeBatch.length === 0) return
+    const activeIdSet = new Set(activeBatch.map((b) => b.clip.id))
+
+    // Compute global min/max allowable delta across the entire batch — the
+    // strictest per-clip limit wins so no clip violates its invariant during
+    // the ripple drag.
     const clampDelta = (dxPx: number): number => {
       let dt = dxPx / pxPerSecAtStart
-      if (edge === 'left') {
-        // Can't drag past right edge minus min duration
-        const maxDt = (origEnd - origStart) - MIN_CLIP_SECONDS
-        dt = Math.min(dt, maxDt)
-        // Can't expose source material before source_offset = 0
-        dt = Math.max(dt, -origOffset)
-        // Can't push start_time negative
-        dt = Math.max(dt, -origStart)
-      } else {
-        // Can't drag past left edge plus min duration
-        const minDt = -(origEnd - origStart) + MIN_CLIP_SECONDS
-        dt = Math.max(dt, minDt)
-        // Can't push end_time negative
-        dt = Math.max(dt, -origEnd)
+      let globalMax = Infinity
+      let globalMin = -Infinity
+      for (const b of activeBatch) {
+        if (edge === 'left') {
+          const maxDt = (b.origEnd - b.origStart) - MIN_CLIP_SECONDS
+          const floorOffset = -b.origOffset
+          const floorStart = -b.origStart
+          const perMin = Math.max(floorOffset, floorStart)
+          if (maxDt < globalMax) globalMax = maxDt
+          if (perMin > globalMin) globalMin = perMin
+        } else {
+          const minDt = -(b.origEnd - b.origStart) + MIN_CLIP_SECONDS
+          const floorEnd = -b.origEnd
+          const perMin = Math.max(minDt, floorEnd)
+          if (perMin > globalMin) globalMin = perMin
+        }
       }
+      if (dt > globalMax) dt = globalMax
+      if (dt < globalMin) dt = globalMin
       return dt
     }
 
@@ -951,7 +1037,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const dxPx = me.clientX - startX
       if (!moved && Math.abs(dxPx) < THRESHOLD_PX) return
       moved = true
-      setAudioTrim({ clipId: clip.id, edge, offsetSeconds: clampDelta(dxPx) })
+      setAudioTrim({ clipIds: activeIdSet, edge, offsetSeconds: clampDelta(dxPx) })
     }
 
     const onUp = async (ue: MouseEvent) => {
@@ -964,20 +1050,20 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       if (Math.abs(dt) < 0.001) return
       try {
         const { postUpdateAudioClip } = await import('@/lib/audio-client')
-        if (edge === 'left') {
-          // Left-edge drag: shift source_offset + start_time together. The
-          // source material under the new left edge is at origOffset + dt,
-          // and the new start_time is origStart + dt.
-          await postUpdateAudioClip(data.projectName, clip.id, {
-            sourceOffset: origOffset + dt,
-            startTime: origStart + dt,
-          })
-        } else {
+        await Promise.all(activeBatch.map((b) => {
+          if (edge === 'left') {
+            // Left-edge drag: shift source_offset + start_time together for
+            // EACH clip against its OWN original values (not the primary's).
+            return postUpdateAudioClip(data.projectName, b.clip.id, {
+              sourceOffset: b.origOffset + dt,
+              startTime: b.origStart + dt,
+            })
+          }
           // Right-edge drag: only end_time changes; source_offset stays put.
-          await postUpdateAudioClip(data.projectName, clip.id, {
-            endTime: origEnd + dt,
+          return postUpdateAudioClip(data.projectName, b.clip.id, {
+            endTime: b.origEnd + dt,
           })
-        }
+        }))
         refreshTimeline()
       } catch (err) {
         console.error('Audio clip trim commit failed:', err)
@@ -1000,7 +1086,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     window.addEventListener('keydown', onKey)
-  }, [pxPerSec, data.projectName, refreshTimeline])
+  }, [pxPerSec, selectedAudioClipIds, localAudioTracks, data.projectName, refreshTimeline])
 
   const handleAudioClipMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, e: React.MouseEvent) => {
     // Only left-click on the block body. Shift-click is for selection (the
@@ -1468,6 +1554,32 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [refreshTimeline])
 
   const handleDropVideoOnTransition = useCallback(async (transitionId: string, poolPath: string, sourceTransitionId?: string) => {
+    // Compute optimistic ghost slot BEFORE awaiting the backend so the
+    // placeholder renders within one frame. Paired audio track index =
+    // video track's zOrder, floored to the number of available audio lanes
+    // (see design: audio-video lane pairing by display order).
+    const tr = localTransitions.find((t) => t.id === transitionId)
+    const fromKf = tr ? localKeyframes.find((k) => k.id === tr.from) : undefined
+    const toKf = tr ? localKeyframes.find((k) => k.id === tr.to) : undefined
+    const videoTrack = tr ? data.tracks.find((t) => t.id === tr.trackId) : undefined
+    const sortedAudioTracks = [...(localAudioTracks ?? [])].sort((a, b) => a.display_order - b.display_order)
+    let ghostTrackId: string | null = null
+    let ghostStart = 0
+    let ghostEnd = 0
+    if (tr && fromKf && toKf && videoTrack && sortedAudioTracks.length > 0) {
+      const pairIndex = Math.min(Math.max(0, videoTrack.zOrder), sortedAudioTracks.length - 1)
+      ghostTrackId = sortedAudioTracks[pairIndex].id
+      ghostStart = parseTimestamp(fromKf.timestamp)
+      ghostEnd = parseTimestamp(toKf.timestamp)
+    }
+    if (ghostTrackId && ghostEnd > ghostStart) {
+      setPendingAudioGhosts((prev) => {
+        const next = new Map(prev)
+        next.set(transitionId, { trackId: ghostTrackId!, startTime: ghostStart, endTime: ghostEnd, createdAt: Date.now() })
+        return next
+      })
+    }
+
     try {
       if (sourceTransitionId && sourceTransitionId !== transitionId) {
         const { postDuplicateTransitionVideo } = await import('@/lib/scenecraft-client')
@@ -1476,11 +1588,37 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const { postAssignPoolVideo } = await import('@/lib/scenecraft-client')
         await postAssignPoolVideo(data.projectName, transitionId, poolPath)
       }
-      refreshTimeline()
+      // Fetch timeline directly here (instead of fire-and-forget refreshTimeline)
+      // so we can inspect the fresh audio tracks for the linked clip. If a clip
+      // with linked_transition_id === transitionId is now present, the ghost
+      // resolves to the real thing. If not (source video had no audio stream),
+      // the ghost disappears silently.
+      try {
+        const tl = await getTimelineData({ data: { name: data.projectName } })
+        setLocalKeyframes(tl.keyframes)
+        setLocalTransitions(tl.transitions)
+        if (tl.audioTracks) setLocalAudioTracks(tl.audioTracks)
+      } catch (err) {
+        console.error('refreshTimeline failed:', err)
+        router.invalidate()
+      }
+      setPendingAudioGhosts((prev) => {
+        if (!prev.has(transitionId)) return prev
+        const next = new Map(prev)
+        next.delete(transitionId)
+        return next
+      })
     } catch (e) {
       console.error('[drop] assign video to transition failed:', e)
+      // Clear ghost on error so we don't wait for the 10s timeout.
+      setPendingAudioGhosts((prev) => {
+        if (!prev.has(transitionId)) return prev
+        const next = new Map(prev)
+        next.delete(transitionId)
+        return next
+      })
     }
-  }, [data.projectName, refreshTimeline])
+  }, [data.projectName, data.tracks, localTransitions, localKeyframes, localAudioTracks, router])
 
   const handleDropImageOnKeyframe = useCallback(async (keyframeId: string, imagePath: string) => {
     const { postAssignKeyframeImage } = await import('@/lib/scenecraft-client')
@@ -2516,7 +2654,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               {/* Multi-track audio lanes (M9) — mirrored below video, sorted ascending by display_order */}
               {localAudioTracks && localAudioTracks.length > 0 && (
                 <div className="relative">
-                  {[...localAudioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => (
+                  {[...localAudioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => {
+                    // Task 125: filter optimistic extraction ghosts for this lane.
+                    const ghostsForLane: { startTime: number; endTime: number }[] = []
+                    for (const g of pendingAudioGhosts.values()) {
+                      if (g.trackId === t.id) ghostsForLane.push({ startTime: g.startTime, endTime: g.endTime })
+                    }
+                    return (
                     <AudioLane
                       key={t.id}
                       projectName={data.projectName}
@@ -2530,6 +2674,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       dragTrackDelta={audioDrag?.trackDelta ?? 0}
                       draggingIds={audioDrag?.ids}
                       trimPreview={audioTrim ?? undefined}
+                      ghosts={ghostsForLane}
                       onRequestAlignWaveforms={(clipIds) => {
                         // Promote right-clicked clip into selection (AudioLane did this
                         // eagerly in the list it passes us). Mirror that in state so
@@ -2575,7 +2720,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         }
                       }}
                     />
-                  ))}
+                    )
+                  })}
                 </div>
               )}
               {/* Beat markers */}

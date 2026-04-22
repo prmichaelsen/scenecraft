@@ -1,9 +1,9 @@
-import { memo } from 'react'
+import { memo, useState, useRef, useEffect } from 'react'
 import type { AudioTrack, AudioClip } from '@/lib/audio-client'
 import { AudioWaveform } from './AudioWaveform'
 import { useEditorState } from './EditorStateContext'
 import { useContextMenu } from '@/contexts/ContextMenuContext'
-import { Wand2, Trash2, VolumeX, Volume2 } from 'lucide-react'
+import { Wand2, Trash2, VolumeX, Volume2, Pencil, ArrowUp, ArrowDown } from 'lucide-react'
 
 type AudioLaneProps = {
   projectName: string
@@ -39,7 +39,30 @@ type AudioLaneProps = {
    * Toggle mute / solo on the track itself (not on a clip). Wired to the
    * Mute / Solo buttons in the lane header.
    */
-  onUpdateTrack?: (trackId: string, update: { muted?: boolean; solo?: boolean }) => void
+  onUpdateTrack?: (trackId: string, update: { muted?: boolean; solo?: boolean; name?: string }) => void
+  /**
+   * Called when the user picks "Delete track…" from the header context menu,
+   * or when the header menu's Move Up / Move Down items are chosen. Timeline
+   * owns the track-level actions so all tracks can be reordered/deleted in
+   * a single place.
+   */
+  onRequestDeleteTrack?: (trackId: string) => void
+  /**
+   * Reorder callback fired on header drag-drop. `draggedTrackId` is the
+   * track the user picked up; `targetTrackId` is the track being dropped on;
+   * `position` is `'before'` if released on the top half of the target and
+   * `'after'` if released on the bottom half. Timeline computes the full
+   * reordered id array and POSTs it.
+   */
+  onRequestReorderTracks?: (draggedTrackId: string, targetTrackId: string, position: 'before' | 'after') => void
+  /**
+   * Move Up / Move Down fallback items in the header context menu. Timeline
+   * wires these to the same `postReorderAudioTracks` call the drag path uses
+   * — swap with neighbouring track. `undefined` hides the item (e.g. there's
+   * no track above the first one).
+   */
+  onRequestMoveUp?: (trackId: string) => void
+  onRequestMoveDown?: (trackId: string) => void
   /**
    * Body-drag: mousedown on a clip body begins a drag gesture tracked by
    * Timeline. AudioLane just exposes the hook; drag state lives in Timeline
@@ -69,21 +92,106 @@ type AudioLaneProps = {
   /** IDs currently being drag-moved (for optimistic CSS transform). */
   draggingIds?: Set<string>
   /**
-   * Optimistic trim preview — when set, this block renders its edge
-   * adjusted live so the user sees the new boundary before release.
+   * Optimistic trim preview — when set, every block whose clip.id is in
+   * `clipIds` renders its edge adjusted live so the user sees the new
+   * boundary before release. For a single-clip trim the set has one entry;
+   * for a multi-clip ripple trim it's the full batch.
    */
-  trimPreview?: { clipId: string; edge: 'left' | 'right'; offsetSeconds: number }
+  trimPreview?: { clipIds: Set<string>; edge: 'left' | 'right'; offsetSeconds: number }
+  /**
+   * Task 125: optimistic extraction ghosts for this lane. Rendered as
+   * striped "generating audio…" placeholder blocks while the backend
+   * extracts + auto-links audio from a just-dropped pool video. Owner
+   * (Timeline) filters the global ghost map down to entries whose trackId
+   * matches this lane. Empty array → no ghosts rendered.
+   */
+  ghosts?: Array<{ startTime: number; endTime: number }>
 }
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
   const selected = selectedAudioTrackId === track.id
+  const { show: showContextMenu } = useContextMenu()
+
+  // Inline rename — swap the name <span> for an <input> on double-click.
+  // Commits on Enter / blur; reverts on Escape.
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(track.name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    // Keep the draft in sync when the underlying track name changes while
+    // we're not editing (e.g. server push, or a different refreshTimeline
+    // arriving).
+    if (!renaming) setNameDraft(track.name)
+  }, [track.name, renaming])
+
+  useEffect(() => {
+    if (renaming && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [renaming])
+
+  const commitRename = () => {
+    const next = nameDraft.trim()
+    setRenaming(false)
+    if (!next || next === track.name) {
+      setNameDraft(track.name)
+      return
+    }
+    onUpdateTrack?.(track.id, { name: next })
+  }
+
+  const cancelRename = () => {
+    setNameDraft(track.name)
+    setRenaming(false)
+  }
+
+  // HTML5 drag-reorder — only the sticky header area is `draggable`, so
+  // lane-body interactions (clip move/trim) are untouched. `dropIndicator`
+  // paints a 2px cyan bar on the edge the drop will insert against.
+  const [dropIndicator, setDropIndicator] = useState<'before' | 'after' | null>(null)
+
+  const openHeaderMenu = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    showContextMenu(e, [
+      {
+        id: 'rename',
+        label: 'Rename',
+        icon: Pencil,
+        onClick: () => setRenaming(true),
+      },
+      ...(onRequestMoveUp ? [{
+        id: 'move-up' as const,
+        label: 'Move up',
+        icon: ArrowUp,
+        onClick: () => onRequestMoveUp(track.id),
+      }] : []),
+      ...(onRequestMoveDown ? [{
+        id: 'move-down' as const,
+        label: 'Move down',
+        icon: ArrowDown,
+        onClick: () => onRequestMoveDown(track.id),
+      }] : []),
+      { divider: true, id: 'd1' },
+      {
+        id: 'delete-track',
+        label: 'Delete track…',
+        icon: Trash2,
+        danger: true,
+        onClick: onRequestDeleteTrack ? () => onRequestDeleteTrack(track.id) : undefined,
+        disabled: !onRequestDeleteTrack,
+      },
+    ])
+  }
 
   return (
     <div
@@ -96,14 +204,81 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
         setSelectedAudioTrackId(track.id)
       }}
     >
-      {/* Track header — sticky so it stays visible during horizontal scroll */}
-      <div className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit">
+      {/* Track header — sticky so it stays visible during horizontal scroll.
+          `draggable` is scoped to the header only so the lane body (where
+          clips live) keeps its existing mousedown gestures. */}
+      <div
+        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit cursor-grab active:cursor-grabbing"
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation()
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('application/x-audio-track-id', track.id)
+          // Some browsers need a text fallback to actually start a drag.
+          e.dataTransfer.setData('text/plain', track.id)
+        }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('application/x-audio-track-id')) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          const rect = e.currentTarget.getBoundingClientRect()
+          setDropIndicator(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
+        }}
+        onDragLeave={() => setDropIndicator(null)}
+        onDrop={(e) => {
+          const draggedId = e.dataTransfer.getData('application/x-audio-track-id')
+          setDropIndicator(null)
+          if (!draggedId || draggedId === track.id) return
+          e.preventDefault()
+          e.stopPropagation()
+          const rect = e.currentTarget.getBoundingClientRect()
+          const position: 'before' | 'after' = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+          onRequestReorderTracks?.(draggedId, track.id, position)
+        }}
+        onContextMenu={openHeaderMenu}
+      >
+        {dropIndicator === 'before' && (
+          <div className="absolute -top-px left-0 right-0 h-[2px] bg-cyan-400 pointer-events-none z-20" />
+        )}
+        {dropIndicator === 'after' && (
+          <div className="absolute -bottom-px left-0 right-0 h-[2px] bg-cyan-400 pointer-events-none z-20" />
+        )}
+
         <span className="text-[9px] text-gray-500 uppercase tracking-wider pointer-events-none">
           A{track.display_order + 1}
         </span>
-        <span className="text-[10px] text-gray-400 truncate max-w-[120px] pointer-events-none">
-          {track.name}
-        </span>
+        {renaming ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') commitRename()
+              else if (e.key === 'Escape') cancelRename()
+            }}
+            onBlur={commitRename}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            // Prevent the surrounding draggable header from starting a drag
+            // when the user clicks into the input to edit.
+            draggable={false}
+            onDragStart={(e) => { e.preventDefault(); e.stopPropagation() }}
+            className="text-[10px] text-gray-200 bg-gray-900 border border-cyan-600/70 rounded px-1 py-0 focus:outline-none focus:border-cyan-400 max-w-[120px]"
+          />
+        ) : (
+          <span
+            className="text-[10px] text-gray-400 truncate max-w-[120px] cursor-text"
+            title="Double-click to rename"
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              setRenaming(true)
+            }}
+          >
+            {track.name}
+          </span>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -140,9 +315,37 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           onClipTrimMouseDown={onClipTrimMouseDown}
           dragOffsetPx={(draggingIds?.has(c.id) ? dragOffsetSeconds : 0) * pxPerSec}
           dragOffsetPy={(draggingIds?.has(c.id) ? dragTrackDelta : 0) * height}
-          trimPreview={trimPreview && trimPreview.clipId === c.id ? trimPreview : undefined}
+          trimPreview={trimPreview && trimPreview.clipIds.has(c.id) ? { edge: trimPreview.edge, offsetSeconds: trimPreview.offsetSeconds } : undefined}
         />
       ))}
+
+      {/* Extraction ghosts (Task 125) — striped placeholders shown while
+          the backend extracts + links audio from a just-dropped video.
+          Rendered above clips (z-30) so they are visible even when the
+          real clip lands but animation is still settling. Each ghost is
+          removed by Timeline once the real linked clip appears in
+          localAudioTracks, or after a 10s safety timeout. */}
+      {ghosts && ghosts.map((g, i) => {
+        const left = g.startTime * pxPerSec
+        const width = Math.max(2, (g.endTime - g.startTime) * pxPerSec)
+        return (
+          <div
+            key={`ghost-${i}-${g.startTime}-${g.endTime}`}
+            className="absolute top-1 bottom-1 rounded-sm border border-dashed border-cyan-400 pointer-events-none z-30 animate-pulse flex items-center justify-center overflow-hidden"
+            style={{
+              left,
+              width,
+              backgroundImage:
+                'repeating-linear-gradient(45deg, rgba(34, 211, 238, 0.12) 0 6px, rgba(34, 211, 238, 0.22) 6px 12px)',
+            }}
+            title="Extracting and linking audio from the dropped video…"
+          >
+            <span className="text-[9px] font-medium text-cyan-200/90 truncate px-1">
+              generating audio…
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 })
@@ -164,8 +367,11 @@ type AudioClipBlockProps = {
   dragOffsetPx?: number
   /** Optimistic drag Y offset in px (for cross-lane drag). Zero when dragging within source lane. */
   dragOffsetPy?: number
-  /** Optimistic trim preview: when set, the block's edge shifts live until commit. */
-  trimPreview?: { clipId: string; edge: 'left' | 'right'; offsetSeconds: number }
+  /**
+   * Optimistic trim preview: when set, the block's edge shifts live until
+   * commit. AudioLane hands this down only for clips in the ripple batch.
+   */
+  trimPreview?: { edge: 'left' | 'right'; offsetSeconds: number }
 }
 
 function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, onClipTrimMouseDown, dragOffsetPx = 0, dragOffsetPy = 0, trimPreview }: AudioClipBlockProps) {
