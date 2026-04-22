@@ -2439,6 +2439,17 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                           console.error('Failed to delete audio clip:', err)
                         }
                       }}
+                      onRequestToggleMute={async (clipIds, muted) => {
+                        try {
+                          const { postUpdateAudioClip } = await import('@/lib/audio-client')
+                          await Promise.all(clipIds.map((id) =>
+                            postUpdateAudioClip(data.projectName, id, { muted })
+                          ))
+                          refreshTimeline()
+                        } catch (err) {
+                          console.error('Failed to toggle audio clip mute:', err)
+                        }
+                      }}
                     />
                   ))}
                 </div>

@@ -3,7 +3,7 @@ import type { AudioTrack, AudioClip } from '@/lib/audio-client'
 import { AudioWaveform } from './AudioWaveform'
 import { useEditorState } from './EditorStateContext'
 import { useContextMenu } from '@/contexts/ContextMenuContext'
-import { Wand2, Trash2 } from 'lucide-react'
+import { Wand2, Trash2, VolumeX, Volume2 } from 'lucide-react'
 
 type AudioLaneProps = {
   projectName: string
@@ -28,6 +28,13 @@ type AudioLaneProps = {
   onRequestAlignWaveforms?: (clipIds: string[]) => void
   /** Called when the user picks "Delete" from the menu. */
   onRequestDeleteClip?: (clipId: string) => void
+  /**
+   * Called when the user picks "Mute" / "Unmute" from the menu.
+   * `clipIds` is the batch to toggle (includes the right-clicked clip even if
+   * not already in selection). `muted` is the TARGET state — `true` means
+   * "mute all of these", `false` means "unmute all of these".
+   */
+  onRequestToggleMute?: (clipIds: string[], muted: boolean) => void
   /**
    * Body-drag: mousedown on a clip body begins a drag gesture tracked by
    * Timeline. AudioLane just exposes the hook; drag state lives in Timeline
@@ -54,7 +61,7 @@ type AudioLaneProps = {
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onClipMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted || !track.enabled
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -95,6 +102,7 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           onClipClick={onClipClick}
           onRequestAlignWaveforms={onRequestAlignWaveforms}
           onRequestDeleteClip={onRequestDeleteClip}
+          onRequestToggleMute={onRequestToggleMute}
           onClipMouseDown={onClipMouseDown}
           dragOffsetPx={(draggingIds?.has(c.id) ? dragOffsetSeconds : 0) * pxPerSec}
           dragOffsetPy={(draggingIds?.has(c.id) ? dragTrackDelta : 0) * height}
@@ -114,6 +122,7 @@ type AudioClipBlockProps = {
   onClipClick?: (clip: AudioClip, shiftKey: boolean) => void
   onRequestAlignWaveforms?: (clipIds: string[]) => void
   onRequestDeleteClip?: (clipId: string) => void
+  onRequestToggleMute?: (clipIds: string[], muted: boolean) => void
   onClipMouseDown?: (clip: AudioClip, e: React.MouseEvent) => void
   /** Optimistic drag X offset in px applied via CSS transform. Zero when not dragging. */
   dragOffsetPx?: number
@@ -121,7 +130,7 @@ type AudioClipBlockProps = {
   dragOffsetPy?: number
 }
 
-function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onClipMouseDown, dragOffsetPx = 0, dragOffsetPy = 0 }: AudioClipBlockProps) {
+function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, dragOffsetPx = 0, dragOffsetPy = 0 }: AudioClipBlockProps) {
   const left = clip.start_time * pxPerSec
   const width = Math.max(2, (clip.end_time - clip.start_time) * pxPerSec)
   const durationSeconds = clip.end_time - clip.start_time
@@ -169,16 +178,37 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
         // already there). We build the alignable set eagerly so the menu
         // gating reflects post-promotion selection state.
         const baseSet = selectedIds ?? new Set<string>()
-        const alignableIds = baseSet.has(clip.id) ? Array.from(baseSet) : [...Array.from(baseSet), clip.id]
-        const canAlign = alignableIds.length >= 2 && !!onRequestAlignWaveforms
+        // Batch IDs include the right-clicked clip even if it wasn't in the
+        // multi-selection (selection-promote pattern). Same target for both
+        // align and mute so right-clicking unambiguously acts on "this clip
+        // + anything else you had selected".
+        const batchIds = baseSet.has(clip.id) ? Array.from(baseSet) : [...Array.from(baseSet), clip.id]
+        const canAlign = batchIds.length >= 2 && !!onRequestAlignWaveforms
+        const canMute = !!onRequestToggleMute
+        // Target mute state = !clip.muted (toggle based on the clicked clip's
+        // state). If user right-clicked a muted clip in a batch that has
+        // both muted + unmuted, "Unmute" here unmutes everything; likewise
+        // vice versa.
+        const targetMuted = !clip.muted
+        const multi = batchIds.length > 1
+        const muteLabel = clip.muted
+          ? (multi ? `Unmute ${batchIds.length} clips` : 'Unmute')
+          : (multi ? `Mute ${batchIds.length} clips` : 'Mute')
         showContextMenu(e, [
+          {
+            id: 'toggle-mute',
+            label: muteLabel,
+            icon: clip.muted ? Volume2 : VolumeX,
+            onClick: canMute ? () => onRequestToggleMute?.(batchIds, targetMuted) : undefined,
+            disabled: !canMute,
+          },
           {
             id: 'align-waveforms',
             label: canAlign
-              ? `Align waveforms (${alignableIds.length} clips)`
+              ? `Align waveforms (${batchIds.length} clips)`
               : 'Align waveforms',
             icon: Wand2,
-            onClick: canAlign ? () => onRequestAlignWaveforms?.(alignableIds) : undefined,
+            onClick: canAlign ? () => onRequestAlignWaveforms?.(batchIds) : undefined,
             disabled: !canAlign,
           },
           { divider: true, id: 'd1' },
