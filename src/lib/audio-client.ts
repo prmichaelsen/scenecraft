@@ -120,6 +120,51 @@ export async function postUpdateAudioTrack(project: string, trackId: string, upd
 }
 
 /**
+ * Create a new audio track. `name` is optional — backend assigns
+ * "Audio Track N+1" when omitted. Returns the new track's id; caller should
+ * refreshTimeline() to pick it up.
+ */
+export async function postAddAudioTrack(
+  project: string,
+  opts: { name?: string } = {},
+): Promise<{ id: string }> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-tracks/add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) throw new Error(`audio-tracks/add failed: ${res.status}`)
+  const data = await res.json() as { id: string }
+  return { id: data.id }
+}
+
+/**
+ * Delete an audio track and every clip it owns. Destructive — caller is
+ * responsible for confirming with the user before invoking.
+ */
+export async function postDeleteAudioTrack(project: string, trackId: string): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-tracks/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: trackId }),
+  })
+  if (!res.ok) throw new Error(`audio-tracks/delete failed: ${res.status}`)
+}
+
+/**
+ * Persist a new track ordering. `trackIds` is the complete, ordered list of
+ * ids — the server rewrites `display_order` to match array position.
+ */
+export async function postReorderAudioTracks(project: string, trackIds: string[]): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-tracks/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trackIds }),
+  })
+  if (!res.ok) throw new Error(`audio-tracks/reorder failed: ${res.status}`)
+}
+
+/**
  * Auto-detect time offset between audio clips via waveform cross-correlation.
  * Returns signed seconds per non-anchor clip: positive = clip should shift
  * later; negative = clip should shift earlier, so its waveform aligns with
