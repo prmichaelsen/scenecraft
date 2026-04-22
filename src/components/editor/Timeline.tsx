@@ -21,7 +21,7 @@ import { TransitionPanel } from './TransitionPanel'
 import { matchesHotkey, handlePreventDefault } from '@/lib/hotkeys'
 import { getPluginBlendModes } from '@/lib/plugin-api'
 import { useEditorState } from './EditorStateContext'
-import { useCurrentTime } from './CurrentTimeContext'
+import { useCurrentTime, usePlaybackState } from './CurrentTimeContext'
 import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { PreviewViewport, type PreviewViewportHandle } from './PreviewViewport'
@@ -337,9 +337,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const router = useRouter()
   const editorState = useEditorState()
 
-  // In v2 mode, currentTime/isPlaying/refs are shared via context so PreviewPanel can read them.
-  // In v1 mode, they're local state.
-  const ctxTime = v2 ? useCurrentTime() : null // eslint-disable-line react-hooks/rules-of-hooks
+  // In v2 mode, currentTime / isPlaying / refs are shared via context so
+  // PreviewPanel can read them. Split into two contexts so play-state
+  // consumers don't re-render on every currentTime tick:
+  //   CurrentTime — high-frequency (~20Hz during playback)
+  //   PlaybackState — isPlaying + refs, changes only on user gesture
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const ctxTime = v2 ? useCurrentTime() : null
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const ctxPlayback = v2 ? usePlaybackState() : null
   const [localCurrentTime, setLocalCurrentTime] = useState(() => {
     if (typeof window === 'undefined') return 0
     const stored = localStorage.getItem(`scenecraft-playhead-${data.projectName}`)
@@ -348,8 +354,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const currentTime = ctxTime ? ctxTime.currentTime : localCurrentTime
   const setCurrentTime = ctxTime ? ctxTime.setCurrentTime : setLocalCurrentTime
   const [localIsPlaying, setLocalIsPlaying] = useState(false)
-  const isPlaying = ctxTime ? ctxTime.isPlaying : localIsPlaying
-  const setIsPlaying = ctxTime ? ctxTime.setIsPlaying : setLocalIsPlaying
+  const isPlaying = ctxPlayback ? ctxPlayback.isPlaying : localIsPlaying
+  const setIsPlaying = ctxPlayback ? ctxPlayback.setIsPlaying : setLocalIsPlaying
 
   // Persist playhead position to localStorage (debounced)
   useEffect(() => {
@@ -516,16 +522,16 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const dragSelectRef = useRef<{ startX: number; startY: number; shiftKey: boolean; metaKey: boolean; trackId: string | null; active: boolean; armed: boolean } | null>(null)
   const [dragSelectRect, setDragSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const localSeekRef = useRef<((time: number) => void) | null>(null)
-  const seekFnRef = ctxTime ? ctxTime.seekRef : localSeekRef
+  const seekFnRef = ctxPlayback ? ctxPlayback.seekRef : localSeekRef
   const currentTimeRef = useRef(currentTime)
   const localPlayPauseRef = useRef<(() => void) | null>(null)
-  const playPauseFnRef = ctxTime ? ctxTime.playPauseRef : localPlayPauseRef
+  const playPauseFnRef = ctxPlayback ? ctxPlayback.playPauseRef : localPlayPauseRef
   const trackDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const audioDragRef = useRef<{ dragging: boolean; startY: number; startHeight: number }>({ dragging: false, startY: 0, startHeight: 0 })
   const previewRef = useRef<PreviewViewportHandle>(null)
   const localAudioElRef = useRef<HTMLAudioElement | null>(null)
-  const audioElRef = ctxTime ? ctxTime.audioElRef : localAudioElRef
+  const audioElRef = ctxPlayback ? ctxPlayback.audioElRef : localAudioElRef
   const [recording, setRecording] = useState<{ progress: number } | null>(null)
   const [markers, setMarkers] = useState<{ id: string; time: number; label: string }[]>([])
 

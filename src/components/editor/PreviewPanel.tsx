@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react'
-import { useCurrentTime } from './CurrentTimeContext'
+import { useCurrentTime, usePlaybackState } from './CurrentTimeContext'
 import { usePreview } from './PreviewContext'
 import { useEditorState } from './EditorStateContext'
 import { PreviewViewport } from './PreviewViewport'
@@ -8,7 +8,8 @@ import { useEditorData } from './EditorDataContext'
 
 export function PreviewPanel() {
   const data = useEditorData()
-  const { currentTime, isPlaying } = useCurrentTime()
+  const { currentTime } = useCurrentTime()
+  const { isPlaying } = usePlaybackState()
   const { hoverPreviewUrl, hoverVideo, previewRef } = usePreview()
   const { selectedTransition } = useEditorState()
   const containerRef = useRef<HTMLDivElement>(null)
