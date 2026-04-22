@@ -1006,6 +1006,27 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     if (activeBatch.length === 0) return
     const activeIdSet = new Set(activeBatch.map((b) => b.clip.id))
 
+    // Snap anchors: every OTHER audio clip's start/end across every track (clips
+    // participating in this trim batch are excluded so an edge can't snap to
+    // itself) plus every keyframe timestamp. Built once at drag start — stale
+    // anchors during a single gesture are a deliberate tradeoff for perf.
+    const snapAnchors: number[] = []
+    for (const track of (localAudioTracks ?? [])) {
+      for (const c of (track.clips ?? [])) {
+        if (activeIdSet.has(c.id)) continue
+        snapAnchors.push(c.start_time)
+        snapAnchors.push(c.end_time)
+      }
+    }
+    for (const kf of localKeyframes) {
+      snapAnchors.push(parseTimestamp(kf.timestamp))
+    }
+    // Reference position for snap: the primary clip's moving edge. When the
+    // primary lands on a snap target, every clip in the ripple batch shifts by
+    // the same delta (which is what the user sees visually).
+    const primaryBatch = activeBatch.find((b) => b.clip.id === clip.id) ?? activeBatch[0]
+    const refPos = edge === 'left' ? primaryBatch.origStart : primaryBatch.origEnd
+
     // Compute global min/max allowable delta across the entire batch — the
     // strictest per-clip limit wins so no clip violates its invariant during
     // the ripple drag.
@@ -1033,11 +1054,23 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       return dt
     }
 
+    // Clamp → snap → re-clamp. If snap proposes a delta that violates the
+    // clamp invariants (min clip, non-negative, source floor), drop the snap
+    // and use the plain clamped value instead.
+    const applySnap = (clampedDt: number, me: { altKey: boolean; shiftKey: boolean }): number => {
+      const { dt: snappedDt } = snapDelta(clampedDt, refPos, snapAnchors, pxPerSecAtStart, me.altKey, me.shiftKey)
+      if (snappedDt === clampedDt) return clampedDt
+      const reClamped = clampDelta(snappedDt * pxPerSecAtStart)
+      if (Math.abs(reClamped - snappedDt) > 1e-6) return clampedDt
+      return snappedDt
+    }
+
     const onMove = (me: MouseEvent) => {
       const dxPx = me.clientX - startX
       if (!moved && Math.abs(dxPx) < THRESHOLD_PX) return
       moved = true
-      setAudioTrim({ clipIds: activeIdSet, edge, offsetSeconds: clampDelta(dxPx) })
+      const dt = applySnap(clampDelta(dxPx), me)
+      setAudioTrim({ clipIds: activeIdSet, edge, offsetSeconds: dt })
     }
 
     const onUp = async (ue: MouseEvent) => {
@@ -1045,7 +1078,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       window.removeEventListener('mouseup', onUp)
       window.removeEventListener('keydown', onKey)
       if (!moved) { setAudioTrim(null); return }
-      const dt = clampDelta(ue.clientX - startX)
+      const dt = applySnap(clampDelta(ue.clientX - startX), ue)
       setAudioTrim(null)
       if (Math.abs(dt) < 0.001) return
       try {
@@ -1086,7 +1119,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     window.addEventListener('keydown', onKey)
-  }, [pxPerSec, selectedAudioClipIds, localAudioTracks, data.projectName, refreshTimeline])
+  }, [pxPerSec, selectedAudioClipIds, localAudioTracks, localKeyframes, data.projectName, refreshTimeline])
 
   const handleAudioClipMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, e: React.MouseEvent) => {
     // Only left-click on the block body. Shift-click is for selection (the
@@ -1114,6 +1147,30 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
     // Earliest start among dragged clips — used to clamp so no clip goes negative
     const minStart = Math.min(...Array.from(originalStarts.values()).map((s) => s.start))
+
+    // Snap anchors: start/end of every clip NOT in the drag set (self-anchoring
+    // would make the drag "sticky" to its own origin) plus keyframe timestamps.
+    // Reference position = PRIMARY clip's start_time so primary.start + dt ≈ anchor.
+    const snapAnchors: number[] = []
+    for (const track of (localAudioTracks ?? [])) {
+      for (const c of (track.clips ?? [])) {
+        if (dragIds.has(c.id)) continue
+        snapAnchors.push(c.start_time)
+        snapAnchors.push(c.end_time)
+      }
+    }
+    for (const kf of localKeyframes) {
+      snapAnchors.push(parseTimestamp(kf.timestamp))
+    }
+    const primaryRefStart = clip.start_time
+
+    // Snap wrapper: applies snap AFTER the -minStart clamp, and if the snap
+    // target would push past the clamp (negative start), drops it.
+    const applySnap = (clampedDt: number, me: { altKey: boolean; shiftKey: boolean }): number => {
+      const { dt: snappedDt } = snapDelta(clampedDt, primaryRefStart, snapAnchors, pxPerSecAtStart, me.altKey, me.shiftKey)
+      if (snappedDt < -minStart) return clampedDt
+      return snappedDt
+    }
 
     // Cross-lane: track which audio track the cursor is over (if any). Applied
     // per-clip as a trackDelta equal to targetLaneIndex - primaryLaneIndex.
@@ -1143,10 +1200,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       const dxPx = me.clientX - startX
       if (!moved && Math.abs(dxPx) < THRESHOLD_PX) return
       moved = true
-      // No snap during drag — cursor-tracking movement for a responsive feel.
       let rawDt = dxPx / pxPerSecAtStart
       rawDt = Math.max(rawDt, -minStart)
-      setAudioDrag({ ids: dragIds, offsetSeconds: rawDt, trackDelta: computeTrackDelta(me) })
+      const dt = applySnap(rawDt, me)
+      setAudioDrag({ ids: dragIds, offsetSeconds: dt, trackDelta: computeTrackDelta(me) })
     }
 
     const onUp = async (ue: MouseEvent) => {
@@ -1157,10 +1214,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         setAudioDrag(null)
         return
       }
-      // Snapshot the final delta so we don't depend on stale state. No snap.
+      // Snapshot the final delta so we don't depend on stale state.
       const dxPx = ue.clientX - startX
       let dt = dxPx / pxPerSecAtStart
       dt = Math.max(dt, -minStart)
+      dt = applySnap(dt, ue)
       const finalTargetTrackId = detectTargetLane(ue)
       const targetIdx = trackIndexOf(finalTargetTrackId)
       // trackDelta = target - source (uniform across all dragged clips, mirrors M10)
@@ -2652,78 +2710,202 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                 Audio
               </div>
               {/* Multi-track audio lanes (M9) — mirrored below video, sorted ascending by display_order */}
-              {localAudioTracks && localAudioTracks.length > 0 && (
-                <div className="relative">
-                  {[...localAudioTracks].sort((a, b) => a.display_order - b.display_order).map((t) => {
-                    // Task 125: filter optimistic extraction ghosts for this lane.
-                    const ghostsForLane: { startTime: number; endTime: number }[] = []
-                    for (const g of pendingAudioGhosts.values()) {
-                      if (g.trackId === t.id) ghostsForLane.push({ startTime: g.startTime, endTime: g.endTime })
-                    }
-                    return (
-                    <AudioLane
-                      key={t.id}
-                      projectName={data.projectName}
-                      track={t}
-                      pxPerSec={pxPerSec}
-                      selectedIds={selectedAudioClipIds}
-                      onClipClick={handleAudioClipClick}
-                      onClipMouseDown={handleAudioClipMouseDown}
-                      onClipTrimMouseDown={handleAudioClipTrimMouseDown}
-                      dragOffsetSeconds={audioDrag?.offsetSeconds ?? 0}
-                      dragTrackDelta={audioDrag?.trackDelta ?? 0}
-                      draggingIds={audioDrag?.ids}
-                      trimPreview={audioTrim ?? undefined}
-                      ghosts={ghostsForLane}
-                      onRequestAlignWaveforms={(clipIds) => {
-                        // Promote right-clicked clip into selection (AudioLane did this
-                        // eagerly in the list it passes us). Mirror that in state so
-                        // the dialog shows the same set.
-                        setSelectedAudioClipIds(new Set(clipIds))
-                        setAlignWaveformsDialog({ open: true, clipIds })
-                      }}
-                      onRequestDeleteClip={async (clipId) => {
-                        try {
-                          const { postDeleteAudioClip } = await import('@/lib/audio-client')
-                          await postDeleteAudioClip(data.projectName, clipId)
-                          setSelectedAudioClipIds((prev) => {
-                            const next = new Set(prev)
-                            next.delete(clipId)
-                            return next
-                          })
-                          if (editorState.selectedAudioClipId === clipId) {
-                            editorState.setSelectedAudioClipId(null)
+              {(() => {
+                const sortedAudio = [...(localAudioTracks ?? [])].sort((a, b) => a.display_order - b.display_order)
+                return (
+                  <div className="relative">
+                    {sortedAudio.map((t, laneIdx) => {
+                      // Task 125: filter optimistic extraction ghosts for this lane.
+                      const ghostsForLane: { startTime: number; endTime: number }[] = []
+                      for (const g of pendingAudioGhosts.values()) {
+                        if (g.trackId === t.id) ghostsForLane.push({ startTime: g.startTime, endTime: g.endTime })
+                      }
+                      return (
+                      <AudioLane
+                        key={t.id}
+                        projectName={data.projectName}
+                        track={t}
+                        pxPerSec={pxPerSec}
+                        selectedIds={selectedAudioClipIds}
+                        onClipClick={handleAudioClipClick}
+                        onClipMouseDown={handleAudioClipMouseDown}
+                        onClipTrimMouseDown={handleAudioClipTrimMouseDown}
+                        dragOffsetSeconds={audioDrag?.offsetSeconds ?? 0}
+                        dragTrackDelta={audioDrag?.trackDelta ?? 0}
+                        draggingIds={audioDrag?.ids}
+                        trimPreview={audioTrim ?? undefined}
+                        ghosts={ghostsForLane}
+                        onRequestAlignWaveforms={(clipIds) => {
+                          // Promote right-clicked clip into selection (AudioLane did this
+                          // eagerly in the list it passes us). Mirror that in state so
+                          // the dialog shows the same set.
+                          setSelectedAudioClipIds(new Set(clipIds))
+                          setAlignWaveformsDialog({ open: true, clipIds })
+                        }}
+                        onRequestDeleteClip={async (clipId) => {
+                          try {
+                            const { postDeleteAudioClip } = await import('@/lib/audio-client')
+                            await postDeleteAudioClip(data.projectName, clipId)
+                            setSelectedAudioClipIds((prev) => {
+                              const next = new Set(prev)
+                              next.delete(clipId)
+                              return next
+                            })
+                            if (editorState.selectedAudioClipId === clipId) {
+                              editorState.setSelectedAudioClipId(null)
+                            }
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to delete audio clip:', err)
                           }
-                          refreshTimeline()
-                        } catch (err) {
-                          console.error('Failed to delete audio clip:', err)
-                        }
-                      }}
-                      onRequestToggleMute={async (clipIds, muted) => {
-                        try {
-                          const { postUpdateAudioClip } = await import('@/lib/audio-client')
-                          await Promise.all(clipIds.map((id) =>
-                            postUpdateAudioClip(data.projectName, id, { muted })
-                          ))
-                          refreshTimeline()
-                        } catch (err) {
-                          console.error('Failed to toggle audio clip mute:', err)
-                        }
-                      }}
-                      onUpdateTrack={async (trackId, update) => {
-                        try {
-                          const { postUpdateAudioTrack } = await import('@/lib/audio-client')
-                          await postUpdateAudioTrack(data.projectName, trackId, update)
-                          refreshTimeline()
-                        } catch (err) {
-                          console.error('Failed to update audio track:', err)
-                        }
-                      }}
-                    />
-                    )
-                  })}
-                </div>
-              )}
+                        }}
+                        onRequestToggleMute={async (clipIds, muted) => {
+                          try {
+                            const { postUpdateAudioClip } = await import('@/lib/audio-client')
+                            await Promise.all(clipIds.map((id) =>
+                              postUpdateAudioClip(data.projectName, id, { muted })
+                            ))
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to toggle audio clip mute:', err)
+                          }
+                        }}
+                        onUpdateTrack={async (trackId, update) => {
+                          try {
+                            const { postUpdateAudioTrack } = await import('@/lib/audio-client')
+                            await postUpdateAudioTrack(data.projectName, trackId, update)
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to update audio track:', err)
+                          }
+                        }}
+                        onRequestDeleteTrack={async (trackId) => {
+                          const victim = sortedAudio.find((x) => x.id === trackId)
+                          const label = victim ? `"${victim.name}"` : 'this audio track'
+                          const clipCount = victim?.clips?.length ?? 0
+                          const suffix = clipCount > 0 ? ` and ${clipCount} clip${clipCount === 1 ? '' : 's'}` : ''
+                          if (!confirm(`Delete ${label}${suffix}?`)) return
+                          try {
+                            const { postDeleteAudioTrack } = await import('@/lib/audio-client')
+                            await postDeleteAudioTrack(data.projectName, trackId)
+                            if (victim?.clips?.length) {
+                              const removed = new Set(victim.clips.map((c) => c.id))
+                              setSelectedAudioClipIds((prev) => {
+                                const next = new Set<string>()
+                                for (const id of prev) if (!removed.has(id)) next.add(id)
+                                return next
+                              })
+                              if (editorState.selectedAudioClipId && removed.has(editorState.selectedAudioClipId)) {
+                                editorState.setSelectedAudioClipId(null)
+                              }
+                            }
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to delete audio track:', err)
+                          }
+                        }}
+                        onRequestReorderTracks={async (draggedTrackId, targetTrackId, position) => {
+                          // Rebuild the id array with the dragged track inserted
+                          // before/after the target. Optimistic local reorder
+                          // first so the UI snaps; server call commits.
+                          const ids = sortedAudio.map((x) => x.id).filter((id) => id !== draggedTrackId)
+                          const targetIdx = ids.indexOf(targetTrackId)
+                          if (targetIdx < 0) return
+                          const insertAt = position === 'before' ? targetIdx : targetIdx + 1
+                          ids.splice(insertAt, 0, draggedTrackId)
+                          const prev = localAudioTracks
+                          setLocalAudioTracks((tracks) => {
+                            if (!tracks) return tracks
+                            const orderMap = new Map(ids.map((id, i) => [id, i]))
+                            return tracks.map((track) => {
+                              const newOrder = orderMap.get(track.id)
+                              return newOrder === undefined ? track : { ...track, display_order: newOrder }
+                            })
+                          })
+                          try {
+                            const { postReorderAudioTracks } = await import('@/lib/audio-client')
+                            await postReorderAudioTracks(data.projectName, ids)
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to reorder audio tracks:', err)
+                            setLocalAudioTracks(prev)
+                          }
+                        }}
+                        onRequestMoveUp={laneIdx > 0 ? async (trackId) => {
+                          const ids = sortedAudio.map((x) => x.id)
+                          const i = ids.indexOf(trackId)
+                          if (i <= 0) return
+                          ;[ids[i - 1], ids[i]] = [ids[i], ids[i - 1]]
+                          const prev = localAudioTracks
+                          setLocalAudioTracks((tracks) => {
+                            if (!tracks) return tracks
+                            const orderMap = new Map(ids.map((id, idx) => [id, idx]))
+                            return tracks.map((track) => {
+                              const newOrder = orderMap.get(track.id)
+                              return newOrder === undefined ? track : { ...track, display_order: newOrder }
+                            })
+                          })
+                          try {
+                            const { postReorderAudioTracks } = await import('@/lib/audio-client')
+                            await postReorderAudioTracks(data.projectName, ids)
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to move audio track up:', err)
+                            setLocalAudioTracks(prev)
+                          }
+                        } : undefined}
+                        onRequestMoveDown={laneIdx < sortedAudio.length - 1 ? async (trackId) => {
+                          const ids = sortedAudio.map((x) => x.id)
+                          const i = ids.indexOf(trackId)
+                          if (i < 0 || i >= ids.length - 1) return
+                          ;[ids[i + 1], ids[i]] = [ids[i], ids[i + 1]]
+                          const prev = localAudioTracks
+                          setLocalAudioTracks((tracks) => {
+                            if (!tracks) return tracks
+                            const orderMap = new Map(ids.map((id, idx) => [id, idx]))
+                            return tracks.map((track) => {
+                              const newOrder = orderMap.get(track.id)
+                              return newOrder === undefined ? track : { ...track, display_order: newOrder }
+                            })
+                          })
+                          try {
+                            const { postReorderAudioTracks } = await import('@/lib/audio-client')
+                            await postReorderAudioTracks(data.projectName, ids)
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to move audio track down:', err)
+                            setLocalAudioTracks(prev)
+                          }
+                        } : undefined}
+                      />
+                      )
+                    })}
+                    {/* Add-track affordance — sticky so it stays pinned to the
+                        left during horizontal scroll, matching how lane
+                        headers behave. Clicking POSTs a new track and
+                        refreshTimeline() picks it up. */}
+                    <div className="sticky left-0 z-10 w-fit px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          try {
+                            const { postAddAudioTrack } = await import('@/lib/audio-client')
+                            await postAddAudioTrack(data.projectName, {})
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to add audio track:', err)
+                          }
+                        }}
+                        className="text-[10px] text-cyan-400/80 hover:text-cyan-300 border border-dashed border-cyan-700/60 hover:border-cyan-500 rounded px-2 py-0.5"
+                        title="Add a new audio track below the existing ones"
+                      >
+                        + Add audio track
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
               {/* Beat markers */}
               <BeatMarkers beats={data.beats} audioEvents={aiAudioEvents} pxPerSec={pxPerSec} />
               {data.audioFile && (
