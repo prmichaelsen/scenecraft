@@ -71,7 +71,7 @@ const t = (id: string, clips: Array<{ id: string; start: number; end: number; mu
   id,
   name: id,
   display_order: 0,
-  enabled: true,
+  solo: false,
   hidden: false,
   muted: false,
   volume_curve: [[0, 0], [1, 0]],
@@ -226,7 +226,7 @@ describe('createAudioMixer — playback_rate + effective_source_offset (linear r
   it('linked clip at 2× (kf_span=5s, source_span=10s) plays at rate 2', () => {
     // Craft a clip object with the derived fields the backend would emit
     const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
       volume_curve: [[0, 0], [1, 0]],
       clips: [{
         id: 'c1', track_id: 'a',
@@ -248,7 +248,7 @@ describe('createAudioMixer — playback_rate + effective_source_offset (linear r
 
   it('linked clip mid-playback: source position = effOffset + (t - start) * rate', () => {
     const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
       volume_curve: [[0, 0], [1, 0]],
       clips: [{
         id: 'c1', track_id: 'a',
@@ -269,7 +269,7 @@ describe('createAudioMixer — playback_rate + effective_source_offset (linear r
 
   it('activation applies preservesPitch=true so voices stay natural at non-unity rates', () => {
     const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
       volume_curve: [[0, 0], [1, 0]],
       clips: [{
         id: 'c1', track_id: 'a',
@@ -334,7 +334,7 @@ describe('createAudioMixer — curve automation (T117)', () => {
   it('track curve [[0, 0], [10, -6]] schedules anchor + ramp on play', () => {
     instrumentCtx(opts.mockCtx)
     const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, enabled: true, hidden: false, muted: false,
+      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
       volume_curve: [[0, 0], [10, -6]],
       clips: [],
     }

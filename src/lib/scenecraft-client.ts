@@ -358,7 +358,9 @@ export type Track = {
   zOrder: number
   blendMode: BlendMode
   baseOpacity: number
-  enabled: boolean
+  muted: boolean
+  /** Solo'd tracks play; non-solo tracks are effectively muted when any solo is active. */
+  solo: boolean
   opacityKeyframes: { id: string; time: number; opacity: number }[]
   chromaKey?: ChromaKeyConfig
   hidden?: boolean
@@ -366,7 +368,7 @@ export type Track = {
 
 export async function fetchTracks(project: string): Promise<Track[]> {
   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks`)
-  if (!res.ok) return [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, enabled: true, opacityKeyframes: [] }]
+  if (!res.ok) return [{ id: 'track_1', name: 'Track 1', zOrder: 0, blendMode: 'normal', baseOpacity: 1.0, muted: false, solo: false, opacityKeyframes: [] }]
   const data = await res.json() as { tracks: Track[] }
   return data.tracks.map((t) => ({ ...t, opacityKeyframes: t.opacityKeyframes || [] }))
 }
@@ -379,7 +381,7 @@ export async function postAddTrack(project: string, name?: string) {
   return res.json() as Promise<{ success: boolean; id: string }>
 }
 
-export async function postUpdateTrack(project: string, id: string, updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) {
+export async function postUpdateTrack(project: string, id: string, updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'muted' | 'solo' | 'hidden'>>) {
   await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/tracks/update`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...updates }),

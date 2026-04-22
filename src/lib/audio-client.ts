@@ -8,9 +8,10 @@ export type AudioTrack = {
   id: string
   name: string
   display_order: number
-  enabled: boolean
   hidden: boolean
   muted: boolean
+  /** Solo'd tracks play; non-solo tracks are effectively muted when any solo is active. */
+  solo: boolean
   volume_curve: CurvePoint[]
   /** Populated by GET /api/projects/:name/audio-tracks — clips already live on their track. */
   clips?: AudioClip[]
@@ -103,9 +104,9 @@ export async function postDeleteAudioClip(project: string, clipId: string): Prom
 export type AudioTrackUpdate = Partial<{
   name: string
   displayOrder: number
-  enabled: boolean
   hidden: boolean
   muted: boolean
+  solo: boolean
   volumeCurve: CurvePoint[]
 }>
 

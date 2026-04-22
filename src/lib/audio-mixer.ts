@@ -149,11 +149,22 @@ export function createAudioMixer(
     clipNode.crossfadeGain = crossfadeGain
   }
 
+  /**
+   * DAW-style effective mute: a track is silent if it's explicitly muted, OR
+   * if any OTHER track is solo'd and this one isn't. Multiple solos compose
+   * (all solo'd tracks play, everything else is silent).
+   */
+  const isTrackEffectivelyMuted = (trackNode: TrackNode): boolean => {
+    if (trackNode.track.muted) return true
+    const anySolo = [...trackMap.values()].some((tn) => tn.track.solo)
+    if (anySolo && !trackNode.track.solo) return true
+    return false
+  }
+
   const buildTrackGraph = (ctx: AudioContext, trackNode: TrackNode): void => {
     if (trackNode.trackGain) return
     const trackGain = ctx.createGain()
-    const muted = trackNode.track.muted || !trackNode.track.enabled
-    trackGain.gain.value = muted ? 0 : 1
+    trackGain.gain.value = isTrackEffectivelyMuted(trackNode) ? 0 : 1
     trackGain.connect(ctx.destination)
     trackNode.trackGain = trackGain
   }
@@ -242,8 +253,7 @@ export function createAudioMixer(
     const ctxNow = audioCtx.currentTime
     g.cancelScheduledValues(ctxNow)
 
-    const muted = trackNode.track.muted || !trackNode.track.enabled
-    if (muted) {
+    if (isTrackEffectivelyMuted(trackNode)) {
       g.setValueAtTime(0, ctxNow)
       return
     }
@@ -454,7 +464,11 @@ export function createAudioMixer(
       if (disposed) return
       const trackNode = trackMap.get(trackId)
       if (!trackNode) return
-      scheduleTrackCurve(trackNode, lastPlayhead)
+      // Toggling solo on any track changes the effective-mute of every other
+      // track, so we always reschedule ALL track curves here. O(N_tracks)
+      // is trivial; this keeps solo behavior correct without tracking which
+      // field changed.
+      for (const tn of trackMap.values()) scheduleTrackCurve(tn, lastPlayhead)
       log(`updateTrack(${trackId})`)
     },
 

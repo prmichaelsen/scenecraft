@@ -78,13 +78,13 @@ export function AudioPropertiesPanel({ projectName, audioTracks, projectDuration
     }
   }, [track, projectName, onChanged])
 
-  const handleTrackEnabledToggle = useCallback(async () => {
+  const handleTrackSoloToggle = useCallback(async () => {
     if (!track) return
     try {
-      await postUpdateAudioTrack(projectName, track.id, { enabled: !track.enabled })
+      await postUpdateAudioTrack(projectName, track.id, { solo: !track.solo })
       onChanged?.()
     } catch (e) {
-      console.error('[AudioPropertiesPanel] track enabled save failed:', e)
+      console.error('[AudioPropertiesPanel] track solo save failed:', e)
     }
   }, [track, projectName, onChanged])
 
@@ -166,8 +166,8 @@ export function AudioPropertiesPanel({ projectName, audioTracks, projectDuration
           <span>muted</span>
         </label>
         <label className="flex items-center gap-2 text-[11px]">
-          <input type="checkbox" checked={!!t.enabled} onChange={handleTrackEnabledToggle} />
-          <span>enabled</span>
+          <input type="checkbox" checked={!!t.solo} onChange={handleTrackSoloToggle} />
+          <span>solo</span>
         </label>
       </div>
       <VolumeCurveEditor

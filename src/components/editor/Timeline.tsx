@@ -46,7 +46,7 @@ const TrackHeader = memo(function TrackHeader({ track, isActive, scrollLeft, onS
   isActive: boolean
   scrollLeft: number
   onSelect: () => void
-  onUpdate: (updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'enabled'>>) => void
+  onUpdate: (updates: Partial<Pick<Track, 'name' | 'blendMode' | 'baseOpacity' | 'muted' | 'solo'>>) => void
   onOpenSettings?: () => void
   onMoveUp?: () => void
   onMoveDown?: () => void
@@ -66,10 +66,16 @@ const TrackHeader = memo(function TrackHeader({ track, isActive, scrollLeft, onS
       >Properties</button>
 
       <button
-        onClick={(e) => { e.stopPropagation(); onUpdate({ enabled: !track.enabled }) }}
-        className={`text-[10px] px-1 rounded font-medium ${track.enabled ? 'text-green-400 hover:text-green-300' : 'text-gray-600 hover:text-gray-500'}`}
-        title={track.enabled ? 'Mute track (still shown on timeline)' : 'Unmute track'}
-      >{track.enabled ? 'Mute' : 'Muted'}</button>
+        onClick={(e) => { e.stopPropagation(); onUpdate({ muted: !track.muted }) }}
+        className={`text-[10px] px-1 rounded font-medium ${!track.muted ? 'text-green-400 hover:text-green-300' : 'text-red-400 hover:text-red-300'}`}
+        title={track.muted ? 'Unmute track' : 'Mute track'}
+      >{track.muted ? 'Muted' : 'Mute'}</button>
+
+      <button
+        onClick={(e) => { e.stopPropagation(); onUpdate({ solo: !track.solo }) }}
+        className={`text-[10px] px-1 rounded font-medium ${track.solo ? 'text-yellow-400 hover:text-yellow-300' : 'text-gray-500 hover:text-gray-300'}`}
+        title={track.solo ? 'Un-solo track' : 'Solo track — silences non-solo tracks'}
+      >{track.solo ? 'Solo' : 'Solo'}</button>
 
       {onMoveUp && <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>}
       {onMoveDown && <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>}
@@ -2286,7 +2292,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                   {/* Track content */}
                   <div
                     data-track-id={track.id}
-                    className={`relative cursor-pointer shrink-0 ${!track.enabled ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''} ${targetTrackIds?.has(track.id) ? 'bg-blue-500/10' : ''}`}
+                    className={`relative cursor-pointer shrink-0 ${track.muted ? 'opacity-30' : ''} ${isActive ? 'ring-1 ring-inset ring-blue-500/40 bg-blue-900/5' : ''} ${targetTrackIds?.has(track.id) ? 'bg-blue-500/10' : ''}`}
                     style={{ height: videoTrackHeight }}
                     onMouseDown={(e) => handleDragSelectDown(e, track.id)}
                     onClick={(e) => { if (dragSelectRef.current?.active || dragSelectRect) return; setSelectedTrackId(track.id); handleTrackClick(e) }}
@@ -2448,6 +2454,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                           refreshTimeline()
                         } catch (err) {
                           console.error('Failed to toggle audio clip mute:', err)
+                        }
+                      }}
+                      onUpdateTrack={async (trackId, update) => {
+                        try {
+                          const { postUpdateAudioTrack } = await import('@/lib/audio-client')
+                          await postUpdateAudioTrack(data.projectName, trackId, update)
+                          refreshTimeline()
+                        } catch (err) {
+                          console.error('Failed to update audio track:', err)
                         }
                       }}
                     />

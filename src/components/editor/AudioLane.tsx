@@ -36,6 +36,11 @@ type AudioLaneProps = {
    */
   onRequestToggleMute?: (clipIds: string[], muted: boolean) => void
   /**
+   * Toggle mute / solo on the track itself (not on a clip). Wired to the
+   * Mute / Solo buttons in the lane header.
+   */
+  onUpdateTrack?: (trackId: string, update: { muted?: boolean; solo?: boolean }) => void
+  /**
    * Body-drag: mousedown on a clip body begins a drag gesture tracked by
    * Timeline. AudioLane just exposes the hook; drag state lives in Timeline
    * so multi-clip drags spanning lanes stay coherent.
@@ -61,9 +66,9 @@ type AudioLaneProps = {
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onClipMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds }: AudioLaneProps) {
   const clips = track.clips ?? []
-  const dimmed = track.muted || !track.enabled
+  const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
   const selected = selectedAudioTrackId === track.id
 
@@ -79,14 +84,29 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
       }}
     >
       {/* Track header — sticky so it stays visible during horizontal scroll */}
-      <div className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit pointer-events-none">
-        <span className="text-[9px] text-gray-500 uppercase tracking-wider">
+      <div className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit">
+        <span className="text-[9px] text-gray-500 uppercase tracking-wider pointer-events-none">
           A{track.display_order + 1}
         </span>
-        <span className="text-[10px] text-gray-400 truncate max-w-[120px]">
+        <span className="text-[10px] text-gray-400 truncate max-w-[120px] pointer-events-none">
           {track.name}
         </span>
-        {track.muted && <span className="text-[9px] text-red-400/80">muted</span>}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onUpdateTrack?.(track.id, { muted: !track.muted })
+          }}
+          className={`text-[9px] px-1 rounded font-medium ${track.muted ? 'text-red-400 hover:text-red-300' : 'text-green-400 hover:text-green-300'}`}
+          title={track.muted ? 'Unmute track' : 'Mute track'}
+        >M</button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onUpdateTrack?.(track.id, { solo: !track.solo })
+          }}
+          className={`text-[9px] px-1 rounded font-medium ${track.solo ? 'text-yellow-400 hover:text-yellow-300' : 'text-gray-500 hover:text-gray-300'}`}
+          title={track.solo ? 'Un-solo track' : 'Solo track — silences non-solo tracks'}
+        >S</button>
       </div>
 
       {/* Clips */}
