@@ -73,6 +73,12 @@ type TransitionTrackProps = {
   overlapPreview?: OverlapPreview | null
   pxPerSec: number
   selectedId: string | null
+  /**
+   * Transition id to paint with a yellow "linked-to-selected" glow — used
+   * for cross-highlighting when the currently-selected audio clip links to
+   * this transition (Task 124). Distinct from the "selected" ring.
+   */
+  highlightedId?: string | null
   duration: number
   projectName?: string
   onTransitionClick: (tr: Transition, shiftKey?: boolean) => void
@@ -170,6 +176,7 @@ export const TransitionTrack = memo(function TransitionTrack({
   overlapPreview,
   pxPerSec,
   selectedId,
+  highlightedId,
   onTransitionClick,
   selectedIds,
   onBoundaryDrag: _onBoundaryDrag,
@@ -889,6 +896,9 @@ export const TransitionTrack = memo(function TransitionTrack({
         if (endX < scrollLeft - BUFFER_PX || x > scrollLeft + viewportWidth + BUFFER_PX) return null
 
         const isSelected = tr.id === selectedId || (selectedIds?.has(tr.id) ?? false)
+        // Task 124 cross-highlight: only glow when linked-to-selected AND not
+        // itself selected — keeps "selected" and "linked-to-selected" distinct.
+        const isHighlighted = !isSelected && tr.id === highlightedId
         const hasCandidates = Object.values(tr.candidates).some((arr) => arr.length > 0)
 
         // Compute speed for display
@@ -898,7 +908,7 @@ export const TransitionTrack = memo(function TransitionTrack({
         return (
           <div
             key={tr.id}
-            className={`absolute top-0 h-full pointer-events-none group ${isSelected ? 'z-20' : 'z-10'}`}
+            className={`absolute top-0 h-full pointer-events-none group ${isSelected || isHighlighted ? 'z-20' : 'z-10'}`}
             style={{ left: x, width }}
           >
             {/* Render progress bar */}
@@ -947,8 +957,8 @@ export const TransitionTrack = memo(function TransitionTrack({
                 dropTarget === tr.id
                   ? 'bg-green-500/30 border-green-500/60 ring-1 ring-green-500'
                   : tr.hidden
-                    ? `bg-yellow-500/10 hover:bg-yellow-500/15 border-yellow-500/20 border-dashed ${isSelected ? 'ring-1 ring-yellow-500' : ''}`
-                    : `bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/30 ${isSelected ? 'ring-1 ring-orange-500' : ''}`
+                    ? `bg-yellow-500/10 hover:bg-yellow-500/15 border-yellow-500/20 border-dashed ${isSelected ? 'ring-1 ring-yellow-500' : isHighlighted ? 'ring-2 ring-yellow-300/60 shadow-[0_0_12px_rgba(252,211,77,0.4)]' : ''}`
+                    : `bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/30 ${isSelected ? 'ring-1 ring-orange-500' : isHighlighted ? 'ring-2 ring-yellow-300/60 shadow-[0_0_12px_rgba(252,211,77,0.4)]' : ''}`
               }`}
               onMouseDown={(e) => {
                 // Body-drag only initiates on active tracks; skip on inactive.

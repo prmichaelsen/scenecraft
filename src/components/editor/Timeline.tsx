@@ -623,6 +623,29 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // a follow-up).
   useAudioMixer(data.projectName, localAudioTracks, isPlaying, currentTime)
 
+  // Task 124 — cross-highlight linked transition ↔ audio clip on selection.
+  // Pure rendering concern over the existing `audio_clip_links` relation
+  // (exposed per-clip as `linked_transition_id`). No new selection state.
+  const highlightedAudioClipIds = useMemo(() => {
+    const s = new Set<string>()
+    if (!selectedTransition) return s
+    for (const t of localAudioTracks ?? []) {
+      for (const c of t.clips ?? []) {
+        if (c.linked_transition_id === selectedTransition.id) s.add(c.id)
+      }
+    }
+    return s
+  }, [selectedTransition, localAudioTracks])
+  const highlightedTransitionId = useMemo<string | null>(() => {
+    const clipId = editorState.selectedAudioClipId
+    if (!clipId) return null
+    for (const t of localAudioTracks ?? []) {
+      const c = (t.clips ?? []).find((x) => x.id === clipId)
+      if (c) return c.linked_transition_id ?? null
+    }
+    return null
+  }, [editorState.selectedAudioClipId, localAudioTracks])
+
   // Partial refetch — only keyframes + transitions + audio tracks (fast, ~500KB)
   const refreshTimeline = useCallback(() => {
     getTimelineData({ data: { name: data.projectName } }).then((tl) => {
@@ -2656,6 +2679,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       pxPerSec={pxPerSec}
                       selectedId={selectedTransition?.id ?? null}
                       selectedIds={selectedTransitionIds}
+                      highlightedId={highlightedTransitionId}
                       duration={effectiveDuration}
                       projectName={data.projectName}
                       onTransitionClick={handleTransitionClick}
@@ -2727,6 +2751,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         track={t}
                         pxPerSec={pxPerSec}
                         selectedIds={selectedAudioClipIds}
+                        highlightedIds={highlightedAudioClipIds}
                         onClipClick={handleAudioClipClick}
                         onClipMouseDown={handleAudioClipMouseDown}
                         onClipTrimMouseDown={handleAudioClipTrimMouseDown}

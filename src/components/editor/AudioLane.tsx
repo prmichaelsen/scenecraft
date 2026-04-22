@@ -106,13 +106,19 @@ type AudioLaneProps = {
    * matches this lane. Empty array → no ghosts rendered.
    */
   ghosts?: Array<{ startTime: number; endTime: number }>
+  /**
+   * Audio-clip ids to paint with a yellow "linked-to-selected" glow — used
+   * for cross-highlighting when the currently-selected transition links to
+   * clips on this lane (Task 124). Distinct from the "selected" ring.
+   */
+  highlightedIds?: Set<string>
 }
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -316,6 +322,7 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           dragOffsetPx={(draggingIds?.has(c.id) ? dragOffsetSeconds : 0) * pxPerSec}
           dragOffsetPy={(draggingIds?.has(c.id) ? dragTrackDelta : 0) * height}
           trimPreview={trimPreview && trimPreview.clipIds.has(c.id) ? { edge: trimPreview.edge, offsetSeconds: trimPreview.offsetSeconds } : undefined}
+          isHighlighted={highlightedIds?.has(c.id) ?? false}
         />
       ))}
 
@@ -372,9 +379,14 @@ type AudioClipBlockProps = {
    * commit. AudioLane hands this down only for clips in the ripple batch.
    */
   trimPreview?: { edge: 'left' | 'right'; offsetSeconds: number }
+  /**
+   * Task 124 cross-highlight — when true, paint a yellow "linked-to-selected"
+   * glow. Only visible when the block isn't already selected.
+   */
+  isHighlighted?: boolean
 }
 
-function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, onClipTrimMouseDown, dragOffsetPx = 0, dragOffsetPy = 0, trimPreview }: AudioClipBlockProps) {
+function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, onClipTrimMouseDown, dragOffsetPx = 0, dragOffsetPy = 0, trimPreview, isHighlighted = false }: AudioClipBlockProps) {
   // Apply trim preview to the block's CSS left+width so the user sees the
   // new boundary in real time. Left-edge drag moves the left edge; right-
   // edge drag moves the right edge. Underlying clip data isn't touched
@@ -394,12 +406,20 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
   const { selectedAudioClipId, setSelectedAudioClipId } = useEditorState()
   const selected = selectedAudioClipId === clip.id || isInMultiSelect
   const { show: showContextMenu } = useContextMenu()
+  // Cross-highlight (Task 124): yellow glow only when highlighted AND not
+  // already selected — keeps the "selected" and "linked-to-selected" states
+  // visually distinct.
+  const showHighlight = isHighlighted && !selected
 
   const isDragging = dragOffsetPx !== 0 || dragOffsetPy !== 0
   return (
     <div
       className={`absolute top-1 bottom-1 rounded-sm overflow-hidden border bg-cyan-900/30 hover:bg-cyan-900/50 ${isDragging ? '' : 'transition-colors'} ${
-        selected ? 'border-cyan-300 ring-1 ring-cyan-300/60' : 'border-cyan-700/60'
+        selected
+          ? 'border-cyan-300 ring-1 ring-cyan-300/60'
+          : showHighlight
+            ? 'border-yellow-300/70 ring-2 ring-yellow-300/60 shadow-[0_0_12px_rgba(252,211,77,0.4)]'
+            : 'border-cyan-700/60'
       } ${clip.muted ? 'opacity-40' : ''} ${isDragging ? 'cursor-grabbing opacity-80 shadow-lg z-40' : 'cursor-pointer'}`}
       style={{
         left,

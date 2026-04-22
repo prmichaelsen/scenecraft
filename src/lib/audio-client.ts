@@ -43,8 +43,9 @@ export type AudioClip = {
   /**
    * Transition id this clip is linked to via `audio_clip_links`, or null
    * for standalone clips. Computed server-side. Used by cross-type drag
-   * so a linked clip isn't double-shifted when its transition is moved:
-   * propagation in `update_keyframe` handles the linked-audio shift.
+   * so a linked clip isn't double-shifted when its transition is moved
+   * (propagation in `update_keyframe` handles the linked-audio shift), and
+   * by the timeline for cross-highlighting linked transition ↔ audio clip.
    */
   linked_transition_id?: string | null
 }
