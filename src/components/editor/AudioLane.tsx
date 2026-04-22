@@ -47,6 +47,14 @@ type AudioLaneProps = {
    */
   onClipMouseDown?: (clip: AudioClip, e: React.MouseEvent) => void
   /**
+   * Edge-trim: mousedown on a 6px hit zone at the left or right of a clip
+   * begins a resize gesture. Timeline owns the state.
+   *   - left edge  → adjusts source_offset + start_time together (trims
+   *                  content from the start; clip duration shrinks from left)
+   *   - right edge → adjusts end_time only (clip duration shrinks from right)
+   */
+  onClipTrimMouseDown?: (clip: AudioClip, edge: 'left' | 'right', e: React.MouseEvent) => void
+  /**
    * Optimistic drag offset (seconds) applied to clips currently in the drag
    * set. Driven by Timeline; AudioClipBlock shifts via CSS transform so no
    * server roundtrip happens per-frame.
@@ -60,13 +68,18 @@ type AudioLaneProps = {
   dragTrackDelta?: number
   /** IDs currently being drag-moved (for optimistic CSS transform). */
   draggingIds?: Set<string>
+  /**
+   * Optimistic trim preview — when set, this block renders its edge
+   * adjusted live so the user sees the new boundary before release.
+   */
+  trimPreview?: { clipId: string; edge: 'left' | 'right'; offsetSeconds: number }
 }
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onClipMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -124,8 +137,10 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           onRequestDeleteClip={onRequestDeleteClip}
           onRequestToggleMute={onRequestToggleMute}
           onClipMouseDown={onClipMouseDown}
+          onClipTrimMouseDown={onClipTrimMouseDown}
           dragOffsetPx={(draggingIds?.has(c.id) ? dragOffsetSeconds : 0) * pxPerSec}
           dragOffsetPy={(draggingIds?.has(c.id) ? dragTrackDelta : 0) * height}
+          trimPreview={trimPreview && trimPreview.clipId === c.id ? trimPreview : undefined}
         />
       ))}
     </div>
@@ -144,16 +159,29 @@ type AudioClipBlockProps = {
   onRequestDeleteClip?: (clipId: string) => void
   onRequestToggleMute?: (clipIds: string[], muted: boolean) => void
   onClipMouseDown?: (clip: AudioClip, e: React.MouseEvent) => void
+  onClipTrimMouseDown?: (clip: AudioClip, edge: 'left' | 'right', e: React.MouseEvent) => void
   /** Optimistic drag X offset in px applied via CSS transform. Zero when not dragging. */
   dragOffsetPx?: number
   /** Optimistic drag Y offset in px (for cross-lane drag). Zero when dragging within source lane. */
   dragOffsetPy?: number
+  /** Optimistic trim preview: when set, the block's edge shifts live until commit. */
+  trimPreview?: { clipId: string; edge: 'left' | 'right'; offsetSeconds: number }
 }
 
-function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, dragOffsetPx = 0, dragOffsetPy = 0 }: AudioClipBlockProps) {
-  const left = clip.start_time * pxPerSec
-  const width = Math.max(2, (clip.end_time - clip.start_time) * pxPerSec)
-  const durationSeconds = clip.end_time - clip.start_time
+function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSelect, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onClipMouseDown, onClipTrimMouseDown, dragOffsetPx = 0, dragOffsetPy = 0, trimPreview }: AudioClipBlockProps) {
+  // Apply trim preview to the block's CSS left+width so the user sees the
+  // new boundary in real time. Left-edge drag moves the left edge; right-
+  // edge drag moves the right edge. Underlying clip data isn't touched
+  // until mouseup commits.
+  let baseStart = clip.start_time
+  let baseEnd = clip.end_time
+  if (trimPreview) {
+    if (trimPreview.edge === 'left') baseStart += trimPreview.offsetSeconds
+    else baseEnd += trimPreview.offsetSeconds
+  }
+  const left = baseStart * pxPerSec
+  const width = Math.max(2, (baseEnd - baseStart) * pxPerSec)
+  const durationSeconds = Math.max(0, baseEnd - baseStart)
   // Clip block sits with 4px vertical inset from the lane — same as the
   // absolute top-1 bottom-1 below (1px=4px because tailwind scale).
   const blockHeight = Math.max(0, laneHeight - 8)
@@ -255,6 +283,32 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
         <div className="absolute bottom-0.5 left-1 text-[9px] font-mono text-cyan-300/80 truncate max-w-[calc(100%-8px)] pointer-events-none z-10">
           {clip.id.replace(/^audio_clip_/, '')}
         </div>
+      )}
+      {/* Edge-trim hit zones — 6 px wide, full height. ew-resize cursor on
+          hover; tinted cyan band appears during active trim drag.
+          Positioned with z-20 so they stay hit-testable over the waveform
+          canvas (which is z-index: auto inside the block). */}
+      {onClipTrimMouseDown && width > 12 && (
+        <>
+          <div
+            className="absolute top-0 bottom-0 left-0 w-[6px] cursor-ew-resize z-20 hover:bg-cyan-400/30"
+            onMouseDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              onClipTrimMouseDown(clip, 'left', e)
+            }}
+            title="Trim clip start"
+          />
+          <div
+            className="absolute top-0 bottom-0 right-0 w-[6px] cursor-ew-resize z-20 hover:bg-cyan-400/30"
+            onMouseDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              onClipTrimMouseDown(clip, 'right', e)
+            }}
+            title="Trim clip end"
+          />
+        </>
       )}
     </div>
   )

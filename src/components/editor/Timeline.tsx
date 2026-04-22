@@ -394,6 +394,10 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // primary clip's source lane). AudioLane renders the optimistic CSS
   // transform via props; commit happens on mouseup.
   const [audioDrag, setAudioDrag] = useState<{ ids: Set<string>; offsetSeconds: number; trackDelta: number } | null>(null)
+  // Audio clip trim state. `edge` = which handle; offsetSeconds is applied to
+  // start_time (left) or end_time (right) via AudioClipBlock's display math,
+  // and committed on mouseup via postUpdateAudioClip.
+  const [audioTrim, setAudioTrim] = useState<{ clipId: string; edge: 'left' | 'right'; offsetSeconds: number } | null>(null)
   // Align-waveforms dialog state — opened from audio clip right-click menu
   const [alignWaveformsDialog, setAlignWaveformsDialog] = useState<{ open: boolean; clipIds: string[] }>({ open: false, clipIds: [] })
   const [transformMode, setTransformMode] = useState(false)
@@ -904,6 +908,99 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       console.error('TrDrag carry-audio failed:', err)
     }
   }, [selectedAudioClipIds, localAudioTracks, data.projectName])
+
+  /**
+   * Audio clip edge-trim gesture. Left edge adjusts source_offset + start_time
+   * together (shrinks content from the start); right edge adjusts end_time
+   * only (shrinks content from the end). Clamps: min clip length 0.1 s,
+   * source_offset ≥ 0 for left edge, non-negative end_time for right edge.
+   */
+  const handleAudioClipTrimMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, edge: 'left' | 'right', e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const startX = e.clientX
+    const pxPerSecAtStart = pxPerSec
+    const origStart = clip.start_time
+    const origEnd = clip.end_time
+    const origOffset = clip.source_offset ?? 0
+    const MIN_CLIP_SECONDS = 0.1
+    let moved = false
+    const THRESHOLD_PX = 4
+
+    const clampDelta = (dxPx: number): number => {
+      let dt = dxPx / pxPerSecAtStart
+      if (edge === 'left') {
+        // Can't drag past right edge minus min duration
+        const maxDt = (origEnd - origStart) - MIN_CLIP_SECONDS
+        dt = Math.min(dt, maxDt)
+        // Can't expose source material before source_offset = 0
+        dt = Math.max(dt, -origOffset)
+        // Can't push start_time negative
+        dt = Math.max(dt, -origStart)
+      } else {
+        // Can't drag past left edge plus min duration
+        const minDt = -(origEnd - origStart) + MIN_CLIP_SECONDS
+        dt = Math.max(dt, minDt)
+        // Can't push end_time negative
+        dt = Math.max(dt, -origEnd)
+      }
+      return dt
+    }
+
+    const onMove = (me: MouseEvent) => {
+      const dxPx = me.clientX - startX
+      if (!moved && Math.abs(dxPx) < THRESHOLD_PX) return
+      moved = true
+      setAudioTrim({ clipId: clip.id, edge, offsetSeconds: clampDelta(dxPx) })
+    }
+
+    const onUp = async (ue: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('keydown', onKey)
+      if (!moved) { setAudioTrim(null); return }
+      const dt = clampDelta(ue.clientX - startX)
+      setAudioTrim(null)
+      if (Math.abs(dt) < 0.001) return
+      try {
+        const { postUpdateAudioClip } = await import('@/lib/audio-client')
+        if (edge === 'left') {
+          // Left-edge drag: shift source_offset + start_time together. The
+          // source material under the new left edge is at origOffset + dt,
+          // and the new start_time is origStart + dt.
+          await postUpdateAudioClip(data.projectName, clip.id, {
+            sourceOffset: origOffset + dt,
+            startTime: origStart + dt,
+          })
+        } else {
+          // Right-edge drag: only end_time changes; source_offset stays put.
+          await postUpdateAudioClip(data.projectName, clip.id, {
+            endTime: origEnd + dt,
+          })
+        }
+        refreshTimeline()
+      } catch (err) {
+        console.error('Audio clip trim commit failed:', err)
+        alert(`Trim failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      // Swallow the synthetic click so trim doesn't toggle selection
+      const stopClick = (ce: MouseEvent) => { ce.stopPropagation(); document.removeEventListener('click', stopClick, true) }
+      document.addEventListener('click', stopClick, true)
+    }
+
+    const onKey = (ke: KeyboardEvent) => {
+      if (ke.key === 'Escape') {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        window.removeEventListener('keydown', onKey)
+        setAudioTrim(null)
+      }
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('keydown', onKey)
+  }, [pxPerSec, data.projectName, refreshTimeline])
 
   const handleAudioClipMouseDown = useCallback((clip: import('@/lib/audio-client').AudioClip, e: React.MouseEvent) => {
     // Only left-click on the block body. Shift-click is for selection (the
@@ -2428,9 +2525,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                       selectedIds={selectedAudioClipIds}
                       onClipClick={handleAudioClipClick}
                       onClipMouseDown={handleAudioClipMouseDown}
+                      onClipTrimMouseDown={handleAudioClipTrimMouseDown}
                       dragOffsetSeconds={audioDrag?.offsetSeconds ?? 0}
                       dragTrackDelta={audioDrag?.trackDelta ?? 0}
                       draggingIds={audioDrag?.ids}
+                      trimPreview={audioTrim ?? undefined}
                       onRequestAlignWaveforms={(clipIds) => {
                         // Promote right-clicked clip into selection (AudioLane did this
                         // eagerly in the list it passes us). Mirror that in state so
