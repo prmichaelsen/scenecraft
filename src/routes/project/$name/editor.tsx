@@ -44,6 +44,17 @@ import {
 } from '@/lib/timeline-client'
 import { fetchSettings } from '@/lib/settings-client'
 import { fetchWorkspaceView } from '@/lib/workspace-client'
+import { PluginHost } from '@/lib/plugin-host'
+// TODO(task-103): uncomment once isolate-vocals plugin module lands
+// import * as isolateVocals from '@/plugins/isolate-vocals'
+// PluginHost.register(isolateVocals, 'isolate-vocals')
+if (typeof window !== 'undefined') {
+  // Startup diagnostic — confirms the plugin host exists. Remove once real
+  // plugins are registered in task-103.
+  console.log(
+    `[PluginHost] ${PluginHost.registeredCount} registered, ${PluginHost.operationCount} operations`,
+  )
+}
 
 export type { NarrativeSection, TimelineInfo } from '@/lib/timeline-client'
 

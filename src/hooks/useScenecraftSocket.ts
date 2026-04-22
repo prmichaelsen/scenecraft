@@ -167,6 +167,12 @@ function subscribeAll(listener: JobListener) {
   return () => { globalListeners.delete(listener) }
 }
 
+// Framework-agnostic subscribe for plugins / non-React callers. Forwards to
+// the same listener registry that the React hook uses — no separate transport.
+export function subscribeJobExternal(jobId: string, listener: JobListener) {
+  return subscribeJob(jobId, listener)
+}
+
 // Start connection immediately on import (client-side only)
 if (typeof window !== 'undefined') {
   connect()
