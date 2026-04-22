@@ -15,6 +15,7 @@ import { scenecraftFileUrl } from '@/lib/scenecraft-client'
 import { VideoTrack } from './VideoTrack'
 import { TransitionTrack } from './TransitionTrack'
 import { Playhead } from './Playhead'
+import { RenderStateBar } from './RenderStateBar'
 import { KeyframePanel, preloadStills } from './KeyframePanel'
 import { BinPanel, type PoolSelection } from './BinPanel'
 import { TransitionPanel } from './TransitionPanel'
@@ -2176,6 +2177,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             <div className="sticky top-0 z-50 bg-gray-950">
               {/* Time ruler */}
               <TimeRuler duration={effectiveDuration} pxPerSec={pxPerSec} onClick={handleTrackClick} />
+
+              {/* Preview render-state bar — NLE-style colored strip showing
+                  which buckets are cached / rendering / unrendered / stale. */}
+              <RenderStateBar
+                projectName={data.projectName}
+                pxPerSec={pxPerSec}
+                scrollLeft={scrollLeft}
+                viewportWidth={viewportWidth}
+              />
 
               {/* Marker track */}
               <MarkerTrack
