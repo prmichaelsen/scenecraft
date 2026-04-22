@@ -54,6 +54,19 @@ export function AlignWaveformsDialog({
   const anchor = useMemo(() => clips.find((c) => c.id === anchorId) ?? clips[0], [anchorId, clips])
   const nonZeroCount = Object.entries(offsets).filter(([id, v]) => id !== anchor?.id && Math.abs(v) > 0.0001).length
 
+  // Order clips by track display_order, then by start_time. Clips whose track
+  // is unknown sort to the end. Helps users visually correlate which clip
+  // they're anchoring against in multi-track recording sessions.
+  const sortedClips = useMemo(() => {
+    const INFINITE = Number.POSITIVE_INFINITY
+    return [...clips].sort((a, b) => {
+      const orderA = tracksById[a.track_id]?.display_order ?? INFINITE
+      const orderB = tracksById[b.track_id]?.display_order ?? INFINITE
+      if (orderA !== orderB) return orderA - orderB
+      return a.start_time - b.start_time
+    })
+  }, [clips, tracksById])
+
   const handleDetect = async () => {
     if (!anchor) return
     setIsDetecting(true)
@@ -154,7 +167,7 @@ export function AlignWaveformsDialog({
               </tr>
             </thead>
             <tbody>
-              {clips.map((c) => {
+              {sortedClips.map((c) => {
                 const isAnchor = c.id === anchor?.id
                 const off = offsets[c.id] ?? 0
                 const track = tracksById[c.track_id]
