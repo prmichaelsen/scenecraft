@@ -19,8 +19,13 @@ export type JobMessage =
 type JobListener = (msg: JobMessage) => void
 
 // ── Server log store ────────────────────────────────────────────────
+// `_logs` is replaced with a NEW array on each update so
+// useSyncExternalStore sees a fresh reference and triggers a re-render.
+// Previously we mutated in place (.push / .splice) — that kept the same
+// reference, so useSyncExternalStore's reference-equality check skipped
+// the render and the LogPanel only updated on remount.
 const MAX_LOGS = 500
-const _logs: { message: string; timestamp: string; level: string }[] = []
+let _logs: readonly { message: string; timestamp: string; level: string }[] = []
 const _logSubscribers = new Set<() => void>()
 
 export function getServerLogs() { return _logs }
@@ -50,10 +55,11 @@ function setConnected(value: boolean) {
 }
 
 function routeMessage(msg: JobMessage) {
-  // Capture log messages
+  // Capture log messages — new array on each push so the snapshot
+  // reference changes and useSyncExternalStore re-renders subscribers.
   if (msg.type === 'log') {
-    _logs.push({ message: msg.message, timestamp: msg.timestamp, level: msg.level || 'info' })
-    if (_logs.length > MAX_LOGS) _logs.splice(0, _logs.length - MAX_LOGS)
+    const next = [..._logs, { message: msg.message, timestamp: msg.timestamp, level: msg.level || 'info' }]
+    _logs = next.length > MAX_LOGS ? next.slice(next.length - MAX_LOGS) : next
     for (const cb of _logSubscribers) cb()
   }
   // Notify global listeners
