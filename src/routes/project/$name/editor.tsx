@@ -52,6 +52,16 @@ import * as isolateVocals from '@/plugins/isolate_vocals'
 // replace this later without changing consumers.
 PluginHost.register(isolateVocals, 'isolate_vocals')
 
+// HMR: on module re-evaluation, deactivate the plugin so its Disposables
+// fire and the registry is clean before the new module registers again.
+// This is the VSCode-style lifecycle — activate() always pairs with a
+// deactivate() whose timing the host controls.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    void PluginHost.deactivate('isolate_vocals', isolateVocals)
+  })
+}
+
 if (typeof window !== 'undefined') {
   console.log(
     `[PluginHost] ${PluginHost.registeredCount} registered, ${PluginHost.operationCount} operations`,

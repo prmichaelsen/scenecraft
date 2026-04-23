@@ -9,18 +9,137 @@ beforeEach(() => {
 })
 
 describe('PluginHost.register', () => {
-  it('calls plugin.activate(host) and records the module name', () => {
+  it('calls plugin.activate(host, context) and records the module name', () => {
     let activatedWith: unknown = null
+    let passedContext: { name: string; subscriptions: unknown[] } | null = null
     const plugin: PluginModule = {
-      activate: (host) => {
+      activate: (host, context) => {
         activatedWith = host
+        passedContext = context ?? null
       },
     }
 
     PluginHost.register(plugin, 'test-plugin')
 
     expect(activatedWith).toBe(PluginHost)
+    expect(passedContext?.name).toBe('test-plugin')
+    expect(Array.isArray(passedContext?.subscriptions)).toBe(true)
     expect(PluginHost.registeredCount).toBe(1)
+  })
+
+  it('is idempotent — registering twice under the same name is a no-op', () => {
+    let activations = 0
+    const plugin: PluginModule = {
+      activate: () => {
+        activations += 1
+      },
+    }
+    PluginHost.register(plugin, 'dup')
+    PluginHost.register(plugin, 'dup')
+    expect(activations).toBe(1)
+    expect(PluginHost.registeredCount).toBe(1)
+  })
+})
+
+describe('PluginHost.deactivate', () => {
+  it('disposes subscriptions in LIFO order', async () => {
+    const order: string[] = []
+    const plugin: PluginModule = {
+      activate: (_host, context) => {
+        context!.subscriptions.push({ dispose: () => void order.push('first') })
+        context!.subscriptions.push({ dispose: () => void order.push('second') })
+        context!.subscriptions.push({ dispose: () => void order.push('third') })
+      },
+    }
+    PluginHost.register(plugin, 'lifo')
+    await PluginHost.deactivate('lifo')
+    expect(order).toEqual(['third', 'second', 'first'])
+  })
+
+  it('calls the plugin deactivate() hook AFTER subscriptions dispose', async () => {
+    const order: string[] = []
+    const plugin: PluginModule = {
+      activate: (_host, context) => {
+        context!.subscriptions.push({
+          dispose: () => void order.push('subscription'),
+        })
+      },
+      deactivate: () => {
+        order.push('module-deactivate')
+      },
+    }
+    PluginHost.register(plugin, 'with-deactivate')
+    await PluginHost.deactivate('with-deactivate', plugin)
+    expect(order).toEqual(['subscription', 'module-deactivate'])
+  })
+
+  it('is safe to call on an unknown name', async () => {
+    await expect(PluginHost.deactivate('never-registered')).resolves.toBeUndefined()
+  })
+
+  it('re-registering after deactivate works without duplicate-id throw', async () => {
+    const plugin: PluginModule = {
+      activate: (host, context) => {
+        host.registerOperation(
+          { id: 'reactivate.op', label: 'R', entityTypes: ['audio_clip'] },
+          context,
+        )
+      },
+    }
+    PluginHost.register(plugin, 'reactivate')
+    expect(PluginHost.getOperation('reactivate.op')).toBeDefined()
+
+    await PluginHost.deactivate('reactivate', plugin)
+    expect(PluginHost.getOperation('reactivate.op')).toBeUndefined()
+
+    // Re-register cleanly.
+    PluginHost.register(plugin, 'reactivate')
+    expect(PluginHost.getOperation('reactivate.op')).toBeDefined()
+  })
+})
+
+describe('PluginHost.registerOperation disposable', () => {
+  it('returns a Disposable that removes the operation', async () => {
+    const d = PluginHost.registerOperation({
+      id: 'disposable.op',
+      label: 'D',
+      entityTypes: ['audio_clip'],
+    })
+    expect(PluginHost.getOperation('disposable.op')).toBeDefined()
+    await d.dispose()
+    expect(PluginHost.getOperation('disposable.op')).toBeUndefined()
+  })
+
+  it('auto-pushes to context.subscriptions when context is provided', () => {
+    const ctx = { name: 'ctx-test', subscriptions: [] as { dispose(): void }[] }
+    PluginHost.registerOperation(
+      { id: 'ctx.op', label: 'C', entityTypes: ['audio_clip'] },
+      ctx,
+    )
+    expect(ctx.subscriptions).toHaveLength(1)
+  })
+})
+
+describe('PluginHost.registerContextMenu disposable', () => {
+  it('dispose removes just that contribution, leaves sibling entries intact', async () => {
+    const d1 = PluginHost.registerContextMenu({
+      entityType: 'audio_clip',
+      items: [{ operation: 'a.run', label: 'A' }],
+    })
+    PluginHost.registerContextMenu({
+      entityType: 'audio_clip',
+      items: [{ operation: 'b.run', label: 'B' }],
+    })
+
+    expect(PluginHost.getContextMenuItems('audio_clip').map((i) => i.operation)).toEqual([
+      'a.run',
+      'b.run',
+    ])
+
+    await d1.dispose()
+    expect(PluginHost.getContextMenuItems('audio_clip').map((i) => i.operation)).toEqual([
+      'b.run',
+    ])
   })
 })
 

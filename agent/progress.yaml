@@ -862,7 +862,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-11-audio-isolation-plugin.md
     tasks_total: 8
-    tasks_completed: 6
+    tasks_completed: 7
     estimated_weeks: 2
     tasks:
       - id: task-100

@@ -15,7 +15,7 @@
 
 import type { ComponentType } from 'react'
 
-import type { PluginModule } from '@/lib/plugin-host'
+import type { PluginContext, PluginModule } from '@/lib/plugin-host'
 
 import { AudioIsolationsPanel } from './AudioIsolationsPanel'
 import { IsolateVocalsRunForm } from './IsolateVocalsRunForm'
@@ -25,39 +25,57 @@ import {
   subscribeIsolationJob,
 } from './isolate-vocals-client'
 
-export const activate: PluginModule['activate'] = (host) => {
-  host.registerOperation({
-    id: 'isolate_vocals.run',
-    label: 'Isolate vocals',
-    entityTypes: ['audio_clip', 'transition'],
-    // Plugin-host descriptor types panels as ComponentType<unknown> — plugins
-    // are free to narrow their own prop types internally.
-    panel: AudioIsolationsPanel as ComponentType<unknown>,
-  })
+export const activate: PluginModule['activate'] = (host, context) => {
+  host.registerOperation(
+    {
+      id: 'isolate_vocals.run',
+      label: 'Isolate vocals',
+      entityTypes: ['audio_clip', 'transition'],
+      // Plugin-host descriptor types panels as ComponentType<unknown> — plugins
+      // are free to narrow their own prop types internally.
+      panel: AudioIsolationsPanel as ComponentType<unknown>,
+    },
+    context,
+  )
 
-  host.registerContextMenu({
-    entityType: 'audio_clip',
-    items: [
-      {
-        operation: 'isolate_vocals.run',
-        label: 'Isolate vocals…',
-        icon: 'wave',
-        reveals: 'panel:audio_isolations',
-      },
-    ],
-  })
+  host.registerContextMenu(
+    {
+      entityType: 'audio_clip',
+      items: [
+        {
+          operation: 'isolate_vocals.run',
+          label: 'Isolate vocals…',
+          icon: 'wave',
+          reveals: 'panel:audio_isolations',
+        },
+      ],
+    },
+    context,
+  )
 
-  host.registerContextMenu({
-    entityType: 'transition',
-    items: [
-      {
-        operation: 'isolate_vocals.run',
-        label: 'Isolate vocals from audio track…',
-        icon: 'wave',
-        reveals: 'panel:audio_isolations',
-      },
-    ],
-  })
+  host.registerContextMenu(
+    {
+      entityType: 'transition',
+      items: [
+        {
+          operation: 'isolate_vocals.run',
+          label: 'Isolate vocals from audio track…',
+          icon: 'wave',
+          reveals: 'panel:audio_isolations',
+        },
+      ],
+    },
+    context,
+  )
+}
+
+
+/**
+ * Optional module-level deactivate hook. Runs after all subscriptions are
+ * disposed; left here as a seam for future resource-heavy plugin state.
+ */
+export const deactivate: PluginModule['deactivate'] = (_context: PluginContext) => {
+  // Nothing to clean up outside context.subscriptions for now.
 }
 
 export {

@@ -1,13 +1,61 @@
 /**
- * Static plugin registry (frontend).
+ * Static plugin registry (frontend) with VSCode-style dispose pattern.
  *
- * Mirrors the backend `PluginHost` surface: plugins register operations and
- * context-menu contributions during `activate(host)`. For MVP this is a
- * process-singleton populated at editor startup; when a dynamic loader lands
- * later, the same `PluginHost` shape will remain the integration point.
+ * Plugins register contributions during ``activate(host, context)`` and
+ * push ``Disposable`` objects into ``context.subscriptions``. When a plugin
+ * is deactivated (Vite HMR, dynamic unload, tests), each disposable fires
+ * in LIFO order so resources (event listeners, WebSockets, subscriptions,
+ * intervals) clean up cleanly.
+ *
+ * Mirrors the backend ``PluginHost`` surface in scenecraft-engine. For MVP
+ * this is a process-singleton populated at editor startup; when a dynamic
+ * loader lands, ``register`` + ``deactivate`` remain the seams.
  */
 
 import type { ComponentType } from 'react'
+
+
+// ── Disposable contract ─────────────────────────────────────────────────
+
+export interface Disposable {
+  dispose(): void | Promise<void>
+}
+
+
+/**
+ * Adapt a teardown callable to a Disposable. Example::
+ *
+ *     const timer = setInterval(tick, 1000)
+ *     context.subscriptions.push(makeDisposable(() => clearInterval(timer)))
+ */
+export function makeDisposable(fn: () => void | Promise<void>): Disposable {
+  let disposed = false
+  return {
+    dispose: async () => {
+      if (disposed) return
+      disposed = true
+      try {
+        await fn()
+      } catch (e) {
+        console.error('[plugin-host] disposable raised:', e)
+      }
+    },
+  }
+}
+
+
+export type PluginContext = {
+  /** Plugin module name; also used as the deactivation key. */
+  readonly name: string
+  /**
+   * Register Disposables here. On deactivation each one fires in LIFO
+   * order, matching VSCode's model.
+   */
+  readonly subscriptions: Disposable[]
+}
+
+
+// ── Descriptors ─────────────────────────────────────────────────────────
 
 export type OperationDescriptor = {
   /**
@@ -53,38 +101,132 @@ export type ContextMenuDescriptor = {
   }>
 }
 
+
 export type PluginModule = {
-  activate: (host: PluginHostImpl) => void
+  /**
+   * Called once on registration. Plugins push Disposables into
+   * ``context.subscriptions`` so the host can tear them down on deactivation.
+   * Legacy signature ``activate(host)`` is still supported during migration.
+   */
+  activate:
+    | ((host: PluginHostImpl) => void | Promise<void>)
+    | ((host: PluginHostImpl, context: PluginContext) => void | Promise<void>)
+  /**
+   * Optional module-level deactivate hook. Runs AFTER all subscriptions
+   * have been disposed. Use for anything that doesn't fit the Disposable
+   * shape (one-shot flushes, finalizers).
+   */
+  deactivate?: (context: PluginContext) => void | Promise<void>
 }
+
+
+// ── PluginHost ─────────────────────────────────────────────────────────
 
 class PluginHostImpl {
   private operations = new Map<string, OperationDescriptor>()
-  private contextMenus: ContextMenuDescriptor[] = []
-  private registered: string[] = []
+  private contextMenus = new Map<string, ContextMenuDescriptor[]>()
+  private contexts = new Map<string, PluginContext>()
 
   /**
-   * Activate a plugin module — calls `plugin.activate(this)`.
-   *
-   * Idempotent per `name`: Vite HMR re-evaluates the editor entry module,
-   * which can call `register` again with the same plugin. The first call
-   * wins; subsequent calls with a matching name are a no-op so the
-   * underlying `registerOperation` doesn't throw a duplicate-id error.
+   * Activate a plugin module. Creates a PluginContext and calls
+   * `plugin.activate(this, context)`. If the plugin is already registered
+   * under this name, the call is a no-op — the caller should deactivate
+   * first if it wants to re-register.
    */
-  register(plugin: PluginModule, name = '<unknown>'): void {
-    if (this.registered.includes(name)) return
-    plugin.activate(this)
-    this.registered.push(name)
+  register(plugin: PluginModule, name = '<unknown>'): PluginContext {
+    const existing = this.contexts.get(name)
+    if (existing) return existing
+
+    const context: PluginContext = { name, subscriptions: [] }
+    // Pass context as the second arg. Plugins with legacy 1-arg activate()
+    // just ignore it; the positional arg is silently accepted at runtime.
+    const result = (plugin.activate as (h: unknown, c?: unknown) => unknown)(
+      this,
+      context,
+    )
+    // If activate returns a promise, let it resolve in the background.
+    if (result && typeof (result as Promise<unknown>).then === 'function') {
+      ;(result as Promise<unknown>).catch((e) =>
+        console.error(`[plugin-host] activate(${name}) failed:`, e),
+      )
+    }
+    this.contexts.set(name, context)
+    return context
   }
 
-  registerOperation(op: OperationDescriptor): void {
+  /**
+   * Deactivate a plugin by name. Disposes all ``context.subscriptions`` in
+   * LIFO order, then (if defined) calls the plugin module's ``deactivate``
+   * hook with the same context. Safe on unknown names (silent no-op).
+   */
+  async deactivate(name: string, plugin?: PluginModule): Promise<void> {
+    const context = this.contexts.get(name)
+    if (!context) return
+    this.contexts.delete(name)
+
+    // LIFO: last-registered disposes first.
+    while (context.subscriptions.length > 0) {
+      const d = context.subscriptions.pop() as Disposable
+      try {
+        await d.dispose()
+      } catch (e) {
+        console.error(`[plugin-host] dispose failed for ${name}:`, e)
+      }
+    }
+
+    if (plugin?.deactivate) {
+      try {
+        await plugin.deactivate(context)
+      } catch (e) {
+        console.error(`[plugin-host] plugin deactivate() failed for ${name}:`, e)
+      }
+    }
+  }
+
+  /**
+   * Register an operation. Returns a Disposable that removes the operation
+   * from the registry when disposed. If ``context`` is provided, the
+   * Disposable is auto-pushed into ``context.subscriptions``.
+   */
+  registerOperation(
+    op: OperationDescriptor,
+    context?: PluginContext,
+  ): Disposable {
     if (this.operations.has(op.id)) {
       throw new Error(`duplicate operation id: ${op.id}`)
     }
     this.operations.set(op.id, op)
+
+    const d = makeDisposable(() => {
+      if (this.operations.get(op.id) === op) {
+        this.operations.delete(op.id)
+      }
+    })
+    if (context) context.subscriptions.push(d)
+    return d
   }
 
-  registerContextMenu(menu: ContextMenuDescriptor): void {
-    this.contextMenus.push(menu)
+  /**
+   * Register a context-menu contribution. Returns a Disposable. Per-menu
+   * bookkeeping by entityType so dispose only removes this plugin's entry.
+   */
+  registerContextMenu(
+    menu: ContextMenuDescriptor,
+    context?: PluginContext,
+  ): Disposable {
+    const list = this.contextMenus.get(menu.entityType) ?? []
+    list.push(menu)
+    this.contextMenus.set(menu.entityType, list)
+
+    const d = makeDisposable(() => {
+      const current = this.contextMenus.get(menu.entityType)
+      if (!current) return
+      const i = current.indexOf(menu)
+      if (i >= 0) current.splice(i, 1)
+      if (current.length === 0) this.contextMenus.delete(menu.entityType)
+    })
+    if (context) context.subscriptions.push(d)
+    return d
   }
 
   getOperation(id: string): OperationDescriptor | undefined {
@@ -102,14 +244,14 @@ class PluginHostImpl {
    * menu descriptor registered for that entity kind.
    */
   getContextMenuItems(entityType: string): ContextMenuDescriptor['items'] {
-    return this.contextMenus
-      .filter((m) => m.entityType === entityType)
-      .flatMap((m) => m.items)
+    const list = this.contextMenus.get(entityType)
+    if (!list) return []
+    return list.flatMap((m) => m.items)
   }
 
   /** Count of registered plugin modules — used for startup diagnostics. */
   get registeredCount(): number {
-    return this.registered.length
+    return this.contexts.size
   }
 
   /** Count of registered operations — used for startup diagnostics. */
@@ -117,11 +259,14 @@ class PluginHostImpl {
     return this.operations.size
   }
 
-  /** Test-only: clear all registry state. */
+  /** Test-only: clear all registry state with best-effort disposal. */
   _resetForTests(): void {
+    for (const name of Array.from(this.contexts.keys())) {
+      void this.deactivate(name)
+    }
     this.operations.clear()
-    this.contextMenus = []
-    this.registered = []
+    this.contextMenus.clear()
+    this.contexts.clear()
   }
 }
 
