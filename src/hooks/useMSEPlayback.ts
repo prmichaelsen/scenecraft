@@ -1,5 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { openPreviewStream, type PreviewStream } from '@/lib/preview-client'
+
+// Backoff for engine-restart auto-recovery. On WS close (engine hot-reload,
+// crash, deploy) we rebuild the MediaSource instead of leaving it pinned to a
+// dead encoder's init segment — otherwise fragments from the new encoder get
+// silently rejected and the user sees a frozen tab until they hard-reload.
+const RECONNECT_DELAY_MS = 750
 
 // avc1.640028 = H.264 High Profile, Level 4.0 (max 1920×1080 @ ~30fps) —
 // matches what `libx264 preset=faster` emits for 1080p24 content. The
@@ -35,6 +41,10 @@ export function useMSEPlayback(
   const sourceBufferRef = useRef<SourceBuffer | null>(null)
   const objectUrlRef = useRef<string | null>(null)
   const pendingFragments = useRef<ArrayBuffer[]>([])
+
+  // Bumped on preview-stream WS close to tear down + rebuild the MediaSource.
+  // See RECONNECT_DELAY_MS note above.
+  const [sessionKey, setSessionKey] = useState(0)
 
   // Read live currentTime + playing via refs so the session effect reacts to
   // the latest values without resubscribing on every tick or toggle.
@@ -101,8 +111,12 @@ export function useMSEPlayback(
         onFragment: enqueueFragment,
         onError: (err) => console.warn('[useMSEPlayback] stream error', err),
         onClose: () => {
-          console.log('[useMSEPlayback] stream onClose')
+          console.log('[useMSEPlayback] stream onClose — scheduling session rebuild')
           try { if (ms.readyState === 'open') ms.endOfStream() } catch { /* noop */ }
+          // Rebuild after a short delay so the backend has time to finish
+          // restarting. The session effect's cleanup handles teardown; bumping
+          // sessionKey triggers the effect to re-run and re-open everything.
+          setTimeout(() => setSessionKey((k) => k + 1), RECONNECT_DELAY_MS)
         },
       })
       streamRef.current = stream
@@ -139,7 +153,7 @@ export function useMSEPlayback(
         objectUrlRef.current = null
       }
     }
-  }, [projectName])
+  }, [projectName, sessionKey])
 
   // Performance audit: report dropped-frame counters every second during
   // playback + long-task (main-thread block) observer that correlates React
