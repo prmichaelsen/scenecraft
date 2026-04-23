@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "vite preview --host",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "gen:ir": "node src/assets/impulse_responses/generate.mjs"
   },
   "dependencies": {
     "@prmichaelsen/pretty-toasts": "^3.0.6",
