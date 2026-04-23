@@ -23,7 +23,7 @@ import { MCPPanel } from './MCPPanel'
 import { AudioPropertiesPanel } from './AudioPropertiesPanel'
 import { saveWorkspaceView } from '@/lib/workspace-client'
 import { ContextMenuProvider } from '@/contexts/ContextMenuContext'
-import { AudioIsolationsPanel } from '@/plugins/isolate_vocals'
+import { PluginHost } from '@/lib/plugin-host'
 
 // --- Panel wrapper ---
 
@@ -198,29 +198,43 @@ function MCPPanelComponent() {
   return <Panel><MCPPanel onClose={() => {}} /></Panel>
 }
 
-// Plugin-contributed: isolate_vocals. The plugin registers its panel body
-// via PluginHost; this wrapper reads editor context to resolve the current
-// selection and passes it through as props. Only audio_clip is wired for
-// MVP (matches the backend's MVP scope). The panel resolves durationSeconds
-// lazily — the run form tolerates an undefined value.
-function AudioIsolationsPanelComponent() {
-  const data = useEditorData()
-  const { selectedAudioClipId } = useEditorState()
-  const entity = selectedAudioClipId
-    ? {
-        type: 'audio_clip' as const,
-        id: selectedAudioClipId,
-      }
-    : null
-  return (
-    <Panel>
-      <AudioIsolationsPanel
-        entity={entity}
-        projectName={data.projectName}
-        onClose={() => {}}
-      />
-    </Panel>
-  )
+// Generic wrapper for any PluginHost-contributed panel. Looks the panel up
+// by id at render time so when the plugin deactivates (HMR or dynamic
+// unload), the panel body is replaced by a fallback without a stale
+// component reference lingering in the registry. Editor-context props are
+// injected here so plugin panels don't need to import editor internals.
+function makePluginPanelComponent(panelId: string) {
+  return function PluginPanelComponent() {
+    const data = useEditorData()
+    const { selectedAudioClipId } = useEditorState()
+    const panel = PluginHost.getPanel(panelId)
+
+    if (!panel) {
+      return (
+        <div className="h-full flex items-center justify-center text-xs text-gray-500 bg-[#111827]">
+          Plugin panel <code>{panelId}</code> not registered.
+        </div>
+      )
+    }
+
+    const entity = selectedAudioClipId
+      ? { type: 'audio_clip' as const, id: selectedAudioClipId }
+      : null
+    const PluginPanel = panel.Component as React.ComponentType<{
+      entity: typeof entity
+      projectName: string
+      onClose?: () => void
+    }>
+    return (
+      <Panel>
+        <PluginPanel
+          entity={entity}
+          projectName={data.projectName}
+          onClose={() => {}}
+        />
+      </Panel>
+    )
+  }
 }
 
 // Auto-focus the Properties tab when anything becomes selected (kf / tr / track / audio).
@@ -265,7 +279,21 @@ const panels: PanelRegistry = {
   sections:    { component: SectionsPanelComponent, title: 'Sections' },
   chat:        { component: ChatPanelComponent, title: 'Chat' },
   mcp:         { component: MCPPanelComponent, title: 'MCP' },
-  audio_isolations: { component: AudioIsolationsPanelComponent, title: 'Audio Isolations' },
+}
+
+// Merge plugin-contributed panels on top of the built-in registry. Called
+// once per render so HMR'd plugin changes flow through without a reload.
+function buildPanelRegistry(): PanelRegistry {
+  const merged: PanelRegistry = { ...panels }
+  for (const p of PluginHost.listPanels()) {
+    if (!merged[p.id]) {
+      merged[p.id] = {
+        component: makePluginPanelComponent(p.id),
+        title: p.title,
+      }
+    }
+  }
+  return merged
 }
 
 // --- Default layout ---
@@ -384,7 +412,7 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
       <PanelLayout
         ref={panelLayoutRef}
         key={JSON.stringify(initialLayout)}
-        panels={panels}
+        panels={buildPanelRegistry()}
         defaultLayout={initialLayout}
         onLayoutChange={handleLayoutChange}
       />

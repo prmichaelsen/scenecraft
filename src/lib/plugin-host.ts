@@ -54,6 +54,14 @@ export type PluginContext = {
   readonly subscriptions: Disposable[]
 }
 
+// Internal registry entry — carries the plugin module reference alongside
+// its context so `deactivate(name)` can invoke the module's optional
+// `deactivate(context)` hook without the caller re-supplying the module.
+type RegistryEntry = {
+  context: PluginContext
+  plugin: PluginModule
+}
+
 
 // ── Descriptors ─────────────────────────────────────────────────────────
 
@@ -82,6 +90,28 @@ export type OperationDescriptor = {
    * invocations can focus the plugin's primary UX surface.
    */
   panel?: ComponentType<unknown>
+}
+
+/**
+ * Panel contribution — plugins register a panel that the editor's dockview
+ * layout mounts as one of its tabs. The editor provides an optional wrapper
+ * with editor-context-aware props; the plugin's ``Component`` receives those
+ * props and renders whatever UX it owns.
+ *
+ * Separate from ``OperationDescriptor.panel`` (which ties a panel reveal to
+ * an operation). A plugin can register a panel without registering an
+ * operation, e.g. for a log viewer or a read-only inspector.
+ */
+export type PanelContribution = {
+  /**
+   * Panel id. Convention: snake_case, matches the plugin layout of
+   * ``panel:{id}`` in context-menu ``reveals`` hints (e.g. ``audio_isolations``).
+   */
+  id: string
+  /** Human-readable tab title. */
+  title: string
+  /** Panel body. Props are editor-supplied at mount time. */
+  Component: ComponentType<unknown>
 }
 
 export type ContextMenuDescriptor = {
@@ -125,7 +155,8 @@ export type PluginModule = {
 class PluginHostImpl {
   private operations = new Map<string, OperationDescriptor>()
   private contextMenus = new Map<string, ContextMenuDescriptor[]>()
-  private contexts = new Map<string, PluginContext>()
+  private entries = new Map<string, RegistryEntry>()
+  private panels = new Map<string, PanelContribution>()
 
   /**
    * Activate a plugin module. Creates a PluginContext and calls
@@ -134,8 +165,8 @@ class PluginHostImpl {
    * first if it wants to re-register.
    */
   register(plugin: PluginModule, name = '<unknown>'): PluginContext {
-    const existing = this.contexts.get(name)
-    if (existing) return existing
+    const existing = this.entries.get(name)
+    if (existing) return existing.context
 
     const context: PluginContext = { name, subscriptions: [] }
     // Pass context as the second arg. Plugins with legacy 1-arg activate()
@@ -144,27 +175,28 @@ class PluginHostImpl {
       this,
       context,
     )
-    // If activate returns a promise, let it resolve in the background.
     if (result && typeof (result as Promise<unknown>).then === 'function') {
       ;(result as Promise<unknown>).catch((e) =>
         console.error(`[plugin-host] activate(${name}) failed:`, e),
       )
     }
-    this.contexts.set(name, context)
+    this.entries.set(name, { context, plugin })
     return context
   }
 
   /**
    * Deactivate a plugin by name. Disposes all ``context.subscriptions`` in
    * LIFO order, then (if defined) calls the plugin module's ``deactivate``
-   * hook with the same context. Safe on unknown names (silent no-op).
+   * hook with the same context. The plugin reference is stored at register
+   * time so callers don't need to re-supply it. Safe on unknown names
+   * (silent no-op).
    */
-  async deactivate(name: string, plugin?: PluginModule): Promise<void> {
-    const context = this.contexts.get(name)
-    if (!context) return
-    this.contexts.delete(name)
+  async deactivate(name: string): Promise<void> {
+    const entry = this.entries.get(name)
+    if (!entry) return
+    this.entries.delete(name)
+    const { context, plugin } = entry
 
-    // LIFO: last-registered disposes first.
     while (context.subscriptions.length > 0) {
       const d = context.subscriptions.pop() as Disposable
       try {
@@ -174,7 +206,7 @@ class PluginHostImpl {
       }
     }
 
-    if (plugin?.deactivate) {
+    if (plugin.deactivate) {
       try {
         await plugin.deactivate(context)
       } catch (e) {
@@ -229,6 +261,39 @@ class PluginHostImpl {
     return d
   }
 
+  /**
+   * Register a panel contribution. Returns a Disposable that removes the
+   * panel when disposed. Auto-pushes into ``context.subscriptions`` when
+   * provided.
+   */
+  registerPanel(
+    panel: PanelContribution,
+    context?: PluginContext,
+  ): Disposable {
+    if (this.panels.has(panel.id)) {
+      throw new Error(`duplicate panel id: ${panel.id}`)
+    }
+    this.panels.set(panel.id, panel)
+
+    const d = makeDisposable(() => {
+      if (this.panels.get(panel.id) === panel) {
+        this.panels.delete(panel.id)
+      }
+    })
+    if (context) context.subscriptions.push(d)
+    return d
+  }
+
+  /** List all panel contributions currently registered. */
+  listPanels(): PanelContribution[] {
+    return Array.from(this.panels.values())
+  }
+
+  /** Look up a single panel contribution by id. */
+  getPanel(id: string): PanelContribution | undefined {
+    return this.panels.get(id)
+  }
+
   getOperation(id: string): OperationDescriptor | undefined {
     return this.operations.get(id)
   }
@@ -251,7 +316,7 @@ class PluginHostImpl {
 
   /** Count of registered plugin modules — used for startup diagnostics. */
   get registeredCount(): number {
-    return this.contexts.size
+    return this.entries.size
   }
 
   /** Count of registered operations — used for startup diagnostics. */
@@ -261,12 +326,13 @@ class PluginHostImpl {
 
   /** Test-only: clear all registry state with best-effort disposal. */
   _resetForTests(): void {
-    for (const name of Array.from(this.contexts.keys())) {
+    for (const name of Array.from(this.entries.keys())) {
       void this.deactivate(name)
     }
     this.operations.clear()
     this.contextMenus.clear()
-    this.contexts.clear()
+    this.entries.clear()
+    this.panels.clear()
   }
 }
 

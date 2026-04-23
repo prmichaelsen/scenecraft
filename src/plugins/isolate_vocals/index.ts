@@ -26,13 +26,24 @@ import {
 } from './isolate-vocals-client'
 
 export const activate: PluginModule['activate'] = (host, context) => {
+  // Panel contribution — the editor iterates ``PluginHost.listPanels()`` at
+  // mount time and adds our panel to its dockview registry. Disposal on
+  // plugin deactivate removes the panel from the list automatically.
+  host.registerPanel(
+    {
+      id: 'audio_isolations',
+      title: 'Audio Isolations',
+      Component: AudioIsolationsPanel as ComponentType<unknown>,
+    },
+    context,
+  )
+
   host.registerOperation(
     {
       id: 'isolate_vocals.run',
       label: 'Isolate vocals',
       entityTypes: ['audio_clip', 'transition'],
-      // Plugin-host descriptor types panels as ComponentType<unknown> — plugins
-      // are free to narrow their own prop types internally.
+      // Kept for the operation↔panel linkage (context-menu `reveals` hint).
       panel: AudioIsolationsPanel as ComponentType<unknown>,
     },
     context,

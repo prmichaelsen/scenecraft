@@ -69,7 +69,7 @@ describe('PluginHost.deactivate', () => {
       },
     }
     PluginHost.register(plugin, 'with-deactivate')
-    await PluginHost.deactivate('with-deactivate', plugin)
+    await PluginHost.deactivate('with-deactivate')
     expect(order).toEqual(['subscription', 'module-deactivate'])
   })
 
@@ -89,7 +89,7 @@ describe('PluginHost.deactivate', () => {
     PluginHost.register(plugin, 'reactivate')
     expect(PluginHost.getOperation('reactivate.op')).toBeDefined()
 
-    await PluginHost.deactivate('reactivate', plugin)
+    await PluginHost.deactivate('reactivate')
     expect(PluginHost.getOperation('reactivate.op')).toBeUndefined()
 
     // Re-register cleanly.
@@ -117,6 +117,60 @@ describe('PluginHost.registerOperation disposable', () => {
       ctx,
     )
     expect(ctx.subscriptions).toHaveLength(1)
+  })
+})
+
+describe('PluginHost.registerPanel', () => {
+  it('round-trips panel registration and dispose', async () => {
+    const Component = () => null as React.ReactNode
+    const d = PluginHost.registerPanel({
+      id: 'audio_isolations',
+      title: 'Audio Isolations',
+      Component: Component as unknown as React.ComponentType<unknown>,
+    })
+    expect(PluginHost.getPanel('audio_isolations')?.title).toBe('Audio Isolations')
+    expect(PluginHost.listPanels().map((p) => p.id)).toEqual(['audio_isolations'])
+
+    await d.dispose()
+    expect(PluginHost.getPanel('audio_isolations')).toBeUndefined()
+    expect(PluginHost.listPanels()).toEqual([])
+  })
+
+  it('throws on duplicate panel id', () => {
+    const Component = () => null as React.ReactNode
+    PluginHost.registerPanel({
+      id: 'dup_panel',
+      title: 'Dup',
+      Component: Component as unknown as React.ComponentType<unknown>,
+    })
+    expect(() =>
+      PluginHost.registerPanel({
+        id: 'dup_panel',
+        title: 'Dup 2',
+        Component: Component as unknown as React.ComponentType<unknown>,
+      }),
+    ).toThrow(/duplicate panel id/)
+  })
+
+  it('disappears from listPanels() when the plugin deactivates', async () => {
+    const Component = () => null as React.ReactNode
+    const plugin: PluginModule = {
+      activate: (host, context) => {
+        host.registerPanel(
+          {
+            id: 'plugin_panel',
+            title: 'Plugin Panel',
+            Component: Component as unknown as React.ComponentType<unknown>,
+          },
+          context,
+        )
+      },
+    }
+    PluginHost.register(plugin, 'panel_plugin')
+    expect(PluginHost.listPanels().map((p) => p.id)).toEqual(['plugin_panel'])
+
+    await PluginHost.deactivate('panel_plugin')
+    expect(PluginHost.listPanels()).toEqual([])
   })
 })
 

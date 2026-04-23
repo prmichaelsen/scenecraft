@@ -58,7 +58,7 @@ PluginHost.register(isolateVocals, 'isolate_vocals')
 // deactivate() whose timing the host controls.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    void PluginHost.deactivate('isolate_vocals', isolateVocals)
+    void PluginHost.deactivate('isolate_vocals')
   })
 }
 
