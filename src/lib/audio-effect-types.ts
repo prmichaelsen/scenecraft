@@ -21,6 +21,8 @@ import {
   INSTRUMENT_PRESETS,
   type FrequencyLabelPreset,
 } from './frequency-labels'
+import { buildPan, buildStereoWidth } from './audio-effects/spatial'
+import { buildReverbSend, buildDelaySend, buildEchoSend } from './audio-effects/send'
 
 export type { FrequencyLabelPreset }
 
@@ -220,7 +222,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
     params: [
       { name: 'pan', label: 'Pan', animatable: true, range: { min: -1, max: 1 }, scale: 'linear', default: 0 },
     ],
-    build: stubBuild,
+    build: (ctx, staticParams) => buildPan(ctx, staticParams),
   },
 
   stereo_width: {
@@ -230,11 +232,12 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
     params: [
       { name: 'width', label: 'Width', animatable: true, range: { min: 0, max: 2 }, scale: 'linear', default: 1 },
     ],
-    build: stubBuild,
+    build: (ctx, staticParams) => buildStereoWidth(ctx, staticParams),
   },
 
   // ----- Send (per-track send effects) ---------------------------------
-  // `bus_id` is non-animatable (it's a selector; spec R9).
+  // `bus_id` is non-animatable (it's a selector; spec R9). The animatable
+  // tap-gain param is `wet` (0..1) — aligned with task-50's builder contract.
 
   reverb_send: {
     type: 'reverb_send',
@@ -242,9 +245,9 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
     category: 'send',
     params: [
       { name: 'bus_id', label: 'Bus', animatable: false, range: { min: 0, max: 0 }, scale: 'linear', default: 0 },
-      { name: 'level', label: 'Level', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0 },
+      { name: 'wet', label: 'Wet', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0 },
     ],
-    build: stubBuild,
+    build: (ctx, staticParams) => buildReverbSend(ctx, staticParams),
   },
 
   delay_send: {
@@ -253,9 +256,9 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
     category: 'send',
     params: [
       { name: 'bus_id', label: 'Bus', animatable: false, range: { min: 0, max: 0 }, scale: 'linear', default: 0 },
-      { name: 'level', label: 'Level', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0 },
+      { name: 'wet', label: 'Wet', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0 },
     ],
-    build: stubBuild,
+    build: (ctx, staticParams) => buildDelaySend(ctx, staticParams),
   },
 
   echo_send: {
@@ -264,9 +267,9 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
     category: 'send',
     params: [
       { name: 'bus_id', label: 'Bus', animatable: false, range: { min: 0, max: 0 }, scale: 'linear', default: 0 },
-      { name: 'level', label: 'Level', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0 },
+      { name: 'wet', label: 'Wet', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0 },
     ],
-    build: stubBuild,
+    build: (ctx, staticParams) => buildEchoSend(ctx, staticParams),
   },
 
   // ----- Modulation ----------------------------------------------------

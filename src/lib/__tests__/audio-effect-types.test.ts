@@ -112,13 +112,27 @@ describe('EFFECT_TYPES registry', () => {
   })
 
   it('build() returns an object conforming to the EffectNode shape', () => {
-    // happy-dom lacks a native AudioContext; provide a tiny stub that matches
-    // what the stub factory uses (just createGain).
-    const fakeGainNode = {
+    // happy-dom lacks a native AudioContext; provide a mock rich enough for
+    // the factories we've implemented so far (stubs only use createGain;
+    // task-50 spatial+send also exercise splitter/merger/panner). The mock
+    // is shared with audio-effects-spatial-send.test.ts — keep in sync.
+    const makeParam = () => ({
+      value: 0,
+      setValueAtTime: () => {},
+      linearRampToValueAtTime: () => {},
+    })
+    const makeNode = () => ({
+      connect: () => {},
       disconnect: () => {},
-    } as unknown as AudioNode
+      gain: makeParam(),
+      pan: makeParam(),
+    })
     const fakeCtx = {
-      createGain: () => fakeGainNode,
+      currentTime: 0,
+      createGain: () => makeNode(),
+      createStereoPanner: () => makeNode(),
+      createChannelSplitter: () => makeNode(),
+      createChannelMerger: () => makeNode(),
     } as unknown as AudioContext
 
     for (const spec of Object.values(EFFECT_TYPES)) {
