@@ -1158,11 +1158,13 @@ milestones:
         notes: "Landed alongside task-127 in the same plugin_api.py edit. call_service() + ServiceRegistry + ServiceResponse/Error/ConfigError/TimeoutError exports; BYO mode direct-call with httpx (urllib fallback); broker mode raises ServiceConfigError with forward-looking message. Musicful registered; Veo/Replicate/etc. slots ready."
       - id: task-129
         name: Musicful client + backend plugin (generate, polling worker, 429 retry, partial success)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-23T00:30:00Z
+        completed_date: 2026-04-23T01:00:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-129-musicful-client-and-worker.md
         estimated_hours: 6
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "12/12 integration tests pass with mocked Musicful server. Happy path, 429 retry/exhaust, partial success, context-aware candidate routing (audio_candidates + tr_candidates), payload field-filter, missing API key admin error, input validation. Auth-gate tests (R54a-f) deferred per skip-auth directive. Plugin module: __init__/client/generate_music + test_generate_music."
       - id: task-130
         name: Backend REST + WS (run/list/retry/credits + JobManager events)
         status: not_started
