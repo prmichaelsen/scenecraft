@@ -21,6 +21,16 @@ import {
   INSTRUMENT_PRESETS,
   type FrequencyLabelPreset,
 } from './frequency-labels'
+import {
+  buildCompressor,
+  buildGate,
+  buildLimiter,
+} from './audio-effects/dynamics'
+import {
+  buildEQBand,
+  buildHighpass,
+  buildLowpass,
+} from './audio-effects/eq'
 
 export type { FrequencyLabelPreset }
 
@@ -139,7 +149,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'release', label: 'Release', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.25 },
       { name: 'knee', label: 'Knee', animatable: true, range: { min: 0, max: 40 }, scale: 'linear', default: 30 },
     ],
-    build: stubBuild,
+    build: buildCompressor,
   },
 
   gate: {
@@ -152,7 +162,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'release', label: 'Release', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.1 },
       { name: 'hold', label: 'Hold', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.05 },
     ],
-    build: stubBuild,
+    build: buildGate,
   },
 
   limiter: {
@@ -163,7 +173,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'ceiling', label: 'Ceiling', animatable: true, range: { min: -20, max: 0 }, scale: 'db', default: -0.3 },
       { name: 'release', label: 'Release', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.05 },
     ],
-    build: stubBuild,
+    build: buildLimiter,
   },
 
   // ----- EQ ------------------------------------------------------------
@@ -186,7 +196,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'gain', label: 'Gain', animatable: true, range: { min: -24, max: 24 }, scale: 'db', default: 0 },
       { name: 'q', label: 'Q', animatable: true, range: { min: 0.1, max: 18 }, scale: 'linear', default: 1 },
     ],
-    build: stubBuild,
+    build: buildEQBand,
   },
 
   highpass: {
@@ -197,7 +207,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'cutoff', label: 'Cutoff', animatable: true, range: { min: 20, max: 20000 }, scale: 'hz', default: 80 },
       { name: 'q', label: 'Q', animatable: true, range: { min: 0.1, max: 18 }, scale: 'linear', default: 0.707 },
     ],
-    build: stubBuild,
+    build: buildHighpass,
   },
 
   lowpass: {
@@ -208,7 +218,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'cutoff', label: 'Cutoff', animatable: true, range: { min: 20, max: 20000 }, scale: 'hz', default: 8000 },
       { name: 'q', label: 'Q', animatable: true, range: { min: 0.1, max: 18 }, scale: 'linear', default: 0.707 },
     ],
-    build: stubBuild,
+    build: buildLowpass,
   },
 
   // ----- Spatial -------------------------------------------------------

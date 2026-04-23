@@ -113,12 +113,34 @@ describe('EFFECT_TYPES registry', () => {
 
   it('build() returns an object conforming to the EffectNode shape', () => {
     // happy-dom lacks a native AudioContext; provide a tiny stub that matches
-    // what the stub factory uses (just createGain).
+    // what the stub factory + the task-49 real dynamics/EQ builders use.
     const fakeGainNode = {
       disconnect: () => {},
     } as unknown as AudioNode
+    const makeFakeParam = () => ({
+      value: 0,
+      setValueAtTime: () => {},
+    })
+    const fakeDynamicsNode = () => ({
+      threshold: makeFakeParam(),
+      ratio: makeFakeParam(),
+      attack: makeFakeParam(),
+      release: makeFakeParam(),
+      knee: makeFakeParam(),
+      disconnect: () => {},
+    })
+    const fakeBiquadNode = () => ({
+      type: 'peaking' as BiquadFilterType,
+      frequency: makeFakeParam(),
+      gain: makeFakeParam(),
+      Q: makeFakeParam(),
+      disconnect: () => {},
+    })
     const fakeCtx = {
+      currentTime: 0,
       createGain: () => fakeGainNode,
+      createDynamicsCompressor: fakeDynamicsNode,
+      createBiquadFilter: fakeBiquadNode,
     } as unknown as AudioContext
 
     for (const spec of Object.values(EFFECT_TYPES)) {
@@ -130,10 +152,12 @@ describe('EFFECT_TYPES registry', () => {
       expect(typeof node.scheduleCurve).toBe('function')
       expect(typeof node.dispose).toBe('function')
 
-      // Calling the methods should not throw, even on stubs.
-      expect(() => node.setParam('x', 0)).not.toThrow()
-      expect(() => node.scheduleCurve('x', [], 0, 1)).not.toThrow()
-      expect(() => node.dispose()).not.toThrow()
+      // Calling the methods with a real param from the spec should not throw.
+      // (Task-49: real builders validate param names; stubs ignore them.)
+      const firstParam = spec.params[0]?.name ?? 'x'
+      expect(() => node.setParam(firstParam, 0), `${spec.type}.setParam`).not.toThrow()
+      expect(() => node.scheduleCurve(firstParam, [], 0, 1), `${spec.type}.scheduleCurve`).not.toThrow()
+      expect(() => node.dispose(), `${spec.type}.dispose`).not.toThrow()
     }
   })
 })
