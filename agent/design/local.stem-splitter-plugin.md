@@ -28,7 +28,7 @@ When this lands, `isolate_vocals` gets marked deprecated. Its schema rows stay v
 - **Source separation is CPU-prohibitive.** The 3-model pipeline takes ~2h for 5 min of audio on a laptop. That's a background job, not a user-facing operation.
 - **Beatlab built the solution but in the wrong repo.** The GPU + Vast.ai orchestration lives in a separate tool. Scenecraft users can't access it from the editor. Copy-pasting outputs through a filesystem is not a UX.
 - **Running two parallel plugins would fragment the UI.** If `isolate_vocals` stays and a new `stem_splitter` lands, users have two operations that do adjacent things on the same surface. Unifying is cleaner than coexistence.
-- **Undo semantics for paid operations are wrong.** M11 wraps the entire run in `undo_begin`; Ctrl+Z reverts the audio_isolations + isolation_stems + pool_segments rows (files stay on disk). For DFN3 (CPU, free, fast) that's reasonable — rerunning is cheap. For stem_splitter (GPU, ~$0.50 per invocation, minutes to wait), a stray Ctrl+Z that erases stems is a foot-gun.
+- **M11's undo treatment is wrong in general (not just for stem_splitter).** M11 added `audio_isolations` + `isolation_stems` to `_undo_tracked_tables` by reflex, violating the scenecraft convention that generation-output tables (`pool_segments`, `tr_candidates`, etc.) stay outside undo. Ctrl+Z on a run today deletes the metadata rows but leaves the WAV files on disk → orphans. Bug-fix task filed in `agent/tasks/unassigned/task-fix-audio-isolations-undo-tracking.md`; stem_splitter depends on it landing first.
 
 ---
 
@@ -39,9 +39,9 @@ When this lands, `isolate_vocals` gets marked deprecated. Its schema rows stay v
 1. **Port beatlab's pipeline verbatim.** `beatlab/stems.py` (the 3-model orchestration + embedded remote-driver script) and `beatlab/render/cloud.py` (`VastAIManager`) copy into `scenecraft-engine/src/scenecraft/plugins/stem_splitter/`. Internal API shape stays the same; the plugin layer adapts the outputs into the M11 schema.
 2. **Reuse the M11 schema.** One `audio_isolations` row per run; 11 `isolation_stems` rows per completed run. `stem_type_enum` widens from `[vocal, background]` to the 11-stem vocabulary. No new tables.
 3. **Reuse the M11 panel.** `AudioIsolationsPanel` already shows runs + stems + drag handles; the only change is grouping the 11 stems visually (vocals / drums / melodic+other).
-4. **New: undo-exempt write primitive.** Add a `persistent_write` helper in `db.py` that temporarily disables `undo_state.active` around a function's writes, so stem_splitter inserts do not enter the undo log. Single Ctrl+Z skips past them.
-5. **New: source chunking.** When a source exceeds a threshold (initial value 10 min), split into overlapping chunks (e.g., 30 s overlap), run the 3-model pipeline per chunk, stitch per-stem outputs back with equal-power crossfades at chunk boundaries. Result is one contiguous stem per stem_type spanning the full source.
-6. **New: GPU lifecycle.** `keep_alive` defaults ON; a background idle-timer destroys the instance after N minutes (default 20). Explicit `POST /plugins/stem_splitter/release` for manual teardown.
+4. **Undo convention alignment.** Generation outputs live in non-undo-tracked tables — the scenecraft convention for `pool_segments`, `tr_candidates`, `audio_candidates`, etc. `audio_isolations` + `isolation_stems` belong in the same group but were incorrectly added to `_undo_tracked_tables` by M11 task-100b; that's a standalone bug fix (`agent/tasks/unassigned/task-fix-audio-isolations-undo-tracking.md`) that stem_splitter depends on. Once fixed, stem_splitter's finalize writes simply don't enter the undo log — no special primitive, no bypass mechanism. Ctrl+Z has nothing to undo because runs aren't editorial actions; they're artifacts.
+5. **New: source chunking.** When a source exceeds a threshold (initial value 10 min), split into overlapping chunks with a 30 s default crossfade (user-adjustable in an Advanced disclosure, bounded [5, 60] s), run the 3-model pipeline per chunk, stitch per-stem outputs back with equal-power crossfades at chunk boundaries. Chunk-boundary seek: 30 s window centered on the nominal split point, picks the lowest-activity point within that range. Result is one contiguous stem per stem_type spanning the full source.
+6. **New: host-level GPU lifecycle.** `keep_alive` defaults ON with a user-facing toggle in the Run form. A background idle-timer destroys the instance after 1 hour of no activity. Release endpoint is **host-level** (`POST /api/gpu/release`) not plugin-scoped — future plugins that share GPU provisioning won't each bring their own release path. Settings panel exposes a generic "Release GPU" CTA that lists active instances; the Run form's info popover links to it (opens Settings + focuses the anchor).
 
 ### Architecture
 
@@ -93,8 +93,9 @@ When this lands, `isolate_vocals` gets marked deprecated. Its schema rows stay v
 | Plugin name (manifest + Python module) | `stem_splitter` (snake) |
 | Operation id (internal PluginHost registry) | `stem_splitter.run` (dot-separated) |
 | Chat tool name (Claude API surface) | `stem_splitter__run` (`__` separator; dots forbidden by tool-name regex) |
-| REST path | `/api/projects/:name/plugins/stem_splitter/run` |
-| Release path | `/api/projects/:name/plugins/stem_splitter/release` |
+| REST path (run) | `/api/projects/:name/plugins/stem_splitter/run` |
+| REST path (cancel) | `/api/projects/:name/plugins/stem_splitter/cancel` |
+| REST path (release GPU) | `/api/gpu/release` (host-level, not plugin-scoped) |
 | Panel id (PluginHost.registerPanel) | reuses `audio_isolations` (same UX surface) |
 
 ### Stem Vocabulary
@@ -150,23 +151,13 @@ scenecraft/src/
 
 ### Schema Additions
 
-Only one change to `db.py` — a new helper, **no new tables**:
+**None.** The fix lives in the separate bug-fix task (`task-fix-audio-isolations-undo-tracking`): remove `audio_isolations` from `_undo_tracked_tables` and drop the composite-PK `isolation_stems` undo triggers. After that fix:
 
-```python
-@contextmanager
-def persistent_write(project_dir: Path):
-    """Block any write executed inside this contextmanager from entering
-    the undo log. Used by plugins whose operations produce irreversible
-    real-world side effects (GPU spend, external API calls) that the user
-    must not inadvertently undo.
+- `pool_segments` — not tracked (pre-existing)
+- `audio_isolations` — not tracked (after the fix)
+- `isolation_stems` — not tracked (after the fix)
 
-    Implementation: sets `undo_state.active = 0` on entry, restores prior
-    value on exit. Works because every undo trigger is gated on
-    `(SELECT value FROM undo_state WHERE key='active') = 1`.
-    """
-```
-
-stem_splitter wraps its finalization writes (pool_segments, audio_isolations, isolation_stems) inside `with persistent_write(project_dir): ...`.
+All three of stem_splitter's finalize write targets sit outside the undo log by virtue of table choice. No contextmanager, no bypass primitive, no `undo_begin` wrapping. The plugin just inserts and the rows don't appear in any undo_group. Ctrl+Z has nothing to undo because nothing editorial happened.
 
 ### Backend Handler Sketch
 
@@ -232,30 +223,31 @@ def run(entity_type: str, entity_id: str, context: dict) -> dict:
             final_stems = stitch_chunks(chunk_stems, overlap_seconds=30)
             plugin_api.job_manager.update_progress(job_id, 95, "stitching complete")
 
-            # 5. PERSISTENT WRITE — the paid-work protection
+            # 5. Finalize — writes are outside the undo log by virtue of
+            # table choice (pool_segments, audio_isolations, isolation_stems
+            # are all non-undo-tracked after the bug-fix task).
             now_iso = _now_iso()
-            with persistent_write(project_dir):
-                stems_out = []
-                for stem_type, local_wav in final_stems.items():
-                    seg_id = uuid.uuid4().hex
-                    final_path = project_dir / "pool" / "segments" / f"{seg_id}.wav"
-                    shutil.move(str(local_wav), str(final_path))
-                    _insert_pool_segment(
-                        project_dir, seg_id=seg_id,
-                        pool_path=f"pool/segments/{seg_id}.wav",
-                        duration=_wav_duration(final_path),
-                        byte_size=final_path.stat().st_size,
-                        created_by="stem_splitter", created_at=now_iso,
-                        label=f"stem_splitter · {stem_type}",
-                        generation_params={...},
-                    )
-                    plugin_api.add_isolation_stem(project_dir, isolation_id, seg_id, stem_type)
-                    stems_out.append({
-                        "stem_type": stem_type,
-                        "pool_segment_id": seg_id,
-                        "pool_path": f"pool/segments/{seg_id}.wav",
-                    })
-                plugin_api.update_audio_isolation_status(project_dir, isolation_id, "completed")
+            stems_out = []
+            for stem_type, local_wav in final_stems.items():
+                seg_id = uuid.uuid4().hex
+                final_path = project_dir / "pool" / "segments" / f"{seg_id}.wav"
+                shutil.move(str(local_wav), str(final_path))
+                _insert_pool_segment(
+                    project_dir, seg_id=seg_id,
+                    pool_path=f"pool/segments/{seg_id}.wav",
+                    duration=_wav_duration(final_path),
+                    byte_size=final_path.stat().st_size,
+                    created_by="stem_splitter", created_at=now_iso,
+                    label=f"stem_splitter · {stem_type}",
+                    generation_params={...},
+                )
+                plugin_api.add_isolation_stem(project_dir, isolation_id, seg_id, stem_type)
+                stems_out.append({
+                    "stem_type": stem_type,
+                    "pool_segment_id": seg_id,
+                    "pool_path": f"pool/segments/{seg_id}.wav",
+                })
+            plugin_api.update_audio_isolation_status(project_dir, isolation_id, "completed")
 
             plugin_api.job_manager.complete_job(job_id, {
                 "isolation_id": isolation_id, "stems": stems_out,
@@ -330,15 +322,11 @@ STEM_SPLITTER_TOOL = {
 
 Destructive-pattern match is already broad enough (`stem_` matches any future stem-* tool via the same `_DESTRUCTIVE_TOOL_PATTERNS` mechanism).
 
-### Deprecation of `isolate_vocals`
+### Removal of `isolate_vocals`
 
-On stem_splitter launch:
+On stem_splitter launch, `isolate_vocals` is removed wholesale — no plugin module, no chat tool, no UI surface, no deprecation affordance. Legacy `audio_isolations` rows with `model='deepfilternet3'` continue to render in the panel because their stems already live in `pool_segments` (model-agnostic data); users see their 2 legacy stems and never know a plugin transition happened.
 
-1. Add `deprecated: true` to `plugins/isolate_vocals/plugin.yaml`.
-2. Chat tool `isolate_vocals__run` stays registered but emits a `deprecation_warning` in its tool description.
-3. UI: `AudioIsolationsPanel`'s Run form shows a **"Use Stem Splitter instead"** link when an `isolate_vocals`-era run is selected.
-4. Legacy `audio_isolations` rows with `model='deepfilternet3'` continue to render correctly (their stem_types stay `vocal`/`background`).
-5. Two milestones later, consider removing the plugin entirely.
+No "Use Stem Splitter instead" nudge, no badge, no panel banner — the user never cared which plugin ran, they cared about stems on the timeline. That story is unchanged.
 
 ---
 
@@ -376,14 +364,14 @@ Proofed inline against the user in the session preceding this doc. Rows are labe
 | E8 | source-length-unrestricted | audio_clip of any duration (1s, 30min, 3hr) | kickoff | `no-length-based-errors`, `short-sources-skip-chunking`, `long-sources-use-B11-path` |
 | E9 | source-no-audio-stream | video entity with silent/no audio track | kickoff | `sync-error-no-audio`, `no-rsync-upload` |
 | E10 | plugin-deactivate-mid-run | HMR/deactivate fires, run in progress | `PluginHost.deactivate` | `run-survives-deactivate`, `disposables-run-LIFO`, `does-NOT-cancel-job` (negative) |
-| E11 | undo-does-NOT-revert-run | 1 completed run | Ctrl+Z once | `undo-skips-stem_splitter-group`, `11-pool_segments-remain`, `11-isolation_stems-remain`, `audio_isolations-remains`, `prior-undoable-action-reverts-instead` (negative on the run) |
+| E11 | runs-not-in-undo-log | 1 completed run | inspect undo_log | `no-undo_log-entries-for-pool_segments-inserts`, `no-undo_log-entries-for-audio_isolations-insert`, `no-undo_log-entries-for-isolation_stems-inserts`, `Ctrl+Z-reverts-prior-editorial-action-if-any` |
 | E12 | re-run-no-dedup | prior completed run for same clip | kickoff again | `new-run-row`, `stems-regenerated-not-reused` |
 | E13 | does-not-write-audio_candidates | any run | completion | `audio_candidates-table-unchanged`, `audio_clips.selected-untouched` |
 | E14 | does-not-auto-fallback-to-cpu | remote fails | | `no-silent-local-execution`, `status-failed`, `user-must-opt-in-for-local-if-exposed` |
 | E15 | no-warm-without-keep-alive | kickoff with `keep_alive=false` | completion | `destroy_instance-called`, `no-instance-left-running` |
 | E16 | vast-rate-limit-429 | throttled REST | internal poll | `retry-with-backoff`, `uses-ssh-info-cache`, `no-unbounded-poll` |
 | E17 | provision-timeout | create-instance hangs | past threshold | `fail-with-provision-timeout`, `partial-instance-destroyed` |
-| E18 | does-not-call-undo_begin | any run | completion | `no-new-undo_groups-row-for-run-id` (negative), `stem-writes-not-present-in-undo_log` (negative) |
+| E18 | cancel-stops-run-and-marks-status | run in progress | POST `/plugins/stem_splitter/cancel` | `remote-driver-receives-SIGTERM`, `audio_isolations-status-cancelled`, `no-stems-written-to-pool_segments`, `job_cancelled-WS-event-fired`, `gpu-instance-stays-warm-per-keep_alive`, `no-spend-refund` (negative) |
 
 ---
 
@@ -400,12 +388,12 @@ Proofed inline against the user in the session preceding this doc. Rows are labe
 
 ## Trade-offs
 
-- **Chunking introduces seam artifacts.** Even with equal-power crossfade, a transient on a chunk boundary can show up as a short phase anomaly on per-drum stems. Mitigation: prefer chunk boundaries at nearest silence ≤ 1s away; document the limitation; expose an override in the run form for users who want explicit boundaries.
-- **`persistent_write` weakens the "everything is undoable" invariant.** The escape hatch is explicit and plugin-owned, but it means a reader can't assume every row in a project can be rolled back. Partial mitigation: `audio_isolations.generation_params` records `undo_exempt: true` so the fact is visible.
-- **GPU cost leakage.** `keep_alive` default-ON is convenient for back-to-back runs but costs $1/hr idle. Mitigation: 20 min idle timer + explicit release endpoint + UI toggle.
+- **Chunking introduces seam artifacts.** Even with equal-power crossfade, a transient on a chunk boundary can show up as a short phase anomaly on per-drum stems. Mitigation: 30 s low-activity search window around the split point picks the least-bad boundary; user-adjustable overlap duration (Advanced) gives power users a knob.
+- **GPU cost leakage.** `keep_alive` default-ON is convenient for back-to-back runs but costs $1/hr idle. Mitigation: 1-hour idle timer + host-level Release GPU endpoint + user toggle in Run form + clear info popover explaining the tradeoff in non-technical language.
 - **SSH/rsync coupling.** Scenecraft-engine now has a runtime dep on an SSH client + rsync being installed on the host. Containerized deployments will need to bake these in.
 - **Rate-limited Vast REST.** Beatlab's workarounds (backoff + SSH-info cache) port over, but any future "poll instance status" flow needs to respect the 2 req/s ceiling.
-- **Cost estimation is hand-wavy.** `duration_seconds × some_constant × GPU_price_per_hour` is only approximate; actual time depends on model warm-up, network, and queue. Show a range, not a point estimate, in the elicitation.
+- **Cost estimation is approximate.** `duration_seconds × GPU_price_per_sec × 1.5–2.5× factor` yields a range; actual time depends on model warm-up, network, and queue. Show the range in elicitation, no threshold-based warnings (users calibrate from the dollar amount).
+- **Cancel wastes the partial GPU spend.** Cancelling mid-run doesn't refund the minutes already billed. Acceptable trade: users who cancel recognize they're giving up whatever was spent in exchange for not watching a botched run finish.
 - **11 stems is still a schema.** Different users will want different stem vocabularies; a future `stem_type` extensibility story (or per-model stem sets) is out of scope here.
 
 ---
@@ -460,12 +448,11 @@ Proofed inline against the user in the session preceding this doc. Rows are labe
 
 ## Migration Path
 
-1. **Backend prereq work.** Fix the beatlab-inherited bugs in the port: `ssh_run` exit-code propagation, `build-essential` install step, SSH-info cache + 429 backoff.
-2. **Schema micro-change.** Add `persistent_write` to `db.py`. No SQL migration.
-3. **Ship stem_splitter plugin.** Full backend + frontend; lands as a new milestone (M17 or similar).
-4. **Deprecate `isolate_vocals`** on the same release: `deprecated: true` in manifest; chat tool description adds deprecation note; panel shows "Use Stem Splitter" affordance when an `isolate_vocals`-era run is selected.
-5. **Soak period.** Keep both operations available for N milestones. Track usage; ensure no one relies on `isolate_vocals`-specific behavior we don't preserve (e.g., the residual `background` stem is not 1:1 replaceable by `stem_splitter`'s `other`).
-6. **Remove `isolate_vocals` plugin** once soak passes.
+1. **Bug-fix prereq.** Land `agent/tasks/unassigned/task-fix-audio-isolations-undo-tracking.md` — removes `audio_isolations` from `_undo_tracked_tables`, drops the composite-PK triggers on `isolation_stems`, migrates existing project.dbs. This is a prerequisite; stem_splitter depends on the tables being outside undo.
+2. **Backend prereq work.** Fix the beatlab-inherited bugs in the port: `ssh_run` exit-code propagation, `build-essential` install step, SSH-info cache + 429 backoff.
+3. **Host-level GPU infrastructure.** Add `scenecraft.plugin_api.gpu` module with `release` endpoint + Settings panel CTA (generic "Release GPU"). First consumer is stem_splitter but the surface is shared-future.
+4. **Ship stem_splitter plugin.** Full backend + frontend; lands as a new milestone (M17 or similar).
+5. **Remove `isolate_vocals` entirely** on the same release — hide the switch from users per Q5. Legacy `audio_isolations` rows keep rendering; users never see the transition.
 
 ---
 
@@ -486,35 +473,39 @@ Proofed inline against the user in the session preceding this doc. Rows are labe
 | Decision | Choice | Rationale |
 |---|---|---|
 | GPU provider | Vast.ai (inherited from beatlab) | Cheapest on-demand GPU option; `$1/hr` for RTX PRO 6000 WS |
-| Keep-alive default | ON | Back-to-back runs are common; warm instance saves ~minutes per run |
-| Idle teardown threshold | 20 minutes (configurable) | Balances cost ($0.33 for idle window) vs UX friction of re-provisioning |
+| Keep-alive default | ON, with a user-facing toggle in the Run form | Back-to-back runs are common; warm instance saves up to ~10 min per run. Toggle lets users opt out when one-off |
+| Idle teardown threshold | 1 hour | Generous enough that batch sessions don't re-provision; cost ceiling ~$1 per idle hour |
+| Release endpoint | Host-level: `POST /api/gpu/release` | GPU is a shared resource across future plugins; plugin-scoped release path would fragment |
+| Settings "Release GPU" CTA | Generic (no plugin name) | Reusable when music-generation, color-grading, or other GPU-using plugins ship |
 | Concurrency | Serialize on warm instance (shared VastAIManager registry) | Simpler + matches the single-user expected workload; parallel provisioning is a later optimization |
 | CPU fallback | None (see Scope table) | |
-| Cost surfacing | Show an estimated range in elicitation (duration × per-sec rate) | Point estimates would be misleading given queue + warm-up variance |
+| Cost surfacing | Show an estimated range in elicitation (duration × per-sec rate × 1.5–2.5× factor) | Point estimates would be misleading given queue + warm-up variance. No extra warning banner above threshold — users see the dollars, decide |
+| Cancellation | `POST /plugins/stem_splitter/cancel` + UI button + `stem_splitter__cancel` chat tool | Long-running ops on wrong inputs need an escape hatch; cancel is non-elicitation-gated (reduces cost, doesn't add) |
 
-### Undo Semantics
+### Undo
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Undo behavior for stem_splitter runs | Exempt from undo | Paid GPU time; accidental Ctrl+Z erasing stems is a foot-gun |
-| Implementation | New `persistent_write` contextmanager in `db.py` (toggles `undo_state.active=0` around writes) | Minimal change; reusable for future paid ops |
-| M11 `isolate_vocals` undo behavior | Unchanged (still undoable) | DFN3 is CPU + free + fast; rerun is cheap |
+| Where generation outputs live | Non-undo-tracked tables (`pool_segments`, `audio_isolations`, `isolation_stems` — after the bug-fix task) | Scenecraft convention. Generation outputs are artifacts, not editorial actions; reverting them orphans disk files |
+| Special bypass primitive | None | Convention handles it via table choice; no `persistent_write` / `no_undo_log` contextmanager needed |
+| Prereq: M11 undo-tracking bug fix | Separate task in unassigned/ (`task-fix-audio-isolations-undo-tracking.md`) | M11 added these tables to `_undo_tracked_tables` by mistake; must be fixed before stem_splitter ships |
+| User-facing explanation | None | Nothing to explain — runs aren't user actions; undo doesn't apply. No "paid badge", no shield icon, no toast |
 
 ### Source Handling
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Source length constraint | None | Chunking handles any length |
+| Source length constraint | None | Chunking handles any length — short, long, multi-hour |
 | Chunking threshold | 10 minutes | MDX23C / Demucs quality starts degrading past ~10 min input; matches common model guidance |
-| Chunk overlap | 30 seconds | Enough for crossfade to hide boundary artifacts; cheap on runtime |
+| Chunk overlap default | 30 seconds, user-adjustable in an Advanced disclosure (bounded [5, 60] s) | 30 s covers most seam artifacts; power users can tune per-run |
 | Stitching method | Equal-power (sine/cosine) crossfade at chunk boundaries | Preserves RMS across the seam |
-| Chunk-boundary strategy | Prefer nearest silence within ±1 s of the split point | Minimizes transient cuts |
+| Chunk-boundary seek window | 30 s window centered on the nominal split point, picks lowest-activity point within it | Wider window than silence-only finds low-activity pockets even in dense material; not user-configurable |
 
 ### Mid-Run Behavior
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Cancellation | Not supported | Matches M11 "generation survives disconnect" pattern; user already paid |
+| Cancellation | Supported via `POST /plugins/stem_splitter/cancel` + UI button + `stem_splitter__cancel` chat tool | Long runs on wrong params need an escape hatch — user shouldn't have to wait out a botched run; signals SIGTERM to remote, marks `status='cancelled'`, no spend refund |
 | WS disconnect | Run continues; stems land in DB when complete | Matches M11 + feedback memory "don't cancel on WS close" |
 | Plugin deactivate mid-run | Disposables fire in LIFO, but the job thread continues | Deactivate cleans registry state; ongoing work isn't a registry concern |
 
@@ -529,17 +520,19 @@ Proofed inline against the user in the session preceding this doc. Rows are labe
 
 ## Open Questions
 
-These surfaced during the behaviors-proofing session. Most are flagged for the pre-implementation clarification pass, not blockers for this design.
+All 9 questions surfaced during design were resolved in the session with the user (see the Key Design Decisions tables for the chosen behavior); captured here briefly for provenance.
 
-- **Q1**: Cost surfacing — show estimated `$X.XX – $Y.YY` range, or keep hand-wavy "a few dollars"? (Current design: range estimate from duration + rate.)
-- **Q2**: Should the run form expose `keep_alive` as a user toggle, or is it always on with the idle timer as the only safety net? (Current design: toggle present, default on.)
-- **Q3**: Chunk crossfade duration — is 30 s fixed, or user-adjustable? (Current design: fixed at 30 s; revisit if seam artifacts complain.)
-- **Q4**: Should chunk boundary preference (silence-seek window) be configurable or hard-coded at ±1 s? (Current design: hard-coded for MVP.)
-- **Q5**: On `isolate_vocals` deprecation, do we offer users a "re-run with Stem Splitter" action in the AudioIsolationsPanel for existing legacy runs? (Current design: yes, as a row-level affordance.)
-- **Q6**: Should `audio_isolations.model` carry an additional sub-version string (`stem_splitter.v1`, `stem_splitter.v2`)? (Current design: yes, lets us migrate to newer model combos without schema change.)
-- **Q7**: Do we expose a separate "cancel run" chat tool / REST endpoint? (Current design: no — matches M11 survive-disconnect semantics. If users ask for it after soak, revisit.)
-- **Q8**: Does the panel need a "cost-paid" visual badge to make it clear which runs are undo-exempt? (Current design: yes — small `$` icon on the run card.)
-- **Q9**: Long-source (>1h) UX — should the elicitation warn about cost before accepting, or just run? (Current design: warn with estimated cost; user can still accept.)
+| Q | Topic | Resolution |
+|---|-------|------------|
+| Q1 | Cost surfacing | Range estimate (`$X.XX – $Y.YY`) in elicitation, computed from `duration × rate × 1.5–2.5× factor` |
+| Q2 | `keep_alive` UI | User-facing toggle in Run form, default ON; info popover explains what a GPU is, why it takes up to 10 min to start fresh, what keeping it warm does, cost implication, and 1-hour auto-release |
+| Q3 | Chunk overlap | Default 30 s, user-adjustable via Advanced disclosure, bounded [5, 60] s |
+| Q4 | Boundary seek window | 30 s window centered on split point, pick lowest-activity point, not configurable |
+| Q5 | `isolate_vocals` deprecation affordance | None — hide the switch entirely. Legacy rows render as plain data; users never see the transition |
+| Q6 | `audio_isolations.model` version string | `{plugin_name}@{semver}` — e.g., `stem_splitter@1.0.0`. Source of truth is the plugin manifest's `version` field. Legacy rows stay as `deepfilternet3` |
+| Q7 | Cancellation | Supported — `POST /plugins/stem_splitter/cancel` + UI button + `stem_splitter__cancel` chat tool. Not elicitation-gated |
+| Q8 | "Paid / undo-exempt" badge | Dropped. Users won't expect generation outputs to undo; nothing to explain |
+| Q9 | Long-source cost warning | No extra warning above Q1's baseline range. Users see the dollars, decide, proceed |
 
 ---
 
