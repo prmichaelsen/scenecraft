@@ -1120,6 +1120,85 @@ milestones:
         estimated_hours: 2
         actual_hours: null
 
+  - id: milestone_16
+    name: Music Generation Plugin (BYO mode)
+    status: in_progress
+    started: 2026-04-23
+    completed: null
+    file: agent/milestones/milestone-16-music-generation-plugin.md
+    tasks_total: 9
+    tasks_completed: 0
+    estimated_weeks: 1
+    tasks:
+      - id: task-126
+        name: Auth layer prerequisites (api_keys table + double-gate middleware)
+        status: deferred
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-126-auth-prereqs.md
+        estimated_hours: 4
+        actual_hours: null
+        notes: "Deferred per user directive (2026-04-23): skip all auth logic during dev phase; scenecraft not launched, auth not yet built. Revisit when auth milestone begins."
+      - id: task-127
+        name: Schema + helpers (plugin tables, spend_ledger, pool_segments cols, plugin_api helpers)
+        status: completed
+        started: 2026-04-23T00:00:00Z
+        completed_date: 2026-04-23T00:30:00Z
+        file: agent/tasks/milestone-16-music-generation-plugin/task-127-schema-and-helpers.md
+        estimated_hours: 3
+        actual_hours: 0.5
+        notes: "Auth FKs/validation stripped per 2026-04-23 user directive; spend_ledger accepts '' defaults for username/org, api_key_id always NULL. Re-add FKs when auth ships. Tables landed: generate_music__generations + generate_music__tracks (project.db), spend_ledger (server.db). pool_segments gained variant_kind/derived_from/context_entity_type/context_entity_id (piggybacking M13). plugin_api exposes 30 items; R9a structural test passes (no raw DB handle exported). call_service shim (BYO-only, broker stubbed) also landed — combines tasks 127+128."
+      - id: task-128
+        name: plugin-api service-routing shim (call_service, BYO mode, broker stub)
+        status: completed
+        started: 2026-04-23T00:15:00Z
+        completed_date: 2026-04-23T00:30:00Z
+        file: agent/tasks/milestone-16-music-generation-plugin/task-128-plugin-api-service-shim.md
+        estimated_hours: 2
+        actual_hours: 0.25
+        notes: "Landed alongside task-127 in the same plugin_api.py edit. call_service() + ServiceRegistry + ServiceResponse/Error/ConfigError/TimeoutError exports; BYO mode direct-call with httpx (urllib fallback); broker mode raises ServiceConfigError with forward-looking message. Musicful registered; Veo/Replicate/etc. slots ready."
+      - id: task-129
+        name: Musicful client + backend plugin (generate, polling worker, 429 retry, partial success)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-129-musicful-client-and-worker.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-130
+        name: Backend REST + WS (run/list/retry/credits + JobManager events)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-130-backend-rest-and-ws.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-131
+        name: Frontend plugin module (plugin.yaml, REST + WS client, activate + panel registration)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-131-frontend-plugin-module.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-132
+        name: MusicGenerationsPanel (form, run cards, context filter, Reuse/Retry, credits header)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-132-music-generations-panel.md
+        estimated_hours: 6
+        actual_hours: null
+      - id: task-133
+        name: Chat tools + elicitation (generate_music, get_music_credits)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-133-chat-tools.md
+        estimated_hours: 3
+        actual_hours: null
+      - id: task-134
+        name: Drag-to-timeline + purple styling via variant_kind
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-16-music-generation-plugin/task-134-drag-and-purple-styling.md
+        estimated_hours: 2
+        actual_hours: null
+
 tasks:
   milestone_1:
     - id: task-1
@@ -1923,6 +2002,79 @@ tasks:
       estimated_hours: 2
       actual_hours: null
       started: null
+  milestone_16:
+    - id: task-126
+      name: Auth layer prerequisites (api_keys table + double-gate middleware)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-126-auth-prereqs.md
+      estimated_hours: 4
+      actual_hours: null
+      started: null
+    - id: task-127
+      name: Schema + helpers (plugin tables, spend_ledger, pool_segments cols, plugin_api helpers)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-127-schema-and-helpers.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-128
+      name: plugin-api service-routing shim (call_service, BYO mode, broker stub)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-128-plugin-api-service-shim.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
+    - id: task-129
+      name: Musicful client + backend plugin (generate, polling worker, 429 retry, partial success)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-129-musicful-client-and-worker.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-130
+      name: Backend REST + WS (run/list/retry/credits + JobManager events)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-130-backend-rest-and-ws.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-131
+      name: Frontend plugin module (plugin.yaml, REST + WS client, activate + panel registration)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-131-frontend-plugin-module.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-132
+      name: MusicGenerationsPanel (form, run cards, context filter, Reuse/Retry, credits header)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-132-music-generations-panel.md
+      estimated_hours: 6
+      actual_hours: null
+      started: null
+    - id: task-133
+      name: Chat tools + elicitation (generate_music, get_music_credits)
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-133-chat-tools.md
+      estimated_hours: 3
+      actual_hours: null
+      started: null
+    - id: task-134
+      name: Drag-to-timeline + purple styling via variant_kind
+      status: not_started
+      milestone_id: milestone_16
+      file: agent/tasks/milestone-16-music-generation-plugin/task-134-drag-and-purple-styling.md
+      estimated_hours: 2
+      actual_hours: null
+      started: null
   unassigned:
     - id: task-13
       name: Polish Interactive Transform Handles
@@ -2008,6 +2160,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M16: Music Generation Plugin (BYO mode) — Musicful-backed AI-composed audio with context-aware candidate routing, drag-to-timeline, elicitation-gated chat tool. Introduces core spend_ledger + api_keys + double-gate auth middleware (9 tasks, ~32h, 1 week)"
   - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
   - "M15: Audio Clip Editing + Track Management — delete/move/trim clips, track add/rename/reorder, unlinked drop, cross-highlight, extraction ghost (7 tasks, ~20h, 2-2.5 weeks)"
   - "M13: Audio Sync Tab — lipsync via candidate variants (sync.so + ElevenLabs TTS/S2S); 9 tasks, ~30 hours, 2-3 weeks"
