@@ -23,6 +23,7 @@ import { MCPPanel } from './MCPPanel'
 import { AudioPropertiesPanel } from './AudioPropertiesPanel'
 import { saveWorkspaceView } from '@/lib/workspace-client'
 import { ContextMenuProvider } from '@/contexts/ContextMenuContext'
+import { AudioIsolationsPanel } from '@/plugins/isolate_vocals'
 
 // --- Panel wrapper ---
 
@@ -197,6 +198,31 @@ function MCPPanelComponent() {
   return <Panel><MCPPanel onClose={() => {}} /></Panel>
 }
 
+// Plugin-contributed: isolate_vocals. The plugin registers its panel body
+// via PluginHost; this wrapper reads editor context to resolve the current
+// selection and passes it through as props. Only audio_clip is wired for
+// MVP (matches the backend's MVP scope). The panel resolves durationSeconds
+// lazily — the run form tolerates an undefined value.
+function AudioIsolationsPanelComponent() {
+  const data = useEditorData()
+  const { selectedAudioClipId } = useEditorState()
+  const entity = selectedAudioClipId
+    ? {
+        type: 'audio_clip' as const,
+        id: selectedAudioClipId,
+      }
+    : null
+  return (
+    <Panel>
+      <AudioIsolationsPanel
+        entity={entity}
+        projectName={data.projectName}
+        onClose={() => {}}
+      />
+    </Panel>
+  )
+}
+
 // Auto-focus the Properties tab when anything becomes selected (kf / tr / track / audio).
 // Respects group locks — user can pin the Properties group to another tab.
 function AutoActivatePropertiesEffect({ panelLayoutRef }: { panelLayoutRef: React.RefObject<PanelLayoutHandle | null> }) {
@@ -239,6 +265,7 @@ const panels: PanelRegistry = {
   sections:    { component: SectionsPanelComponent, title: 'Sections' },
   chat:        { component: ChatPanelComponent, title: 'Chat' },
   mcp:         { component: MCPPanelComponent, title: 'MCP' },
+  audio_isolations: { component: AudioIsolationsPanelComponent, title: 'Audio Isolations' },
 }
 
 // --- Default layout ---
@@ -268,7 +295,7 @@ const defaultLayout: LayoutNode = {
           ratio: 0.5,
           children: [
             { type: 'group', id: 'properties-group', tabs: ['properties'], activeTab: 'properties' },
-            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'settings', 'extensions'], activeTab: 'bin' },
+            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'audio_isolations', 'settings', 'extensions'], activeTab: 'bin' },
           ],
         },
         {

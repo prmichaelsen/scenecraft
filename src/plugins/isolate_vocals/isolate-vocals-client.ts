@@ -98,6 +98,55 @@ export async function fetchIsolations(
   return json.isolations || []
 }
 
+// ── Pool peaks ────────────────────────────────────────────────────────────
+
+/**
+ * Fetch float16-encoded peak data for a raw pool_segment. Returns a
+ * Float32Array of interleaved min/max values (length = 2 * resolution). Used
+ * by AudioIsolationsPanel's stem mini-waveforms — stems are bare
+ * pool_segments, not audio_clips, so the existing clip-keyed peaks route
+ * can't serve them.
+ */
+export async function fetchPoolPeaks(
+  projectName: string,
+  poolSegmentId: string,
+  resolution = 200,
+): Promise<Float32Array> {
+  const url = `${API_URL}/api/projects/${encodeURIComponent(projectName)}/pool/${encodeURIComponent(poolSegmentId)}/peaks?resolution=${resolution}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`peaks fetch failed: ${res.status}`)
+  const buf = await res.arrayBuffer()
+  return decodeFloat16ToFloat32(buf)
+}
+
+/**
+ * Decode a float16 buffer (raw big-endian-interleaved min/max pairs, as
+ * produced by scenecraft's ``compute_peaks``) into a plain Float32Array.
+ * JavaScript has no native float16 decoder; decode manually.
+ */
+function decodeFloat16ToFloat32(buffer: ArrayBuffer): Float32Array {
+  const view = new DataView(buffer)
+  const n = view.byteLength / 2
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    out[i] = float16FromBits(view.getUint16(i * 2, false))
+  }
+  return out
+}
+
+function float16FromBits(h: number): number {
+  const sign = (h & 0x8000) >> 15
+  const exponent = (h & 0x7c00) >> 10
+  const fraction = h & 0x03ff
+  if (exponent === 0) {
+    return (sign ? -1 : 1) * Math.pow(2, -14) * (fraction / 1024)
+  }
+  if (exponent === 0x1f) {
+    return fraction ? NaN : (sign ? -1 : 1) * Infinity
+  }
+  return (sign ? -1 : 1) * Math.pow(2, exponent - 15) * (1 + fraction / 1024)
+}
+
 // ── WS job subscription ───────────────────────────────────────────────────
 
 export type SubscribeCallbacks = {
