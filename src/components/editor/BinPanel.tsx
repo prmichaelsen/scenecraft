@@ -1307,6 +1307,13 @@ function PoolAudioCard({ entry, isSelected, onSelect, onUpdateTags, onRename, dr
       onDragStart={draggable ? (e) => {
         e.dataTransfer.setData('application/x-scenecraft-pool-path', entry.path)
         e.dataTransfer.effectAllowed = 'copy'
+        // Anchor the drag image so the cursor sits at the top-left of the
+        // ghost. Drop handlers convert e.clientX → start_time, and this
+        // anchor makes the visual ghost extend to the bottom-right of the
+        // pointer — so the clip lands exactly where the cursor was.
+        if (e.currentTarget instanceof HTMLElement) {
+          e.dataTransfer.setDragImage(e.currentTarget, 0, 0)
+        }
       } : undefined}
       onClick={onSelect}
       title={label}

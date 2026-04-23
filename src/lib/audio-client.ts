@@ -26,6 +26,11 @@ export type AudioClip = {
   source_offset: number
   volume_curve: CurvePoint[]
   muted: boolean
+  /**
+   * User-editable display label shown on the clip block and elsewhere.
+   * Null/undefined falls back to a basename derived from `source_path`.
+   */
+  label?: string | null
   remap?: { method: string; target_duration: number }
   /**
    * Linear playback-rate factor derived from the linked transition's
@@ -82,6 +87,7 @@ export type AudioClipUpdate = Partial<{
   volumeCurve: CurvePoint[]
   muted: boolean
   remap: { method: string; target_duration: number }
+  label: string | null
 }>
 
 export async function postUpdateAudioClip(project: string, clipId: string, update: AudioClipUpdate): Promise<void> {

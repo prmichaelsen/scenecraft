@@ -583,9 +583,18 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
         durationSeconds={durationSeconds}
       />
       {width > 48 && (
-        <div className="absolute bottom-0.5 left-1 text-[9px] font-mono text-cyan-300/80 truncate max-w-[calc(100%-8px)] pointer-events-none z-10">
-          {clip.id.replace(/^audio_clip_/, '')}
-        </div>
+        <>
+          <ClipLabel
+            projectName={projectName}
+            clip={clip}
+          />
+          {/* Short clip-id hash pinned to the bottom-left for quick visual
+              identification across sessions — separate from the editable
+              label above. */}
+          <div className="absolute bottom-0.5 left-1 text-[9px] font-mono text-cyan-300/80 truncate max-w-[calc(100%-8px)] pointer-events-none z-10">
+            {clip.id.replace(/^audio_clip_/, '')}
+          </div>
+        </>
       )}
       {/* Edge-trim hit zones — 6 px wide, full height. ew-resize cursor on
           hover; tinted cyan band appears during active trim drag.
@@ -615,4 +624,100 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
       )}
     </div>
   )
+}
+
+/**
+ * GarageBand-style clip label pinned to the top-left of the clip block.
+ * Single click is swallowed so it doesn't interfere with selection gestures
+ * in the parent clip block; double-click swaps the label for an inline input
+ * that commits on blur or Enter (Escape reverts). Falls back to a basename
+ * derived from `source_path` when `clip.label` is unset.
+ */
+function ClipLabel({ projectName, clip }: { projectName: string; clip: AudioClip }) {
+  const derived = deriveClipLabel(clip)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(derived)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!editing) setDraft(derived)
+  }, [derived, editing])
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editing])
+
+  const commit = async () => {
+    const next = draft.trim()
+    setEditing(false)
+    // Treat empty input as "revert to derived" by persisting null.
+    const nextLabelForServer: string | null = next === '' ? null : next
+    // No-op when the trimmed value matches what we'd display today. Compares
+    // against the effective label (stored or derived) so clearing a label
+    // that already matches the derived name doesn't trigger a POST.
+    const effectiveNow = clip.label ?? derived
+    if ((nextLabelForServer ?? derived) === effectiveNow) return
+    try {
+      const { postUpdateAudioClip } = await import('@/lib/audio-client')
+      await postUpdateAudioClip(projectName, clip.id, { label: nextLabelForServer })
+    } catch (err) {
+      console.error('Failed to update audio clip label:', err)
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            setDraft(derived)
+            setEditing(false)
+          }
+          // Stop other hotkeys (delete/backspace, space, etc.) from reaching
+          // the editor while the user is typing in this inline input.
+          e.stopPropagation()
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute top-0.5 left-1 right-1 text-[10px] font-sans text-cyan-100 bg-cyan-950/80 border border-cyan-400/60 rounded-sm px-1 py-px z-20 outline-none"
+        maxLength={120}
+      />
+    )
+  }
+
+  return (
+    <div
+      className="absolute top-0.5 left-1 text-[10px] font-sans font-medium text-cyan-100 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)] truncate max-w-[calc(100%-8px)] z-10 select-none cursor-text"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => {
+        e.stopPropagation()
+        setEditing(true)
+      }}
+      title="Double-click to rename"
+    >
+      {clip.label ?? derived}
+    </div>
+  )
+}
+
+function deriveClipLabel(clip: AudioClip): string {
+  const src = clip.source_path || ''
+  // Strip any path prefix; then strip a trailing extension.
+  const base = src.split('/').pop() || src
+  const dot = base.lastIndexOf('.')
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  return stem || clip.id.replace(/^audio_clip_/, '')
 }

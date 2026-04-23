@@ -28,8 +28,6 @@ import { TransformHandles } from './TransformHandles'
 import { recordPreview } from '@/lib/preview-recorder'
 import { PreviewViewport, type PreviewViewportHandle } from './PreviewViewport'
 import { ImportDialog } from './ImportDialog'
-import { EffectsTrack } from './EffectsTrack'
-import { SuppressionTrack } from './SuppressionTrack'
 import { RulesTrack, type RuleSection } from './RulesTrack'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
@@ -339,7 +337,6 @@ const MIN_PREVIEW_HEIGHT = 80
 const AUDIO_HEIGHT_KEY = 'scenecraft-audio-track-height'
 const DEFAULT_AUDIO_HEIGHT = 0 // 0 means flex-1 (fill remaining space)
 const MIN_AUDIO_HEIGHT = 60
-const MAX_AUDIO_HEIGHT = 400
 
 export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const router = useRouter()
@@ -410,6 +407,9 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // paired audio track at [from_kf.ts, to_kf.ts] immediately. Entries are
   // keyed by transitionId and removed after refresh or a 10s safety timeout.
   const [pendingAudioGhosts, setPendingAudioGhosts] = useState<Map<string, { trackId: string; startTime: number; endTime: number; createdAt: number }>>(new Map())
+  // Hover state for the empty-space drop zone beneath the last audio lane that
+  // auto-creates a new track when a pool segment or stem is dropped onto it.
+  const [newTrackDropActive, setNewTrackDropActive] = useState(false)
   const [transformMode, setTransformMode] = useState(false)
   const previewContainerRef = useRef<HTMLDivElement>(null)
   const [showBin, setShowBin] = useState(false)
@@ -488,7 +488,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, parseInt(storedPreview, 10)))
     const storedAudio = localStorage.getItem(AUDIO_HEIGHT_KEY)
-    if (storedAudio) setAudioTrackHeight(Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, parseInt(storedAudio, 10))))
+    if (storedAudio) setAudioTrackHeight(Math.max(MIN_AUDIO_HEIGHT, parseInt(storedAudio, 10)))
   }, [])
 
   // Prevent browser zoom on Ctrl+scroll (React onWheel is passive, can't preventDefault)
@@ -1497,35 +1497,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     persistEffects(updated, suppressions)
   }, [userEffects, suppressions, persistEffects, closeAllPanels])
 
-  const handleEffectClick = useCallback((fx: UserEffect, e?: { shiftKey?: boolean }) => {
-    if (e?.shiftKey) {
-      // Shift+click: toggle in multi-select
-      setSelectedEffectIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(fx.id)) next.delete(fx.id)
-        else next.add(fx.id)
-        return next
-      })
-      setSelectedEffect(fx)
-      return
-    }
-    closeAllPanels()
-    setSelectedEffect((prev) => prev?.id === fx.id ? null : fx)
-    setSelectedEffectIds(new Set([fx.id]))
-  }, [closeAllPanels])
-
-  const handleEffectDrag = useCallback((id: string, newTime: number) => {
-    setUserEffects((prev) => prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx))
-  }, [])
-
-  const handleEffectDragEnd = useCallback((id: string, newTime: number) => {
-    setUserEffects((prev) => {
-      const newEffects = prev.map((fx) => fx.id === id ? { ...fx, time: newTime } : fx)
-      persistEffects(newEffects, suppressions)
-      return newEffects
-    })
-  }, [suppressions, persistEffects])
-
   const handleEffectUpdate = useCallback((updated: UserEffect) => {
     const newEffects = userEffects.map((fx) => fx.id === updated.id ? updated : fx)
     setUserEffects(newEffects)
@@ -1576,21 +1547,6 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   }, [suppressions, userEffects, persistEffects])
 
   const [selectedSuppressionIds, setSelectedSuppressionIds] = useState<Set<string>>(new Set())
-
-  const handleSuppressionClick = useCallback((id: string, shiftKey?: boolean) => {
-    if (shiftKey) {
-      setSelectedSuppressionIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
-      })
-      return
-    }
-    closeAllPanels()
-    setSelectedSuppressionIds(new Set())
-    setSelectedSuppressionId((prev) => prev === id ? null : id)
-  }, [closeAllPanels])
 
   const handleAddKeyframe = useCallback(async () => {
     try {
@@ -1992,7 +1948,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       }
       if (audioDragRef.current.dragging) {
         const delta = e.clientY - audioDragRef.current.startY
-        const newHeight = Math.max(MIN_AUDIO_HEIGHT, Math.min(MAX_AUDIO_HEIGHT, audioDragRef.current.startHeight + delta))
+        const newHeight = Math.max(MIN_AUDIO_HEIGHT, audioDragRef.current.startHeight + delta)
         setAudioTrackHeight(newHeight)
         return
       }
@@ -2726,7 +2682,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
             {/* Audio track */}
             <div
-              className={`relative cursor-pointer overflow-hidden ${audioTrackHeight ? '' : 'flex-1'}`}
+              className={`relative cursor-pointer overflow-y-auto overflow-x-hidden ${audioTrackHeight ? '' : 'flex-1'}`}
               style={audioTrackHeight ? { height: audioTrackHeight } : { minHeight: 80 }}
               onClick={handleTrackClick}
             >
@@ -2972,6 +2928,80 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         + Add audio track
                       </button>
                     </div>
+                    {/* Empty-space drop zone — dragging a pool segment or stem
+                        onto this area creates a new audio track and places
+                        the clip at the drop X. Sits below the last lane and
+                        the add-track affordance. Only reacts to the drag
+                        types the lanes themselves accept. */}
+                    <div
+                      className={`relative min-h-[40px] transition-colors ${
+                        newTrackDropActive
+                          ? 'bg-cyan-500/10 border-2 border-dashed border-cyan-500/60'
+                          : 'border-2 border-dashed border-transparent'
+                      }`}
+                      onDragOver={(e) => {
+                        const types = e.dataTransfer.types
+                        if (
+                          !types.includes('application/x-scenecraft-pool-path') &&
+                          !types.includes('application/x-scenecraft-stem')
+                        ) return
+                        e.preventDefault()
+                        e.dataTransfer.dropEffect = 'copy'
+                        if (!newTrackDropActive) setNewTrackDropActive(true)
+                      }}
+                      onDragLeave={() => setNewTrackDropActive(false)}
+                      onDrop={async (e) => {
+                        setNewTrackDropActive(false)
+                        const stemRaw = e.dataTransfer.getData('application/x-scenecraft-stem')
+                        const poolPath = e.dataTransfer.getData('application/x-scenecraft-pool-path')
+                        if (!stemRaw && !poolPath) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        // Mirror AudioLane's X→seconds math so drop position
+                        // tracks the horizontal scroll offset exactly.
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        let scrollLeft = 0
+                        let node: HTMLElement | null = e.currentTarget.parentElement
+                        while (node) {
+                          if (node.scrollWidth > node.clientWidth) { scrollLeft = node.scrollLeft; break }
+                          node = node.parentElement
+                        }
+                        const startTime = Math.max(0, (e.clientX - rect.left + scrollLeft) / pxPerSec)
+                        try {
+                          const { postAddAudioTrack, postAddAudioClipFromPool, postAudioClipBatchOps } = await import('@/lib/audio-client')
+                          const { id: newTrackId } = await postAddAudioTrack(data.projectName, {})
+                          if (stemRaw) {
+                            const { resolveOverlapsWithSplit } = await import('@/lib/audio-overlap')
+                            const payload = JSON.parse(stemRaw) as { pool_path: string; duration_seconds: number; stem_type: string }
+                            const genId = () => `audio_clip_${Math.random().toString(16).slice(2, 10)}`
+                            const dropped = { start: startTime, end: startTime + payload.duration_seconds }
+                            // New track — no existing clips to split against.
+                            const ops = resolveOverlapsWithSplit(dropped, [], genId)
+                            ops.push({
+                              op: 'insert',
+                              clip: {
+                                id: genId(),
+                                track_id: newTrackId,
+                                source_path: payload.pool_path,
+                                start_time: dropped.start,
+                                end_time: dropped.end,
+                                source_offset: 0,
+                              },
+                            })
+                            await postAudioClipBatchOps(
+                              data.projectName,
+                              `Drop ${payload.stem_type} stem to new track`,
+                              ops,
+                            )
+                          } else if (poolPath) {
+                            await postAddAudioClipFromPool(data.projectName, { trackId: newTrackId, startTime, poolPath })
+                          }
+                          refreshTimeline()
+                        } catch (err) {
+                          console.error('Failed to create track from drop:', err)
+                        }
+                      }}
+                    />
                   </div>
                 )
               })()}
@@ -2991,56 +3021,13 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               )}
             </div>
 
-            {/* Audio/FX divider */}
+            {/* Audio bottom sash — drags the audio region's height without
+                an upper clamp. Sits flush beneath the audio track now that
+                the FX and Mute (Suppression) panes below it were removed. */}
             <div
               className="h-1.5 cursor-row-resize hover:bg-blue-500/50 active:bg-blue-500 bg-gray-800 transition-colors shrink-0 relative z-20"
               onMouseDown={handleAudioDividerDown}
             />
-
-            {/* Effects track */}
-            <div className="relative h-8 shrink-0 cursor-crosshair">
-              <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
-                FX
-              </div>
-              <EffectsTrack
-                effects={userEffects}
-                pxPerSec={pxPerSec}
-                selectedEffectId={selectedEffect?.id ?? null}
-                selectedEffectIds={selectedEffectIds}
-                onEffectClick={handleEffectClick}
-                onSelectEffectsInRange={(from: number, to: number) => {
-                  const ids = new Set(userEffects.filter((fx) => fx.time >= from && fx.time <= to).map((fx) => fx.id))
-                  setSelectedEffectIds(ids)
-                  if (ids.size > 0) {
-                    const first = userEffects.find((fx) => ids.has(fx.id))
-                    if (first) setSelectedEffect(first)
-                  }
-                }}
-                onAddEffect={handleAddEffect}
-                onEffectDrag={handleEffectDrag}
-                onEffectDragEnd={handleEffectDragEnd}
-                scrollLeft={scrollLeft}
-                viewportWidth={viewportWidth}
-              />
-            </div>
-
-            {/* Suppression track */}
-            <div className="relative h-6 shrink-0 border-t border-gray-800 cursor-crosshair">
-              <div className="absolute left-0 top-0 px-2 py-0.5 text-[10px] text-red-400/60 uppercase tracking-wider z-20 bg-gray-950/80 pointer-events-none">
-                Mute
-              </div>
-              <SuppressionTrack
-                suppressions={suppressions}
-                pxPerSec={pxPerSec}
-                onAddSuppression={handleAddSuppression}
-                onResizeSuppression={handleResizeSuppression}
-                selectedSuppressionId={selectedSuppressionId}
-                selectedSuppressionIds={selectedSuppressionIds}
-                onSuppressionClick={handleSuppressionClick}
-                scrollLeft={scrollLeft}
-                viewportWidth={viewportWidth}
-              />
-            </div>
 
             {/* Rules track */}
             {aiAudioRules.length > 0 && (

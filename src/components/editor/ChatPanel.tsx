@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { ChatWebSocket, fetchChatHistory, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
 
 type ChatPanelProps = {
@@ -14,17 +15,36 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
   const [loading, setLoading] = useState(false)
   const [connected, setConnected] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  // Virtuoso-managed scroller. `atBottom` gates whether the stream drives the
+  // viewport — if the user has scrolled up to read older messages, new chunks
+  // and new messages do NOT yank them back down. Matches the agentbase.me
+  // chat pattern: followOutput only when isAtBottom, plus a manual scroll
+  // when the streaming content grows the existing last item (Virtuoso fires
+  // totalListHeightChanged/itemsRendered but followOutput itself only reacts
+  // to item count).
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
+  const [atBottom, setAtBottom] = useState(true)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wsRef = useRef<ChatWebSocket | null>(null)
 
+  // Unconditional scroll — used for events we initiated on behalf of the user
+  // (initial history load, send). atBottom gating is applied separately for
+  // streaming-driven scroll (see useEffect below).
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      virtuosoRef.current?.scrollToIndex({
+        index: 'LAST',
+        align: 'end',
+        behavior: 'smooth',
+      })
     })
   }, [])
 
-  // Handle incoming WebSocket messages
+  // Handle incoming WebSocket messages. Stream-driven events no longer
+  // force-scroll — Virtuoso's followOutput(isAtBottom) handles item-count
+  // growth and the streaming-blocks useEffect below handles content growth
+  // of the currently-streaming item. Both gate on `atBottom`, so a user who
+  // scrolled up to read older messages is never yanked back down.
   const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
       case 'chunk':
@@ -35,14 +55,12 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
           }
           return [...prev, { type: 'text', text: msg.content }]
         })
-        scrollToBottom()
         break
 
       case 'tool_call':
         setStreamingBlocks(prev => [...prev, {
           type: 'tool_use', id: msg.toolCall.id, name: msg.toolCall.name, status: 'pending',
         }])
-        scrollToBottom()
         break
 
       case 'tool_result':
@@ -65,7 +83,6 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
         setStreamingBlocks(prev => [...prev, {
           type: 'elicitation', elicitation: msg.elicitation, resolution: 'pending',
         }])
-        scrollToBottom()
         break
 
       case 'message':
@@ -84,7 +101,6 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
           return [...prev, msg.message]
         })
         setStreamingBlocks([])
-        scrollToBottom()
         break
 
       case 'complete':
@@ -102,14 +118,13 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
           content: `Error: ${msg.error}`,
           created_at: new Date().toISOString(),
         }])
-        scrollToBottom()
         break
 
       case 'status':
         // Could show in a status bar, for now just log
         break
     }
-  }, [scrollToBottom])
+  }, [])
 
   // Connect WebSocket and load history
   useEffect(() => {
@@ -195,29 +210,64 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
     return items
   }, [messages, streamingBlocks, loading])
 
+  // followOutput only re-fires when the item count changes. While a single
+  // streaming item grows with chunk deltas, the item count is stable, so we
+  // re-run scrollToIndex here — but only if the user is still at the bottom.
+  useEffect(() => {
+    if (!atBottom) return
+    if (streamingBlocks.length === 0) return
+    virtuosoRef.current?.scrollToIndex({
+      index: 'LAST',
+      align: 'end',
+      behavior: 'auto',
+    })
+  }, [streamingBlocks, atBottom])
+
   return (
     <div className="flex flex-col h-full bg-[#111827]">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
-        {initialLoading ? (
-          <div className="flex items-center justify-center h-full text-gray-600 text-sm">Loading...</div>
-        ) : displayItems.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-600 text-sm">
-            Ask me anything about this project
-          </div>
-        ) : (
-          displayItems.map((item, i) => {
+      {initialLoading ? (
+        <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">Loading...</div>
+      ) : displayItems.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">
+          Ask me anything about this project
+        </div>
+      ) : (
+        <Virtuoso
+          ref={virtuosoRef}
+          className="flex-1"
+          data={displayItems}
+          initialTopMostItemIndex={displayItems.length - 1}
+          atBottomStateChange={setAtBottom}
+          followOutput={(isAtBottom) => (isAtBottom ? 'auto' : false)}
+          computeItemKey={(_index, item) => {
+            if (item.type === 'message') return `m:${item.message.id}`
+            if (item.type === 'streaming') return '__streaming__'
+            return '__typing__'
+          }}
+          itemContent={(_index, item) => {
             if (item.type === 'typing') {
-              return <TypingIndicator key="typing" />
+              return (
+                <div className="px-3 py-1.5">
+                  <TypingIndicator />
+                </div>
+              )
             }
             if (item.type === 'streaming') {
-              return <StreamingMessage key="streaming" blocks={item.blocks} onElicitationResponse={respondElicitation} />
+              return (
+                <div className="px-3 py-1.5">
+                  <StreamingMessage blocks={item.blocks} onElicitationResponse={respondElicitation} />
+                </div>
+              )
             }
-            return <MessageBubble key={item.message.id || i} message={item.message} />
-          })
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+            return (
+              <div className="px-3 py-1.5">
+                <MessageBubble message={item.message} />
+              </div>
+            )
+          }}
+        />
+      )}
 
       {/* Input */}
       <div className="shrink-0 border-t border-gray-800 px-3 py-2">

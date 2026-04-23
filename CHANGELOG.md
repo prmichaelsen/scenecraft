@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.21.0] - 2026-04-23
+
+### Added
+- **New-track drop zone beneath the last audio lane** — dragging a pool audio segment or an isolation stem into the empty area below the last audio track creates a new track and places the clip at the drop X. Works on an empty timeline too. Reuses the lane's X→seconds math.
+- **Editable clip labels on audio clips (GarageBand-style)** — labels render top-left of the clip block; double-click swaps for an inline input (Enter commits, Escape reverts, blur commits). Empty input clears the custom label and the clip falls back to a derived display name from the source path. The short clip-id hash stays pinned to the bottom-left. Backed by a new `audio_clips.label` column on the engine.
+- **Virtuoso-backed chat message list with near-bottom-only auto-follow** — `ChatPanel.tsx` uses `react-virtuoso` with `atBottomStateChange` + `followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}` and a streaming-blocks effect. If the user scrolled up to read older messages, new chunks and new messages no longer yank the viewport; auto-follow resumes when they scroll back within the default threshold.
+
+### Changed
+- **Audio timeline region scrolls vertically within its own pane** (`overflow-y-auto`) so stacked lanes stay reachable without growing the section beyond its sash.
+- **Audio bottom sash no longer capped** — removed the `MAX_AUDIO_HEIGHT` clamp from the drag handler and the localStorage restore path; minimum of 60px preserved.
+- **Pool audio drag image anchors at (0, 0)** — `setDragImage(el, 0, 0)` on `PoolAudioCard` so the cursor sits at the top-left of the ghost and the clip lands exactly at the pointer with no visual offset.
+
+### Removed
+- **FX pane and Mute (Suppression) pane removed from the Timeline layout** — deleted `EffectsTrack` and `SuppressionTrack` sections plus the orphaned Audio/FX divider; pruned dead handlers (`handleEffectClick`, `handleEffectDrag`, `handleEffectDragEnd`, `handleSuppressionClick`) and the unused `MAX_AUDIO_HEIGHT` / `EffectsTrack` / `SuppressionTrack` imports. Underlying state (`userEffects`, `suppressions`) left in place — properties-panel consumers untouched.
+
 ## [0.20.0] - 2026-04-21
 
 ### Added
