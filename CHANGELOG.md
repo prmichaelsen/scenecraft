@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.0] - 2026-04-23
+
+### Added
+- **Stereo L/R level meters.** Per-audio-track meter in each track header pill (56×12px), and a master meter in the transport bar (140×14px). Passive `AnalyserNode` taps in the mixer — they don't affect the audio path. Mono signals show matching L/R bars (the mixer forces speaker upmix at the meter tap so mono→L=mono, R=mono).
+  - Mixer: every track has its own `trackGain → ChannelSplitter → {analyserL, analyserR}` sidechain. The master bus gets the same treatment (`masterGain → splitter → L/R`). Exposed via `mixer.getTrackAnalysers(id)` and `mixer.getMasterAnalysers()`.
+  - `useLevelMeter({left, right}, enabled)` hook: rAF sampling, per-channel peak + smoothed display (10ms attack / 250ms release) + peak-hold decay at ~20 dB/s (10× per second). Loop pauses when `enabled=false` (pausing playback) so idle meters don't burn CPU.
+  - `<LevelMeter>` component: two bars (L/R) with green→yellow→red gradient + per-channel peak-hold line. `orientation='horizontal'` stacks L on top of R; `'vertical'` puts them side-by-side.
+
 ## [0.22.1] - 2026-04-23
 
 ### Changed

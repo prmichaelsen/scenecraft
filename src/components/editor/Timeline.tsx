@@ -30,6 +30,7 @@ import { PreviewViewport, type PreviewViewportHandle } from './PreviewViewport'
 import { ImportDialog } from './ImportDialog'
 import { RulesTrack, type RuleSection } from './RulesTrack'
 import { TrackHeaderPill } from './TrackHeaderPill'
+import { LevelMeter } from './LevelMeter'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
@@ -639,7 +640,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // AudioPropertiesPanel picks up edit feedback via refreshTimeline →
   // localAudioTracks → mixer.rebuild (eventually targeted per-clip/track in
   // a follow-up).
-  useAudioMixer(data.projectName, localAudioTracks, isPlaying, currentTime)
+  const audioMixer = useAudioMixer(data.projectName, localAudioTracks, isPlaying, currentTime)
 
   // Task 124 — cross-highlight linked transition ↔ audio clip on selection.
   // Pure rendering concern over the existing `audio_clip_links` relation
@@ -2180,6 +2181,18 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
             onSeek={(time) => { if (seekFnRef.current) seekFnRef.current(time); else setCurrentTime(time) }}
           />
 
+          {/* Master level meter — horizontal bar with peak-hold line,
+              sampled post-master-gain via the mixer's AnalyserNode tap.
+              Pauses rAF loop when not playing to conserve CPU. */}
+          <LevelMeter
+            analysers={audioMixer?.getMasterAnalysers() ?? null}
+            active={isPlaying}
+            orientation="horizontal"
+            widthPx={140}
+            heightPx={14}
+            label="Master level"
+          />
+
           {/* Playback speed */}
           <div className="flex items-center gap-1">
             <input
@@ -2726,6 +2739,16 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         pxPerSec={pxPerSec}
                         selectedIds={selectedAudioClipIds}
                         highlightedIds={highlightedAudioClipIds}
+                        headerMeter={(
+                          <LevelMeter
+                            analysers={audioMixer?.getTrackAnalysers(t.id) ?? null}
+                            active={isPlaying}
+                            orientation="horizontal"
+                            widthPx={56}
+                            heightPx={12}
+                            label={`${t.name} level`}
+                          />
+                        )}
                         onClipClick={handleAudioClipClick}
                         onClipMouseDown={handleAudioClipMouseDown}
                         onClipTrimMouseDown={handleAudioClipTrimMouseDown}

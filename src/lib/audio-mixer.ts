@@ -28,6 +28,14 @@ export type AudioMixer = {
   updateTrack(trackId: string): void
   /** Full track list changed (add/remove/reorder). Rebuild graph from scratch. */
   rebuild(tracks: AudioTrack[]): void
+  /** Per-track L/R AnalyserNode taps for stereo level metering. Mono
+   *  signals are upmixed to stereo before the split (via a GainNode with
+   *  `channelCount=2, channelCountMode='explicit', channelInterpretation='speakers'`)
+   *  so both L and R receive the same signal. Null until the track's graph
+   *  has been built (first play/seek). */
+  getTrackAnalysers(trackId: string): { left: AnalyserNode; right: AnalyserNode } | null
+  /** Master-bus stereo analyser taps. */
+  getMasterAnalysers(): { left: AnalyserNode; right: AnalyserNode } | null
   /** Tear down all nodes + elements; close AudioContext. */
   dispose(): void
 }
@@ -58,6 +66,10 @@ type TrackNode = {
   track: AudioTrack
   /** Track volume + enabled + muted gate. */
   trackGain: GainNode | null
+  /** L/R passive analyser taps post-trackGain, pre-master. Used by
+   *  per-track stereo level meters in the timeline header. */
+  analyserL: AnalyserNode | null
+  analyserR: AnalyserNode | null
   clips: Map<string, ClipNode>
 }
 
@@ -114,9 +126,62 @@ export function createAudioMixer(
 
   let audioCtx: AudioContext | null = null
   const trackMap = new Map<string, TrackNode>()
+  // Master bus — every track's trackGain feeds into masterGain, which feeds
+  // both a stereo L/R analyser pair (for the transport-bar level meter) and
+  // the destination. A `ChannelSplitterNode` after a stereo-forcing gain
+  // splits the signal into two analysers so the meter can show per-channel
+  // levels (and mono sources show matching L/R via the default speaker
+  // upmix).
+  let masterGain: GainNode | null = null
+  let masterSplitter: ChannelSplitterNode | null = null
+  let masterAnalyserL: AnalyserNode | null = null
+  let masterAnalyserR: AnalyserNode | null = null
   let isPlaying = false
   let lastPlayhead = 0
   let disposed = false
+
+  // Analyser FFT size — 1024 gives ~21ms of time-domain samples at 48kHz,
+  // short enough for responsive peak metering without wasting CPU.
+  const ANALYSER_FFT_SIZE = 1024
+
+  /** Build a {left,right} pair of analysers fed from `source`. Inserts a
+   *  ChannelSplitter so each analyser only sees one channel. `source` is
+   *  expected to already be configured for stereo (the mixer applies
+   *  channelCount=2 + speakers upmix on the feeding gain nodes). */
+  const buildStereoAnalyserPair = (ctx: AudioContext, source: AudioNode): {
+    splitter: ChannelSplitterNode
+    left: AnalyserNode
+    right: AnalyserNode
+  } => {
+    const splitter = ctx.createChannelSplitter(2)
+    const left = ctx.createAnalyser()
+    const right = ctx.createAnalyser()
+    left.fftSize = ANALYSER_FFT_SIZE
+    right.fftSize = ANALYSER_FFT_SIZE
+    left.smoothingTimeConstant = 0
+    right.smoothingTimeConstant = 0
+    source.connect(splitter)
+    splitter.connect(left, 0)
+    splitter.connect(right, 1)
+    return { splitter, left, right }
+  }
+
+  const ensureMasterGraph = (ctx: AudioContext): void => {
+    if (masterGain) return
+    masterGain = ctx.createGain()
+    masterGain.gain.value = 1
+    // Force stereo mixdown so mono track sums still expose two channels to
+    // the meter (default WebAudio speaker upmix copies mono → L, R).
+    masterGain.channelCount = 2
+    masterGain.channelCountMode = 'explicit'
+    masterGain.channelInterpretation = 'speakers'
+    const pair = buildStereoAnalyserPair(ctx, masterGain)
+    masterSplitter = pair.splitter
+    masterAnalyserL = pair.left
+    masterAnalyserR = pair.right
+    // masterGain also drives the actual audio output.
+    masterGain.connect(ctx.destination)
+  }
 
   const log = (msg: string): void => {
     if (typeof console !== 'undefined') console.debug(`[audio-mixer] ${msg}`)
@@ -163,10 +228,23 @@ export function createAudioMixer(
 
   const buildTrackGraph = (ctx: AudioContext, trackNode: TrackNode): void => {
     if (trackNode.trackGain) return
+    ensureMasterGraph(ctx)
     const trackGain = ctx.createGain()
     trackGain.gain.value = isTrackEffectivelyMuted(trackNode) ? 0 : 1
-    trackGain.connect(ctx.destination)
+    // Force stereo on the track bus so mono sources still expose L/R to
+    // the per-track meter's analyser pair (default speaker upmix).
+    trackGain.channelCount = 2
+    trackGain.channelCountMode = 'explicit'
+    trackGain.channelInterpretation = 'speakers'
+    // Passive L/R analyser taps post-trackGain so muted/soloed-out tracks
+    // correctly show silence in the meter. The analyser branch doesn't
+    // route back to audio output — it's a pure sidechain.
+    const pair = buildStereoAnalyserPair(ctx, trackGain)
+    // Route audio forward to the master bus (which feeds destination).
+    trackGain.connect(masterGain!)
     trackNode.trackGain = trackGain
+    trackNode.analyserL = pair.left
+    trackNode.analyserR = pair.right
   }
 
   const ensureGraph = (): void => {
@@ -197,14 +275,18 @@ export function createAudioMixer(
   const tearDownTrack = (trackNode: TrackNode): void => {
     for (const clipNode of trackNode.clips.values()) tearDownClip(clipNode)
     try { trackNode.trackGain?.disconnect() } catch { /* ignore */ }
+    try { trackNode.analyserL?.disconnect() } catch { /* ignore */ }
+    try { trackNode.analyserR?.disconnect() } catch { /* ignore */ }
     trackNode.trackGain = null
+    trackNode.analyserL = null
+    trackNode.analyserR = null
   }
 
   const populateFromTracks = (nextTracks: AudioTrack[]): void => {
     for (const trackNode of trackMap.values()) tearDownTrack(trackNode)
     trackMap.clear()
     for (const t of nextTracks) {
-      const trackNode: TrackNode = { track: t, trackGain: null, clips: new Map() }
+      const trackNode: TrackNode = { track: t, trackGain: null, analyserL: null, analyserR: null, clips: new Map() }
       for (const c of (t.clips ?? [])) {
         trackNode.clips.set(c.id, {
           clip: c,
@@ -489,12 +571,31 @@ export function createAudioMixer(
       log(`rebuild(${nextTracks.length} tracks)`)
     },
 
+    getTrackAnalysers(trackId: string) {
+      const tn = trackMap.get(trackId)
+      if (!tn?.analyserL || !tn.analyserR) return null
+      return { left: tn.analyserL, right: tn.analyserR }
+    },
+
+    getMasterAnalysers() {
+      if (!masterAnalyserL || !masterAnalyserR) return null
+      return { left: masterAnalyserL, right: masterAnalyserR }
+    },
+
     dispose() {
       if (disposed) return
       disposed = true
       isPlaying = false
       for (const trackNode of trackMap.values()) tearDownTrack(trackNode)
       trackMap.clear()
+      try { masterGain?.disconnect() } catch { /* ignore */ }
+      try { masterSplitter?.disconnect() } catch { /* ignore */ }
+      try { masterAnalyserL?.disconnect() } catch { /* ignore */ }
+      try { masterAnalyserR?.disconnect() } catch { /* ignore */ }
+      masterGain = null
+      masterSplitter = null
+      masterAnalyserL = null
+      masterAnalyserR = null
       if (audioCtx) {
         try { audioCtx.close() } catch { /* ignore */ }
         audioCtx = null

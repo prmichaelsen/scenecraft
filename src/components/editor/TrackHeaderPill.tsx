@@ -37,6 +37,11 @@ export interface TrackHeaderPillProps {
   /** Optional extra action buttons rendered after the solo button —
    *  e.g. Properties, move-up, move-down. */
   actions?: ReactNode
+  /** Optional amplitude meter rendered at the far right of the pill.
+   *  Typically a `<LevelMeter>` driven by the mixer's per-track analyser.
+   *  Passed as a ReactNode so this component doesn't have to know about
+   *  audio graph types. */
+  meter?: ReactNode
   /** Max width applied to the label when it's a plain string. */
   labelMaxWidthClass?: string
 }
@@ -51,6 +56,7 @@ export function TrackHeaderPill({
   solo,
   onSoloToggle,
   actions,
+  meter,
   labelMaxWidthClass = 'max-w-[120px]',
 }: TrackHeaderPillProps) {
   return (
@@ -59,7 +65,7 @@ export function TrackHeaderPill({
       data-testid="track-header-pill"
     >
       {prefix && (
-        <span className="text-[9px] text-gray-500 uppercase tracking-wider pointer-events-none">
+        <span className="text-[9px] text-gray-500 uppercase tracking-wider">
           {prefix}
         </span>
       )}
@@ -93,6 +99,7 @@ export function TrackHeaderPill({
         S
       </button>
       {actions}
+      {meter}
     </div>
   )
 }

@@ -133,6 +133,10 @@ type AudioLaneProps = {
     stem: StemDropPayload,
     existingClips: AudioClip[],
   ) => void
+  /** Optional amplitude meter rendered at the far right of the track
+   *  header pill. Caller owns the analyser wiring — AudioLane just forwards
+   *  the ReactNode into `TrackHeaderPill.meter`. */
+  headerMeter?: React.ReactNode
 }
 
 /** Shape of the `application/x-scenecraft-stem` drag payload. Mirrored by
@@ -149,7 +153,7 @@ export type StemDropPayload = {
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio, onDropStem }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio, onDropStem, headerMeter }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -289,23 +293,16 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
       }}
     >
       {/* Track header — sticky so it stays visible during horizontal scroll.
-          `draggable` is scoped to the header only so the lane body (where
-          clips live) keeps its existing mousedown gestures.
+          The wrapper is a drop TARGET (for reorder); the drag SOURCE is a
+          narrower handle inside the pill (the `A{n}` prefix) so HTML5 drag
+          doesn't eat click events on the M/S buttons.
           The outer div stays transparent + full-height so it preserves its
-          drag / drop / context-menu hit area; the inner pill gets the
+          drop / context-menu hit area; the inner pill gets the
           translucent background + blur so ONLY the label/buttons row is
           tinted (mirrors the Align-Waveforms modal's `bg-black/50
           backdrop-blur-sm` look). */}
       <div
-        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit cursor-grab active:cursor-grabbing"
-        draggable
-        onDragStart={(e) => {
-          e.stopPropagation()
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('application/x-audio-track-id', track.id)
-          // Some browsers need a text fallback to actually start a drag.
-          e.dataTransfer.setData('text/plain', track.id)
-        }}
+        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit"
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes('application/x-audio-track-id')) return
           e.preventDefault()
@@ -334,7 +331,25 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
         )}
 
         <TrackHeaderPill
-          prefix={`A${track.display_order + 1}`}
+          // `draggable` lives on the prefix badge only — NOT on the wrapper —
+          // because an HTML5-draggable ancestor eats click events on any
+          // descendant the user even slightly moves during mousedown→mouseup,
+          // which was silently swallowing M/S button clicks.
+          prefix={
+            <span
+              className="cursor-grab active:cursor-grabbing text-[9px] text-gray-500 uppercase tracking-wider select-none"
+              title="Drag to reorder track"
+              draggable
+              onDragStart={(e) => {
+                e.stopPropagation()
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('application/x-audio-track-id', track.id)
+                e.dataTransfer.setData('text/plain', track.id)
+              }}
+            >
+              A{track.display_order + 1}
+            </span>
+          }
           label={renaming ? (
             <input
               ref={inputRef}
@@ -371,6 +386,7 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
             e.stopPropagation()
             onUpdateTrack?.(track.id, { solo: !track.solo })
           }}
+          meter={headerMeter}
         />
       </div>
 

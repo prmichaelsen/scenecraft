@@ -27,11 +27,28 @@ class MockMediaElementAudioSourceNode {
   disconnect() {}
 }
 
+class MockAnalyserNode {
+  fftSize = 2048
+  smoothingTimeConstant = 0
+  connections: unknown[] = []
+  connect(dst: unknown) { this.connections.push(dst); return dst as MockAnalyserNode }
+  disconnect() { this.connections.length = 0 }
+  getFloatTimeDomainData(_arr: Float32Array) { /* no-op for tests */ }
+}
+
+class MockChannelSplitterNode {
+  connections: unknown[] = []
+  connect(dst: unknown, _output?: number) { this.connections.push(dst); return dst as MockChannelSplitterNode }
+  disconnect() { this.connections.length = 0 }
+}
+
 class MockAudioContext {
   currentTime = 0
   state: 'running' | 'suspended' | 'closed' = 'running'
   destination = new MockGainNode()
   createGain() { return new MockGainNode() }
+  createAnalyser() { return new MockAnalyserNode() }
+  createChannelSplitter(_n?: number) { return new MockChannelSplitterNode() }
   createMediaElementSource(_el: HTMLMediaElement) { return new MockMediaElementAudioSourceNode() }
   resume() { this.state = 'running'; return Promise.resolve() }
   close() { this.state = 'closed'; return Promise.resolve() }
@@ -323,9 +340,16 @@ describe('createAudioMixer — curve automation (T117)', () => {
   const instrumentCtx = (ctx: MockAudioContext): void => {
     const origCreateGain = ctx.createGain.bind(ctx)
     const gains: MockGainNode[] = []
+    // `_allGains` excludes the master gain (first gain created by the mixer's
+    // ensureMasterGraph helper). Tests assert against track/clip gains only.
     ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
+    let skippedMaster = false
     ctx.createGain = () => {
       const g = origCreateGain()
+      if (!skippedMaster) {
+        skippedMaster = true
+        return g
+      }
       gains.push(g)
       return g
     }
@@ -431,7 +455,13 @@ describe('createAudioMixer — equal-power crossfade (T117)', () => {
     const orig = ctx.createGain.bind(ctx)
     const gains: MockGainNode[] = []
     ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
-    ctx.createGain = () => { const g = orig(); gains.push(g); return g }
+    let skippedMaster = false
+    ctx.createGain = () => {
+      const g = orig()
+      if (!skippedMaster) { skippedMaster = true; return g }
+      gains.push(g)
+      return g
+    }
   }
 
   it('overlapping same-track clips receive cos + sin curve schedules', () => {
