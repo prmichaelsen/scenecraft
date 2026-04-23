@@ -7,6 +7,7 @@ import { scenecraftFileUrl, fetchPool, postAssignPoolVideo, fetchBin, postUpdate
 import { autoSave } from '@/lib/version-client'
 import { invalidateEntry } from '@/lib/frame-cache'
 import { evaluateCurve, getEasing, EASING_LABELS, EASING_COUNT, type CurvePoint } from '@/lib/remap-curve'
+import { InlineCurveEditor } from './InlineCurveEditor'
 import { useJobState, useJobContext } from '@/contexts/JobStateContext'
 
 const STORAGE_KEY = 'scenecraft-side-panel-width'
@@ -2201,251 +2202,13 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
   lockY?: boolean; diagonalRef?: boolean; aspect?: number; onSave?: (points: CurvePoint[]) => Promise<void>; initialPoints?: CurvePoint[]
   maxY?: number
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [points, setPoints] = useState<CurvePoint[]>(() =>
     initialPointsProp || (curveKey ? (transition as Record<string, unknown>)[curveKey] as CurvePoint[] : null) || [[0, defaultY], [1, defaultY]]
   )
-  const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
-  const PAD = 10
   const ASPECT = aspectProp ?? 3
   const maxY = maxYProp ?? 1
-  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 240, h: Math.round(240 / (aspectProp ?? 3)) })
-  const W = canvasSize.w
-  const H = canvasSize.h
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ro = new ResizeObserver((entries) => {
-      const { width } = entries[0].contentRect
-      if (width > 0) setCanvasSize({ w: width, h: Math.round(width / ASPECT) })
-    })
-    ro.observe(canvas)
-    return () => ro.disconnect()
-  }, [])
-
-  const toCanvas = (x: number, y: number): [number, number] => [
-    PAD + x * (W - 2 * PAD),
-    H - PAD - (y / maxY) * (H - 2 * PAD),
-  ]
-  const fromCanvas = (cx: number, cy: number): [number, number] => [
-    Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
-    Math.max(0, Math.min(maxY, ((H - PAD - cy) / (H - 2 * PAD)) * maxY)),
-  ]
-  const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
-    const canvas = canvasRef.current
-    if (!canvas) return null
-    const rect = canvas.getBoundingClientRect()
-    return [e.clientX - rect.left, e.clientY - rect.top]
-  }
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = W * dpr
-    canvas.height = H * dpr
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, W, H)
-
-    ctx.fillStyle = '#1a1a2e'
-    ctx.fillRect(0, 0, W, H)
-
-    // Grid
-    ctx.strokeStyle = '#333'
-    ctx.lineWidth = 0.5
-    for (let i = 0; i <= 4; i++) {
-      const [x] = toCanvas(i / 4, 0)
-      const [, y] = toCanvas(0, i / 4)
-      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
-    }
-
-    ctx.fillStyle = '#666'
-    ctx.font = '8px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText('Progress \u2192', W / 2, H - 1)
-    ctx.save()
-    ctx.translate(8, H / 2)
-    ctx.rotate(-Math.PI / 2)
-    ctx.fillText(yLabel, 0, 0)
-    ctx.restore()
-    ctx.fillStyle = '#555'
-    ctx.font = '7px monospace'
-    ctx.textAlign = 'left'
-    ctx.fillText('0%', PAD, H - PAD + 9)
-    ctx.textAlign = 'right'
-    ctx.fillText('100%', W - PAD, H - PAD + 9)
-    ctx.textAlign = 'left'
-    ctx.fillText(`${Math.round(maxY * 100)}%`, 1, PAD + 3)
-    // Draw 100% reference line when maxY > 1
-    if (maxY > 1) {
-      const [, y100] = toCanvas(0, 1)
-      ctx.strokeStyle = '#444'
-      ctx.lineWidth = 0.5
-      ctx.setLineDash([2, 3])
-      ctx.beginPath()
-      ctx.moveTo(PAD, y100)
-      ctx.lineTo(W - PAD, y100)
-      ctx.stroke()
-      ctx.setLineDash([])
-      ctx.fillStyle = '#444'
-      ctx.fillText('100%', 1, y100 + 3)
-    }
-
-    // Reference line (diagonal for remap, horizontal at y=0 for others)
-    ctx.strokeStyle = '#555'
-    ctx.lineWidth = 1
-    ctx.setLineDash([4, 4])
-    ctx.beginPath()
-    const [lx0, ly0] = toCanvas(0, 0)
-    const [lx1, ly1] = toCanvas(1, diagonalRef ? 1 : 0)
-    ctx.moveTo(lx0, ly0)
-    ctx.lineTo(lx1, ly1)
-    ctx.stroke()
-    ctx.setLineDash([])
-
-    const sorted = [...points].sort((a, b) => a[0] - b[0]) as CurvePoint[]
-
-    // Draw eased curve segments with sub-sampling
-    const STEPS_PER_SEGMENT = 24
-    const curvePath: [number, number][] = []
-    for (let i = 0; i < sorted.length; i++) {
-      if (i === 0) {
-        curvePath.push(toCanvas(sorted[0][0], sorted[0][1]))
-      } else {
-        const [x0] = sorted[i - 1]
-        const [x1, y1] = sorted[i]
-        const easing = getEasing(sorted[i])
-        if (easing === 0) {
-          // Linear — single line segment
-          curvePath.push(toCanvas(x1, y1))
-        } else {
-          // Eased — sub-sample the segment
-          for (let s = 1; s <= STEPS_PER_SEGMENT; s++) {
-            const t = s / STEPS_PER_SEGMENT
-            const val = evaluateCurve(sorted, x0 + t * (x1 - x0))
-            curvePath.push(toCanvas(x0 + t * (x1 - x0), val))
-          }
-        }
-      }
-    }
-
-    // Curve line
-    ctx.strokeStyle = color + '66'
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    for (let i = 0; i < curvePath.length; i++) {
-      if (i === 0) ctx.moveTo(curvePath[i][0], curvePath[i][1])
-      else ctx.lineTo(curvePath[i][0], curvePath[i][1])
-    }
-    ctx.stroke()
-
-    // Fill area under curve
-    ctx.fillStyle = color + '11'
-    ctx.beginPath()
-    const [bx0, by0] = toCanvas(sorted[0][0], 0)
-    ctx.moveTo(bx0, by0)
-    for (const [cx, cy] of curvePath) ctx.lineTo(cx, cy)
-    const [bxN, byN] = toCanvas(sorted[sorted.length - 1][0], 0)
-    ctx.lineTo(bxN, byN)
-    ctx.closePath()
-    ctx.fill()
-
-    // Points
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
-      const isEndpoint = i === 0 || i === sorted.length - 1
-      const isHovered = hoveredIdx === i
-      const isDragging = draggingIdx === i
-
-      if (!isEndpoint) {
-        const [, bottomY] = toCanvas(0, 0)
-        ctx.strokeStyle = isDragging ? color : isHovered ? color + 'aa' : color + '44'
-        ctx.lineWidth = 1
-        ctx.setLineDash([2, 2])
-        ctx.beginPath()
-        ctx.moveTo(cx, bottomY)
-        ctx.lineTo(cx, cy)
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-
-      const r = isDragging ? 3.5 : isHovered ? 3 : 2.5
-      if (isEndpoint) {
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.fillStyle = isDragging ? color : isHovered ? color : '#555'
-        ctx.fill()
-        ctx.strokeStyle = isDragging ? '#fff' : '#888'
-        ctx.lineWidth = 0.5
-        ctx.stroke()
-      } else {
-        ctx.beginPath()
-        ctx.moveTo(cx, cy - r)
-        ctx.lineTo(cx + r, cy)
-        ctx.lineTo(cx, cy + r)
-        ctx.lineTo(cx - r, cy)
-        ctx.closePath()
-        ctx.fillStyle = isDragging ? color : color
-        ctx.fill()
-        ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 0.5
-        ctx.stroke()
-      }
-
-      if (isHovered || isDragging) {
-        ctx.fillStyle = color
-        ctx.font = '7px monospace'
-        ctx.textAlign = cx > W / 2 ? 'right' : 'left'
-        const labelX = cx > W / 2 ? cx - 8 : cx + 8
-        ctx.fillText(`${Math.round(sorted[i][1] * 100)}%`, labelX, cy + 3)
-      }
-      // Easing type indicator for non-first points with non-linear easing
-      const ptEasing = getEasing(sorted[i])
-      if (i > 0 && ptEasing > 0) {
-        ctx.fillStyle = color + 'cc'
-        ctx.font = 'bold 8px monospace'
-        ctx.textAlign = 'center'
-        ctx.fillText(EASING_LABELS[ptEasing], cx, cy - r - 3)
-      }
-    }
-
-    // Playhead
-    const fromKf = keyframes.find((k) => k.id === transition.from)
-    const toKf = keyframes.find((k) => k.id === transition.to)
-    if (fromKf && toKf) {
-      const span = toKf.timeSeconds - fromKf.timeSeconds
-      if (span > 0) {
-        const linearProgress = Math.max(0, Math.min(1, (currentTime - fromKf.timeSeconds) / span))
-        const val = evaluateCurve(sorted, linearProgress)
-        const [phx, phy] = toCanvas(linearProgress, val)
-        const [, bottomY] = toCanvas(0, 0)
-        const [, topY] = toCanvas(0, 1)
-
-        ctx.strokeStyle = '#ffffff44'
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        ctx.moveTo(phx, topY)
-        ctx.lineTo(phx, bottomY)
-        ctx.stroke()
-
-        ctx.beginPath()
-        ctx.arc(phx, phy, 4, 0, Math.PI * 2)
-        ctx.fillStyle = '#fff'
-        ctx.fill()
-        ctx.strokeStyle = color
-        ctx.lineWidth = 1.5
-        ctx.stroke()
-      }
-    }
-  }, [points, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to, color, yLabel, diagonalRef, W, H])
 
   const save = useCallback(async (newPoints: CurvePoint[]) => {
     setSaving(true)
@@ -2467,110 +2230,38 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
     } finally {
       setSaving(false)
     }
-  }, [projectName, transition, onDataChange, curveKey, styleKey, defaultY, label])
+  }, [projectName, transition, onDataChange, curveKey, styleKey, defaultY, label, customSave])
 
-  const handleCycleEasing = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    const pos = mouseToCanvas(e)
-    if (!pos) return
+  // Normalize point order — parent of InlineCurveEditor owns this invariant.
+  const handleChange = useCallback((next: CurvePoint[]) => {
+    const sorted = [...next].sort((a, b) => a[0] - b[0])
+    setPoints(sorted)
+    save(sorted)
+  }, [save])
+
+  // Per-point easing cycle via right-click; preserves legacy TransitionPanel behavior.
+  const handlePointRightClick = useCallback((idx: number, _pt: CurvePoint) => {
+    if (idx === 0) return // first point has no incoming segment
     const sorted = [...points].sort((a, b) => a[0] - b[0]) as CurvePoint[]
-    for (let i = 1; i < sorted.length; i++) { // skip first point (no incoming segment)
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 10) {
-        const cur = getEasing(sorted[i])
-        const next = (cur + 1) % EASING_COUNT
-        sorted[i] = [sorted[i][0], sorted[i][1], next]
-        setPoints(sorted)
-        save(sorted)
-        return
-      }
-    }
+    const cur = getEasing(sorted[idx])
+    const nextEasing = (cur + 1) % EASING_COUNT
+    sorted[idx] = [sorted[idx][0], sorted[idx][1], nextEasing]
+    setPoints(sorted)
+    save(sorted)
   }, [points, save])
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button === 2) return // right-click handled by context menu
-    const pos = mouseToCanvas(e)
-    if (!pos) return
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-    for (let i = 0; i < sorted.length; i++) {
-      // Skip endpoints when lockY (time remap) — they're fixed at [0,0] and [1,1]
-      if (lockY && (i === 0 || i === sorted.length - 1)) continue
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
-        setDraggingIdx(i)
-        return
-      }
-    }
-    const [nx, ny] = fromCanvas(pos[0], pos[1])
-    const newPoints: CurvePoint[] = [...points, [nx, ny]]
-    newPoints.sort((a, b) => a[0] - b[0])
-    setPoints(newPoints)
-    save(newPoints)
-  }, [points, save])
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    const pos = mouseToCanvas(e)
-    if (!pos) return
-    if (draggingIdx !== null) {
-      const [nx, ny] = fromCanvas(pos[0], pos[1])
-      setPoints((prev) => {
-        const sorted = [...prev].sort((a, b) => a[0] - b[0])
-        // For lockY (time remap): endpoints are fully locked, intermediate points lock Y only
-        if (lockY && (draggingIdx === 0 || draggingIdx === sorted.length - 1)) return sorted
-        const minX = sorted[draggingIdx - 1]?.[0] ?? 0
-        const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
-        const newY = lockY ? sorted[draggingIdx][1] : ny
-        const existingEasing = sorted[draggingIdx][2]
-        sorted[draggingIdx] = existingEasing != null
-          ? [Math.max(minX, Math.min(maxX, nx)), newY, existingEasing]
-          : [Math.max(minX, Math.min(maxX, nx)), newY]
-        // Shift+drag endpoint: move both endpoints to same Y
-        const isEndpoint = draggingIdx === 0 || draggingIdx === sorted.length - 1
-        if (e.shiftKey && isEndpoint && !lockY) {
-          const otherIdx = draggingIdx === 0 ? sorted.length - 1 : 0
-          const otherEasing = sorted[otherIdx][2]
-          sorted[otherIdx] = otherEasing != null
-            ? [sorted[otherIdx][0], newY, otherEasing]
-            : [sorted[otherIdx][0], newY]
-        }
-        return sorted
-      })
-      return
-    }
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-    let found: number | null = null
-    for (let i = 0; i < sorted.length; i++) {
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) { found = i; break }
-    }
-    setHoveredIdx(found)
-  }, [draggingIdx, points])
-
-  const handleMouseUp = useCallback(() => {
-    if (draggingIdx !== null) { setDraggingIdx(null); save(points) }
-  }, [draggingIdx, points, save])
-
-  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    const pos = mouseToCanvas(e)
-    if (!pos) return
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-    for (let i = 1; i < sorted.length - 1; i++) {
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
-        const newPoints = sorted.filter((_, j) => j !== i)
-        setPoints(newPoints)
-        save(newPoints)
-        setHoveredIdx(null)
-        return
-      }
-    }
-  }, [points, save])
+  // Project playhead progress into [0..1] between transition from/to keyframes.
+  const fromKf = keyframes.find((k) => k.id === transition.from)
+  const toKf = keyframes.find((k) => k.id === transition.to)
+  const span = (fromKf && toKf) ? (toKf.timeSeconds - fromKf.timeSeconds) : 0
+  const playhead = span > 0
+    ? Math.max(0, Math.min(1, (currentTime - fromKf!.timeSeconds) / span))
+    : undefined
 
   const handleReset = useCallback(() => {
     const defaultPoints: CurvePoint[] = [[0, defaultY], [1, defaultY]]
     setPoints(defaultPoints)
     save(defaultPoints)
-    setHoveredIdx(null)
   }, [save, defaultY])
 
   const hasChanges = points.length > 2 || points.some((p) => p[1] !== defaultY || (p[2] && p[2] > 0))
@@ -2587,20 +2278,21 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
           Reset
         </button>
       </div>
-      <canvas
-        ref={canvasRef}
-        className="w-full rounded border border-gray-700 cursor-crosshair"
-        style={{ width: '100%', height: 'auto', aspectRatio: `${ASPECT} / 1` }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
-        onDoubleClick={handleDoubleClick}
-        onContextMenu={handleCycleEasing}
+      <InlineCurveEditor
+        points={points}
+        onChange={handleChange}
+        onPointRightClick={handlePointRightClick}
+        color={color}
+        aspect={ASPECT}
+        valueRange={[0, maxY]}
+        yLabel={yLabel}
+        referenceLine={diagonalRef ? 'diagonal' : 'horizontal'}
+        referenceLineY={0}
+        playheadTime={playhead}
+        lockEndpoints={lockY ? { x: true, y: true } : undefined}
+        endpointMirrorOnShift={!lockY}
+        hintText="Click add · Drag move · Dbl-click remove · Right-click cycle easing"
       />
-      <div className="text-[8px] text-gray-600">
-        <span className="text-gray-500">Click</span> add · <span className="text-gray-500">Drag</span> move · <span className="text-gray-500">Dbl-click</span> remove · <span className="text-gray-500">Right-click</span> cycle easing
-      </div>
     </div>
   )
 }
@@ -2608,228 +2300,19 @@ function AnimCurveEditor({ label, defaultY, color, yLabel, transition, projectNa
 function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, onDataChange }: {
   transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number; onDataChange: () => void
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [points, setPoints] = useState<[number, number][]>(() =>
-    transition.opacityCurve || [[0, 1], [1, 1]]
+  const [points, setPoints] = useState<CurvePoint[]>(() =>
+    (transition.opacityCurve as CurvePoint[] | undefined) || [[0, 1], [1, 1]]
   )
-  const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
 
-  const PAD = 10
-  const ASPECT = 3 // width:height ratio
-  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 240, h: 80 })
-  const W = canvasSize.w
-  const H = canvasSize.h
-
-  // Measure actual rendered size
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ro = new ResizeObserver((entries) => {
-      const { width } = entries[0].contentRect
-      if (width > 0) setCanvasSize({ w: width, h: Math.round(width / ASPECT) })
-    })
-    ro.observe(canvas)
-    return () => ro.disconnect()
-  }, [])
-
-  const toCanvas = (x: number, y: number): [number, number] => [
-    PAD + x * (W - 2 * PAD),
-    H - PAD - y * (H - 2 * PAD),
-  ]
-  const fromCanvas = (cx: number, cy: number): [number, number] => [
-    Math.max(0, Math.min(1, (cx - PAD) / (W - 2 * PAD))),
-    Math.max(0, Math.min(1, (H - PAD - cy) / (H - 2 * PAD))),
-  ]
-
-  const mouseToCanvas = (e: React.MouseEvent): [number, number] | null => {
-    const canvas = canvasRef.current
-    if (!canvas) return null
-    const rect = canvas.getBoundingClientRect()
-    return [
-      e.clientX - rect.left,
-      e.clientY - rect.top,
-    ]
-  }
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = W * dpr
-    canvas.height = H * dpr
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, W, H)
-
-    // Background
-    ctx.fillStyle = '#1a1a2e'
-    ctx.fillRect(0, 0, W, H)
-
-    // Grid
-    ctx.strokeStyle = '#333'
-    ctx.lineWidth = 0.5
-    for (let i = 0; i <= 4; i++) {
-      const [x] = toCanvas(i / 4, 0)
-      const [, y] = toCanvas(0, i / 4)
-      ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke()
-    }
-
-    // Axis labels
-    ctx.fillStyle = '#666'
-    ctx.font = '8px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText('Progress \u2192', W / 2, H - 1)
-    ctx.save()
-    ctx.translate(8, H / 2)
-    ctx.rotate(-Math.PI / 2)
-    ctx.fillText('Opacity \u2192', 0, 0)
-    ctx.restore()
-    ctx.fillStyle = '#555'
-    ctx.font = '7px monospace'
-    ctx.textAlign = 'left'
-    ctx.fillText('0%', PAD, H - PAD + 9)
-    ctx.textAlign = 'right'
-    ctx.fillText('100%', W - PAD, H - PAD + 9)
-    ctx.textAlign = 'left'
-    ctx.fillText('100%', 1, PAD + 3)
-
-    // 100% reference line (horizontal)
-    ctx.strokeStyle = '#555'
-    ctx.lineWidth = 1
-    ctx.setLineDash([4, 4])
-    ctx.beginPath()
-    const [lx0, ly0] = toCanvas(0, 1)
-    const [lx1] = toCanvas(1, 1)
-    ctx.moveTo(lx0, ly0)
-    ctx.lineTo(lx1, ly0)
-    ctx.stroke()
-    ctx.setLineDash([])
-
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-
-    // Curve line
-    ctx.strokeStyle = '#38bdf866'
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
-      if (i === 0) ctx.moveTo(cx, cy)
-      else ctx.lineTo(cx, cy)
-    }
-    ctx.stroke()
-
-    // Fill area under curve
-    ctx.fillStyle = '#38bdf811'
-    ctx.beginPath()
-    const [bx0, by0] = toCanvas(sorted[0][0], 0)
-    ctx.moveTo(bx0, by0)
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
-      ctx.lineTo(cx, cy)
-    }
-    const [bxN, byN] = toCanvas(sorted[sorted.length - 1][0], 0)
-    ctx.lineTo(bxN, byN)
-    ctx.closePath()
-    ctx.fill()
-
-    // Points
-    for (let i = 0; i < sorted.length; i++) {
-      const [cx, cy] = toCanvas(sorted[i][0], sorted[i][1])
-      const isEndpoint = i === 0 || i === sorted.length - 1
-      const isHovered = hoveredIdx === i
-      const isDragging = draggingIdx === i
-
-      if (!isEndpoint) {
-        // Vertical guide
-        const [, bottomY] = toCanvas(0, 0)
-        ctx.strokeStyle = isDragging ? '#38bdf8' : isHovered ? '#38bdf8aa' : '#38bdf844'
-        ctx.lineWidth = 1
-        ctx.setLineDash([2, 2])
-        ctx.beginPath()
-        ctx.moveTo(cx, bottomY)
-        ctx.lineTo(cx, cy)
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-
-      // Diamond for intermediate, circle for endpoints — fixed size regardless of canvas stretch
-      const r = isDragging ? 3.5 : isHovered ? 3 : 2.5
-      if (isEndpoint) {
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.fillStyle = isDragging ? '#38bdf8' : isHovered ? '#38bdf8' : '#555'
-        ctx.fill()
-        ctx.strokeStyle = isDragging ? '#fff' : '#888'
-        ctx.lineWidth = 0.5
-        ctx.stroke()
-      } else {
-        ctx.beginPath()
-        ctx.moveTo(cx, cy - r)
-        ctx.lineTo(cx + r, cy)
-        ctx.lineTo(cx, cy + r)
-        ctx.lineTo(cx - r, cy)
-        ctx.closePath()
-        ctx.fillStyle = isDragging ? '#38bdf8' : '#0ea5e9'
-        ctx.fill()
-        ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 0.5
-        ctx.stroke()
-      }
-
-      // Label
-      if (isHovered || isDragging) {
-        ctx.fillStyle = '#7dd3fc'
-        ctx.font = '7px monospace'
-        ctx.textAlign = cx > W / 2 ? 'right' : 'left'
-        const labelX = cx > W / 2 ? cx - 8 : cx + 8
-        ctx.fillText(`${Math.round(sorted[i][1] * 100)}%`, labelX, cy + 3)
-      }
-    }
-
-    // Playhead
-    const fromKf = keyframes.find((k) => k.id === transition.from)
-    const toKf = keyframes.find((k) => k.id === transition.to)
-    if (fromKf && toKf) {
-      const span = toKf.timeSeconds - fromKf.timeSeconds
-      if (span > 0) {
-        const linearProgress = Math.max(0, Math.min(1, (currentTime - fromKf.timeSeconds) / span))
-        const opacityVal = evaluateCurve(sorted, linearProgress)
-        const [phx, phy] = toCanvas(linearProgress, opacityVal)
-        const [, bottomY] = toCanvas(0, 0)
-        const [, topY] = toCanvas(0, 1)
-
-        ctx.strokeStyle = '#ffffff44'
-        ctx.lineWidth = 1
-        ctx.setLineDash([])
-        ctx.beginPath()
-        ctx.moveTo(phx, topY)
-        ctx.lineTo(phx, bottomY)
-        ctx.stroke()
-
-        ctx.beginPath()
-        ctx.arc(phx, phy, 4, 0, Math.PI * 2)
-        ctx.fillStyle = '#fff'
-        ctx.fill()
-        ctx.strokeStyle = '#0ea5e9'
-        ctx.lineWidth = 1.5
-        ctx.stroke()
-      }
-    }
-  }, [points, hoveredIdx, draggingIdx, currentTime, keyframes, transition.from, transition.to])
-
-  const save = useCallback(async (newPoints: [number, number][]) => {
+  const save = useCallback(async (newPoints: CurvePoint[]) => {
     setSaving(true)
     const sorted = [...newPoints].sort((a, b) => a[0] - b[0])
     try {
       const { postUpdateTransitionStyle } = await import('@/lib/scenecraft-client')
       const isDefault = sorted.length === 2 && sorted[0][1] === 1 && sorted[1][1] === 1
-      await postUpdateTransitionStyle(projectName, transition.id, { opacityCurve: isDefault ? null : sorted })
-      transition.opacityCurve = isDefault ? null : sorted
+      await postUpdateTransitionStyle(projectName, transition.id, { opacityCurve: isDefault ? null : sorted as [number, number][] })
+      transition.opacityCurve = isDefault ? null : sorted as [number, number][]
       onDataChange()
     } catch (e) {
       console.error('Save opacity curve failed:', e)
@@ -2838,91 +2321,23 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
     }
   }, [projectName, transition, onDataChange])
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    const pos = mouseToCanvas(e)
-    if (!pos) return
-    const [cx, cy] = pos
+  const handleChange = useCallback((next: CurvePoint[]) => {
+    const sorted = [...next].sort((a, b) => a[0] - b[0])
+    setPoints(sorted)
+    save(sorted)
+  }, [save])
 
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-    for (let i = 0; i < sorted.length; i++) {
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(cx - px, cy - py) < 6) {
-        setDraggingIdx(i)
-        return
-      }
-    }
-
-    // Add new point
-    const [nx, ny] = fromCanvas(cx, cy)
-    const newPoints: [number, number][] = [...points, [nx, ny]]
-    newPoints.sort((a, b) => a[0] - b[0])
-    setPoints(newPoints)
-    save(newPoints)
-  }, [points, save])
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    const pos = mouseToCanvas(e)
-    if (!pos) return
-
-    if (draggingIdx !== null) {
-      const [nx, ny] = fromCanvas(pos[0], pos[1])
-      setPoints((prev) => {
-        const sorted = [...prev].sort((a, b) => a[0] - b[0])
-        const minX = sorted[draggingIdx - 1]?.[0] ?? 0
-        const maxX = sorted[draggingIdx + 1]?.[0] ?? 1
-        sorted[draggingIdx] = [Math.max(minX, Math.min(maxX, nx)), ny]
-        // Shift+drag endpoint: move both endpoints to same Y
-        const isEndpoint = draggingIdx === 0 || draggingIdx === sorted.length - 1
-        if (e.shiftKey && isEndpoint) {
-          const otherIdx = draggingIdx === 0 ? sorted.length - 1 : 0
-          sorted[otherIdx] = [sorted[otherIdx][0], ny]
-        }
-        return sorted
-      })
-      return
-    }
-
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-    let found: number | null = null
-    for (let i = 0; i < sorted.length; i++) {
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 8) {
-        found = i
-        break
-      }
-    }
-    setHoveredIdx(found)
-  }, [draggingIdx, points])
-
-  const handleMouseUp = useCallback(() => {
-    if (draggingIdx !== null) {
-      setDraggingIdx(null)
-      save(points)
-    }
-  }, [draggingIdx, points, save])
-
-  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    const pos = mouseToCanvas(e)
-    if (!pos) return
-
-    const sorted = [...points].sort((a, b) => a[0] - b[0])
-    for (let i = 1; i < sorted.length - 1; i++) {
-      const [px, py] = toCanvas(sorted[i][0], sorted[i][1])
-      if (Math.hypot(pos[0] - px, pos[1] - py) < 6) {
-        const newPoints = sorted.filter((_, j) => j !== i)
-        setPoints(newPoints)
-        save(newPoints)
-        setHoveredIdx(null)
-        return
-      }
-    }
-  }, [points, save])
+  const fromKf = keyframes.find((k) => k.id === transition.from)
+  const toKf = keyframes.find((k) => k.id === transition.to)
+  const span = (fromKf && toKf) ? (toKf.timeSeconds - fromKf.timeSeconds) : 0
+  const playhead = span > 0
+    ? Math.max(0, Math.min(1, (currentTime - fromKf!.timeSeconds) / span))
+    : undefined
 
   const handleReset = useCallback(() => {
-    const defaultPoints: [number, number][] = [[0, 1], [1, 1]]
+    const defaultPoints: CurvePoint[] = [[0, 1], [1, 1]]
     setPoints(defaultPoints)
     save(defaultPoints)
-    setHoveredIdx(null)
   }, [save])
 
   const pinCount = points.length - 2
@@ -2939,19 +2354,19 @@ function OpacityCurveEditor({ transition, projectName, keyframes, currentTime, o
           Reset
         </button>
       </div>
-      <canvas
-        ref={canvasRef}
-        className="w-full rounded border border-gray-700 cursor-crosshair"
-        style={{ width: '100%', height: `${H}px` }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => { handleMouseUp(); setHoveredIdx(null) }}
-        onDoubleClick={handleDoubleClick}
+      <InlineCurveEditor
+        points={points}
+        onChange={handleChange}
+        color="#0ea5e9"
+        aspect={3}
+        valueRange={[0, 1]}
+        yLabel="Opacity "
+        referenceLine="horizontal"
+        referenceLineY={1}
+        playheadTime={playhead}
+        endpointMirrorOnShift
+        hintText="Click to add · Drag to move · Dbl-click to remove"
       />
-      <div className="text-[9px] text-gray-600 space-y-0.5">
-        <div><span className="text-gray-500">Click</span> to add · <span className="text-gray-500">Drag</span> to move · <span className="text-gray-500">Dbl-click</span> to remove</div>
-      </div>
     </div>
   )
 }
