@@ -1269,3 +1269,118 @@ export async function postEffectCurveBatchUpdate(
   if (!res.ok) throw new Error(`Failed to batch-update effect curves: ${res.status} ${await res.text()}`)
   return res.json()
 }
+
+// ── M13 track-effects ──
+
+export type TrackEffectCurve = {
+  id: string
+  effect_id: string
+  param_name: string
+  points: Array<[number, number]>
+  interpolation: 'bezier' | 'linear' | 'step'
+  visible: boolean
+}
+
+export type TrackEffectRowJSON = {
+  id: string
+  track_id: string
+  effect_type: string
+  order_index: number
+  enabled: boolean
+  static_params: Record<string, unknown>
+  curves: TrackEffectCurve[]
+  created_at?: string
+}
+
+export async function fetchTrackEffects(project: string, trackId: string): Promise<TrackEffectRowJSON[]> {
+  const u = `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/track-effects?track_id=${encodeURIComponent(trackId)}`
+  const res = await fetch(u)
+  if (!res.ok) throw new Error(`Failed to fetch track-effects: ${res.status} ${await res.text()}`)
+  const data = await res.json() as { effects?: TrackEffectRowJSON[] }
+  return data.effects ?? []
+}
+
+export async function postCreateTrackEffect(
+  project: string,
+  body: { track_id: string; effect_type: string; static_params?: Record<string, unknown>; order_index?: number },
+): Promise<TrackEffectRowJSON> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/track-effects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`Failed to create track-effect: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function postUpdateTrackEffect(
+  project: string,
+  effectId: string,
+  patch: { enabled?: boolean; static_params?: Record<string, unknown>; order_index?: number },
+): Promise<TrackEffectRowJSON> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/track-effects/${encodeURIComponent(effectId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error(`Failed to update track-effect: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function deleteTrackEffect(project: string, effectId: string): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/track-effects/${encodeURIComponent(effectId)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`Failed to delete track-effect: ${res.status} ${await res.text()}`)
+}
+
+// ── M13 send-buses ──
+
+export type SendBusJSON = {
+  id: string
+  bus_type: 'reverb' | 'delay' | 'echo'
+  label: string
+  order_index: number
+  static_params: Record<string, unknown>
+}
+
+export async function fetchSendBuses(project: string): Promise<SendBusJSON[]> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/send-buses`)
+  if (!res.ok) throw new Error(`Failed to fetch send-buses: ${res.status} ${await res.text()}`)
+  const data = await res.json() as { buses?: SendBusJSON[] }
+  return data.buses ?? []
+}
+
+export async function postCreateSendBus(
+  project: string,
+  body: { bus_type: 'reverb' | 'delay' | 'echo'; label?: string; static_params?: Record<string, unknown>; order_index?: number },
+): Promise<SendBusJSON> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/send-buses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`Failed to create send-bus: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function postUpdateSendBus(
+  project: string,
+  busId: string,
+  patch: { label?: string; order_index?: number; static_params?: Record<string, unknown> },
+): Promise<SendBusJSON> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/send-buses/${encodeURIComponent(busId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error(`Failed to update send-bus: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function deleteSendBus(project: string, busId: string): Promise<void> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/send-buses/${encodeURIComponent(busId)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`Failed to delete send-bus: ${res.status} ${await res.text()}`)
+}

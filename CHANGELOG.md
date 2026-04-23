@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.0] - 2026-04-23
+
+### Added
+- **Macro Panel is now interactive.** The stub hooks from M13 task-54 are replaced with real data:
+  - `useTrackEffects(projectName, trackId)` hits `GET /track-effects?track_id=...` (effects + curves inlined in one round-trip); `useSendBuses(projectName)` hits `GET /send-buses`. Both expose a `refetch()` handle callers invoke after mutations.
+  - **Add Effect** — Lucide `<Plus>` icon in the panel body expands into a type picker populated from the `EFFECT_TYPES` registry (synthetic `__send` filtered per spec R8a). Confirm POSTs `/track-effects` seeded with each param's default.
+  - **Remove Effect** — `×` in the per-effect header DELETEs the row.
+  - **Enable toggle** now POSTs `/track-effects/:id {enabled}` and refetches.
+  - **Bus sub-panel** — add / remove / rename / reorder all POST for real and refetch. The BusSubPanel Add button is now a Lucide `<Plus>` icon.
+- Client wrappers in `src/lib/scenecraft-client.ts`: `fetchTrackEffects`, `postCreateTrackEffect`, `postUpdateTrackEffect`, `deleteTrackEffect`, `fetchSendBuses`, `postCreateSendBus`, `postUpdateSendBus`, `deleteSendBus`, plus the `TrackEffectRowJSON` / `SendBusJSON` / `TrackEffectCurve` types they return.
+
+### Changed
+- **Audio lane header now reads on horizontal scroll.** The left-sticky track header got `bg-gray-950/80 backdrop-blur-sm` plus a subtle right-edge shadow, so the track name and M / S buttons stay legible as the waveform scrolls beneath them (contrast fix).
+
 ## [0.21.0] - 2026-04-23
 
 ### Added

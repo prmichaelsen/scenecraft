@@ -39,8 +39,8 @@ function PanelHarness({
     <EditorStateProvider>
       <SelectionPrimer id={selectedTrackId} onChange={onSelectionChange} />
       <MacroPanel
-        trackEffectsHook={() => ({ data: effectsData, loading: false, error: null })}
-        sendBusesHook={() => ({ data: busesData, loading: false, error: null })}
+        trackEffectsHook={() => ({ data: effectsData, loading: false, error: null, refetch: () => {} })}
+        sendBusesHook={() => ({ data: busesData, loading: false, error: null, refetch: () => {} })}
       />
     </EditorStateProvider>
   )

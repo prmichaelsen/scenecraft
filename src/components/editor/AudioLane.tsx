@@ -289,9 +289,11 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
     >
       {/* Track header — sticky so it stays visible during horizontal scroll.
           `draggable` is scoped to the header only so the lane body (where
-          clips live) keeps its existing mousedown gestures. */}
+          clips live) keeps its existing mousedown gestures.
+          Background + blur tint keep the M / S / track-name labels legible
+          over whatever waveform scrolls beneath them. */}
       <div
-        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit cursor-grab active:cursor-grabbing"
+        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit cursor-grab active:cursor-grabbing bg-gray-950/80 backdrop-blur-sm shadow-[2px_0_4px_-2px_rgba(0,0,0,0.6)]"
         draggable
         onDragStart={(e) => {
           e.stopPropagation()

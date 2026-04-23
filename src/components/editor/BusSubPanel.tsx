@@ -15,6 +15,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react'
+import { Plus } from 'lucide-react'
 
 export type BusType = 'reverb' | 'delay' | 'echo'
 
@@ -112,16 +113,18 @@ export function BusSubPanel({ buses, onAddBus, onRemoveBus, onUpdateBus, onReord
           <button
             type="button"
             onClick={handleAdd}
-            className="text-[10px] px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded"
+            className="flex items-center justify-center p-1 bg-blue-600 hover:bg-blue-700 text-white rounded"
+            aria-label="Add bus"
+            title="Add bus"
             data-testid="bus-add-button"
           >
-            + Add
+            <Plus size={14} />
           </button>
         </div>
       </div>
 
       {sorted.length === 0 ? (
-        <div className="text-[10px] text-gray-500 italic p-2">No send buses yet. Click “+ Add” above.</div>
+        <div className="text-[10px] text-gray-500 italic p-2">No send buses yet.</div>
       ) : (
         <ul className="flex flex-col gap-1" data-testid="bus-subpanel-list">
           {sorted.map((bus, i) => {
