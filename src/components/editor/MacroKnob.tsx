@@ -20,8 +20,15 @@
 import { useCallback, useRef, useState, type CSSProperties } from 'react'
 import type { ParamScale } from '@/lib/audio-effect-types'
 import { formatHz } from '@/lib/frequency-labels'
+import {
+  useTouchRecord,
+  type ArmState as HookArmState,
+  type TouchRecordDeps,
+} from './useTouchRecord'
 
-export type ArmState = 'idle' | 'armed' | 'recording'
+/** Arm state visible to callers. Kept as a re-export so consumers that
+ * import `ArmState` from MacroKnob continue to compile. */
+export type ArmState = HookArmState
 
 export interface MacroKnobProps {
   /** owning effect id — echoed back to gesture callbacks so the parent can route */
@@ -34,9 +41,8 @@ export interface MacroKnobProps {
   range: { min: number; max: number }
   /** native-unit scale mapping (used by the readout formatter) */
   scale: ParamScale
-  /** Current arm state (idle / armed / recording). `recording` renders a
-   *  subtle glow; parent flips to `recording` only during an active gesture
-   *  in task-55 */
+  /** Current arm state (idle / armed / recording). Ignored when
+   *  `touchRecordDeps` is provided — the hook owns state. */
   armed: ArmState
   /** whether the owning effect is enabled (affects power-button color) */
   enabled: boolean
@@ -54,6 +60,13 @@ export interface MacroKnobProps {
   onEnableToggle: () => void
   /** user clicked the eye icon */
   onVisibleToggle: () => void
+  /**
+   * M13 task-55: when provided, wires pointer gestures through the
+   * touch-record state machine (audible feedback, rAF sampling, commit
+   * on mouseup / playback-stop / disable / undo). Omit to preserve the
+   * legacy parent-controlled behaviour (MacroPanel shell today).
+   */
+  touchRecordDeps?: TouchRecordDeps
 }
 
 /** Convert a normalised [0, 1] value to native units for display. */
@@ -136,7 +149,31 @@ export function MacroKnob(props: MacroKnobProps) {
     onArmToggle,
     onEnableToggle,
     onVisibleToggle,
+    touchRecordDeps,
   } = props
+
+  // When deps are supplied, the hook takes over gesture lifecycle.
+  // The hook is always called (rules of hooks) — when deps is null the
+  // hook runs with a no-op deps object and contributes no side effects.
+  const noopDeps: TouchRecordDeps = useRef<TouchRecordDeps>({
+    effectId: effect_id,
+    paramName: param_name,
+    paramNativeValue: (n) => n,
+    param: null,
+    audioCtx: null,
+    getPlayheadSeconds: () => 0,
+    isPlaying: () => false,
+    isEffectEnabled: () => true,
+    getExistingCurve: () => null,
+    onCommit: () => {},
+    postUndo: () => {},
+  }).current
+
+  const activeDeps = touchRecordDeps ?? noopDeps
+  const hook = useTouchRecord(activeDeps)
+  const hookControlled = touchRecordDeps !== undefined
+
+  const effectiveArm: ArmState = hookControlled ? hook.state : armed
 
   const dragRef = useRef<{
     startY: number
@@ -157,7 +194,8 @@ export function MacroKnob(props: MacroKnobProps) {
     }
     setDragging(true)
     onGesture(value, { effect_id, param_name, phase: 'start' })
-  }, [value, onGesture, effect_id, param_name])
+    if (hookControlled) hook.onGestureStart()
+  }, [value, onGesture, effect_id, param_name, hookControlled, hook])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     const d = dragRef.current
@@ -169,7 +207,8 @@ export function MacroKnob(props: MacroKnobProps) {
     const delta = dy / rng
     const next = Math.max(0, Math.min(1, d.startValue + delta))
     onGesture(next, { effect_id, param_name, phase: 'move' })
-  }, [onGesture, effect_id, param_name])
+    if (hookControlled) hook.onGestureChange(next)
+  }, [onGesture, effect_id, param_name, hookControlled, hook])
 
   const handlePointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     const d = dragRef.current
@@ -178,7 +217,15 @@ export function MacroKnob(props: MacroKnobProps) {
     ;(e.target as Element).releasePointerCapture?.(e.pointerId)
     setDragging(false)
     onGesture(value, { effect_id, param_name, phase: 'end' })
-  }, [onGesture, value, effect_id, param_name])
+    if (hookControlled) hook.onGestureEnd()
+  }, [onGesture, value, effect_id, param_name, hookControlled, hook])
+
+  const handleArmToggleClick = useCallback(() => {
+    if (hookControlled) {
+      hook.toggleArm()
+    }
+    onArmToggle()
+  }, [hookControlled, hook, onArmToggle])
 
   const diameter = Math.max(24, size)
   const radius = diameter / 2 - 2
@@ -197,8 +244,8 @@ export function MacroKnob(props: MacroKnobProps) {
 
   // Arm ring color: red when armed, fully-saturated red + glow while recording,
   // grey when idle (spec R32).
-  const armColor = armed === 'idle' ? '#4b5563' : '#ef4444'
-  const armGlow = armed === 'recording' ? '0 0 6px rgba(239,68,68,0.8)' : 'none'
+  const armColor = effectiveArm === 'idle' ? '#4b5563' : '#ef4444'
+  const armGlow = effectiveArm === 'recording' ? '0 0 6px rgba(239,68,68,0.8)' : 'none'
 
   return (
     <div
@@ -270,18 +317,18 @@ export function MacroKnob(props: MacroKnobProps) {
         {/* Arm circle (spec R32) */}
         <button
           type="button"
-          onClick={onArmToggle}
+          onClick={handleArmToggleClick}
           className="rounded-full"
           style={{
             width: 14,
             height: 14,
             borderRadius: 999,
             border: `2px solid ${armColor}`,
-            background: armed === 'idle' ? '#374151' : armColor,
+            background: effectiveArm === 'idle' ? '#374151' : armColor,
             boxShadow: armGlow,
           }}
-          aria-label={armed === 'idle' ? 'Arm knob' : 'Disarm knob'}
-          aria-pressed={armed !== 'idle'}
+          aria-label={effectiveArm === 'idle' ? 'Arm knob' : 'Disarm knob'}
+          aria-pressed={effectiveArm !== 'idle'}
           data-testid="macro-knob-arm"
         />
 
