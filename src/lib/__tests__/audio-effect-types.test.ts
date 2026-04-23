@@ -112,13 +112,40 @@ describe('EFFECT_TYPES registry', () => {
   })
 
   it('build() returns an object conforming to the EffectNode shape', () => {
-    // happy-dom lacks a native AudioContext; provide a tiny stub that matches
-    // what the stub factory uses (just createGain).
-    const fakeGainNode = {
+    // happy-dom lacks a native AudioContext; provide a minimal stub that
+    // satisfies both the legacy stubBuild path (just createGain) and the
+    // real factories landed in tasks 49-51 (which also need createOscillator,
+    // createDelay, createBiquadFilter, createStereoPanner, createWaveShaper).
+    const makeParam = () => ({
+      value: 0,
+      setValueAtTime: () => {},
+      setValueCurveAtTime: () => {},
+      linearRampToValueAtTime: () => {},
+      cancelScheduledValues: () => {},
+    })
+    const makeNode = (extra: Record<string, unknown> = {}) => ({
+      connect: (dst: unknown) => dst,
       disconnect: () => {},
-    } as unknown as AudioNode
+      ...extra,
+    })
     const fakeCtx = {
-      createGain: () => fakeGainNode,
+      currentTime: 0,
+      createGain: () => makeNode({ gain: makeParam() }),
+      createOscillator: () => makeNode({
+        type: 'sine',
+        frequency: makeParam(),
+        start: () => {},
+        stop: () => {},
+      }),
+      createStereoPanner: () => makeNode({ pan: makeParam() }),
+      createDelay: () => makeNode({ delayTime: makeParam() }),
+      createBiquadFilter: () => makeNode({
+        type: 'allpass',
+        frequency: makeParam(),
+        Q: makeParam(),
+        gain: makeParam(),
+      }),
+      createWaveShaper: () => makeNode({ curve: null, oversample: 'none' }),
     } as unknown as AudioContext
 
     for (const spec of Object.values(EFFECT_TYPES)) {

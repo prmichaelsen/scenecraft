@@ -21,6 +21,14 @@ import {
   INSTRUMENT_PRESETS,
   type FrequencyLabelPreset,
 } from './frequency-labels'
+import {
+  buildTremolo,
+  buildAutoPan,
+  buildChorus,
+  buildFlanger,
+  buildPhaser,
+} from './audio-effects/modulation'
+import { buildDrive } from './audio-effects/drive'
 
 export type { FrequencyLabelPreset }
 
@@ -280,7 +288,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'rate', label: 'Rate', animatable: false, range: { min: 0.1, max: 20 }, scale: 'log', default: 5 },
       { name: 'depth', label: 'Depth', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildTremolo,
   },
 
   auto_pan: {
@@ -291,7 +299,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'rate', label: 'Rate', animatable: false, range: { min: 0.1, max: 20 }, scale: 'log', default: 1 },
       { name: 'depth', label: 'Depth', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.75 },
     ],
-    build: stubBuild,
+    build: buildAutoPan,
   },
 
   chorus: {
@@ -303,7 +311,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'depth', label: 'Depth', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildChorus,
   },
 
   flanger: {
@@ -316,7 +324,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'feedback', label: 'Feedback', animatable: true, range: { min: 0, max: 0.95 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildFlanger,
   },
 
   phaser: {
@@ -329,7 +337,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'feedback', label: 'Feedback', animatable: true, range: { min: 0, max: 0.95 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildPhaser,
   },
 
   // ----- Distortion ----------------------------------------------------
@@ -345,6 +353,6 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'tone', label: 'Tone', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 1 },
     ],
-    build: stubBuild,
+    build: buildDrive,
   },
 }
