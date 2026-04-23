@@ -857,12 +857,13 @@ milestones:
 
   - id: milestone_11
     name: Audio Isolation Plugin (First-Party MVP)
-    status: in_progress
+    status: completed
     started: 2026-04-19
-    completed: null
+    completed: 2026-04-23
     file: agent/milestones/milestone-11-audio-isolation-plugin.md
     tasks_total: 8
-    tasks_completed: 7
+    tasks_completed: 8
+    completed: 2026-04-23
     estimated_weeks: 2
     tasks:
       - id: task-100
@@ -921,12 +922,13 @@ milestones:
         notes: "Completed. 5 new tests pass (20 plugin tests total). Scope: panel body only — the wrapper in EditorPanelLayout reads selectedAudioClipId from context but does not look up the full clip (EditorData doesn't carry audioClips). Lazy durationSeconds — run form tolerates undefined; can be enriched in a follow-up."
       - id: task-104b
         name: Drag stem → timeline (overwrite-with-split)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-23T06:20:00Z
+        completed_date: 2026-04-23T06:40:00Z
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-104b-drag-to-timeline.md
         estimated_hours: 5
-        actual_hours: null
-        notes: "Added for v2. New /audio-clips/batch-ops endpoint (single undo group) + resolveOverlapsWithSplit pure function + AudioLane.tsx drop handler with trim/split/delete/insert rules."
+        actual_hours: 0.3
+        notes: "Completed. Backend: 11 batch-ops tests pass (incl. full undo round-trip of mixed-op drop). Frontend: 13 resolveOverlapsWithSplit tests pass. Drag payload MIME is `application/x-scenecraft-stem`. Timeline wraps resolve+POST+refresh in one handler; single Ctrl+Z reverts the whole drop. Drop on transitions is deferred (MVP scope)."
       - id: task-105
         name: Chat tool isolate_vocals__run + elicitation gate
         status: completed
