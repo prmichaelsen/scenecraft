@@ -2760,6 +2760,15 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         draggingIds={audioDrag?.ids}
                         trimPreview={audioTrim ?? undefined}
                         ghosts={ghostsForLane}
+                        onDropPoolAudio={async (trackId, startTime, poolPath) => {
+                          try {
+                            const { postAddAudioClipFromPool } = await import('@/lib/audio-client')
+                            await postAddAudioClipFromPool(data.projectName, { trackId, startTime, poolPath })
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to add audio clip from pool:', err)
+                          }
+                        }}
                         onRequestAlignWaveforms={(clipIds) => {
                           // Promote right-clicked clip into selection (AudioLane did this
                           // eagerly in the list it passes us). Mirror that in state so

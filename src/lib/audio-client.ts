@@ -102,6 +102,25 @@ export async function postDeleteAudioClip(project: string, clipId: string): Prom
   if (!res.ok) throw new Error(`audio-clips/delete failed: ${res.status}`)
 }
 
+/**
+ * Drop a pool audio asset onto a lane as a standalone (unlinked) clip. The
+ * backend resolves the segment (by id preferred, or poolPath), validates it's
+ * audio, and creates a clip spanning `startTime → startTime + durationSeconds`.
+ * Returns the new clip id so the caller can select it after refreshTimeline.
+ */
+export async function postAddAudioClipFromPool(
+  project: string,
+  body: { trackId: string; startTime: number; poolSegmentId?: string; poolPath?: string },
+): Promise<{ id: string }> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-clips/add-from-pool`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`audio-clips/add-from-pool failed: ${res.status}`)
+  return await res.json() as { id: string }
+}
+
 export type AudioTrackUpdate = Partial<{
   name: string
   displayOrder: number

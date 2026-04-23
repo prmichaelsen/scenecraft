@@ -112,13 +112,19 @@ type AudioLaneProps = {
    * clips on this lane (Task 124). Distinct from the "selected" ring.
    */
   highlightedIds?: Set<string>
+  /**
+   * Task 123 — drop of a pool audio asset from the Bin onto this lane.
+   * `startTime` is the time under the cursor at drop; the backend creates a
+   * standalone (unlinked) clip sized to the segment's duration.
+   */
+  onDropPoolAudio?: (trackId: string, startTime: number, poolPath: string) => void
 }
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -199,15 +205,44 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
     ])
   }
 
+  const [poolDropActive, setPoolDropActive] = useState(false)
+
   return (
     <div
       data-audio-track-id={track.id}
-      className={`relative border-b border-gray-800/70 ${dimmed ? 'opacity-50' : ''} ${selected ? 'ring-1 ring-cyan-500/60' : ''}`}
+      className={`relative border-b border-gray-800/70 ${dimmed ? 'opacity-50' : ''} ${selected ? 'ring-1 ring-cyan-500/60' : ''} ${poolDropActive ? 'bg-cyan-500/10' : ''}`}
       style={{ height }}
       onClick={(e) => {
         // Clicks on empty lane area select the track; clicks on clips stop propagation below
         e.stopPropagation()
         setSelectedAudioTrackId(track.id)
+      }}
+      onDragOver={(e) => {
+        // Pool audio drop (Task 123) — only claim pool-path drags; let the
+        // header's own drag infra handle track-reorder drops.
+        if (!e.dataTransfer.types.includes('application/x-scenecraft-pool-path')) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+        if (!poolDropActive) setPoolDropActive(true)
+      }}
+      onDragLeave={() => setPoolDropActive(false)}
+      onDrop={(e) => {
+        const poolPath = e.dataTransfer.getData('application/x-scenecraft-pool-path')
+        setPoolDropActive(false)
+        if (!poolPath || !onDropPoolAudio) return
+        e.preventDefault()
+        e.stopPropagation()
+        // Resolve x → timeline seconds using the nearest horizontally-scrollable
+        // ancestor, since the lane is laid out inside the timeline scroller.
+        const rect = e.currentTarget.getBoundingClientRect()
+        let scrollLeft = 0
+        let node: HTMLElement | null = e.currentTarget.parentElement
+        while (node) {
+          if (node.scrollWidth > node.clientWidth) { scrollLeft = node.scrollLeft; break }
+          node = node.parentElement
+        }
+        const startTime = Math.max(0, (e.clientX - rect.left + scrollLeft) / pxPerSec)
+        onDropPoolAudio(track.id, startTime, poolPath)
       }}
     >
       {/* Track header — sticky so it stays visible during horizontal scroll.
