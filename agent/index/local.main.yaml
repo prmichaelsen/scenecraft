@@ -1,0 +1,46 @@
+# agent/index/local.main.yaml
+# Key file index for project-local files
+# See: agent/design/local.key-file-index-system.md
+#
+# Schema:
+#   path        (string, required)  - Explicit file path, no globs
+#   weight      (float, required)   - 0.0 to 1.0 importance (1.0 = always read)
+#   kind        (enum, required)    - pattern, command, design, requirements, spec
+#   description (string, required)  - What the file contains and why it matters
+#   rationale   (string, required)  - Why this file is in the index
+#   applies     (string, required)  - Comma-separated fully qualified command names
+#
+# Implicit key files (NOT listed here):
+#   - AGENT.md (always read by @acp.init)
+#   - agent/progress.yaml (always read by @acp.init)
+
+local:
+  index:
+    - path: agent/design/requirements.md
+      weight: 1.0
+      kind: requirements
+      description: |
+        Core project requirements defining goals, constraints,
+        and success criteria for the application.
+      rationale: |
+        Must be read before any design or task creation to ensure
+        alignment with project goals.
+      applies: acp.init, acp.design-create, acp.task-create, acp.plan, acp.proceed
+
+    - path: agent/design/local.scenecraft-online-platform.md
+      weight: 0.8
+      kind: design
+      description: |
+        Platform architecture for scenecraft.online — the multi-tenant
+        management / auth / box provisioning / paid-API brokering layer
+        that sits cloud-side of the scenecraft trust boundary. Defines
+        the two user populations (admins vs. instance users), double-gate
+        auth, BYO vs. brokered service modes, two-ledger model, and
+        markup/billing semantics.
+      rationale: |
+        Any work touching auth, billing, spend tracking, plugin lifecycle,
+        or multi-tenant concerns must align with this architecture.
+        Plugins writing to the spend_ledger, chat tools requiring
+        authenticated users, or platform infra decisions all depend on
+        the contracts this document pins.
+      applies: acp.proceed, acp.plan, acp.design-create, acp.spec, acp.task-create

@@ -33,14 +33,15 @@ Forward-looking references:
 
 - Backend plugin at `scenecraft-engine/src/scenecraft/plugins/generate_music/` with `plugin.yaml`, `__init__.py`, Musicful REST client, `generate_music.run` handler, polling worker.
 - Frontend plugin at `scenecraft/src/plugins/generate-music/` with `plugin.yaml` mirror, panel + run form, WS client, drag-payload helper.
-- Schema: new plugin-owned tables `generate_music__generations` + `generate_music__tracks`; new core-owned table `credit_ledger`; new core columns `pool_segments.context_entity_type` + `context_entity_id`.
+- Schema: new plugin-owned tables `generate_music__generations` + `generate_music__tracks`; new core-owned table `spend_ledger` (generalized for any paid service — not Musicful-specific); new core columns `pool_segments.context_entity_type` + `context_entity_id`.
 - Actions: `auto` + `custom` only; other Musicful actions gated at dispatch.
 - Output: MP3 only; written to `pool/segments/<uuid>.mp3`; registered as a `pool_segment` with `variant_kind='music'`, `created_by='plugin:generate-music'`.
 - Context-aware candidate routing: generation binds to selected `audio_clip` or `transition` and writes the appropriate junction (`audio_candidates` or `tr_candidates`); no selection → free-floating in panel.
 - Panel in `EditorPanelLayout`'s `PanelRegistry` with context-sensitive filtering, run cards, Reuse button, permanent credits counter.
 - Chat tools: `generate_music` (write, elicitation-gated) + `get_music_credits` (read, free).
 - Drag to timeline via existing `application/x-scenecraft-stem` payload; purple clip color via `variant_kind` lookup.
-- Credit tracking via core `credit_ledger` table; `plugin_api.record_credit_spend()` helper.
+- Spend tracking via core `spend_ledger` table (generalized — supports multiple units: `credit`, `usd_micro`, `token`, `character`, `second`). `plugin_api.record_spend()` helper is the ONLY write path. M16 is the first consumer (Musicful credits); future paid plugins (Veo, Replicate, ElevenLabs, OpenAI) reuse the same table with their own `unit`.
+- Core-table write invariant (R9a): plugins write to core tables only via enumerated `plugin_api` helpers. M16 enforces via code review + surface discipline; M17 adds runtime rejection via wrapped DB handle.
 - Failure handling: persistent failed-run card, Retry button, 429 exponential backoff.
 - Missing API key → admin-oriented config-missing state; plugin still registers.
 - Testing: mocked Musicful integration tests + one real-API smoke test gated on `MUSICFUL_API_KEY`.
@@ -71,7 +72,12 @@ Requirements are numbered and individually testable. Each test in the Tests sect
 
 - **R7**: A new plugin-owned table `generate_music__generations` is created at schema init with the columns listed in [Interfaces / Data Shapes § `generate_music__generations`](#generate_music__generations).
 - **R8**: A new plugin-owned table `generate_music__tracks` is created with the columns listed in [Interfaces § `generate_music__tracks`](#generate_music__tracks).
-- **R9**: A new core-owned table `credit_ledger` is created with the columns listed in [Interfaces § `credit_ledger`](#credit_ledger). Plugins NEVER `INSERT INTO credit_ledger` directly; they use the `plugin_api.record_credit_spend()` helper only.
+- **R9**: A new core-owned table `spend_ledger` is created with the columns listed in [Interfaces § `spend_ledger`](#spend_ledger). Plugins NEVER `INSERT INTO spend_ledger` directly; they use the `plugin_api.record_spend()` helper only. Violation of this rule is a **core invariant violation** (see R9a).
+
+- **R9a** (**core invariant — plugins cannot directly modify core tables**): Plugins MUST access core tables through `plugin_api` helpers only. The plugin's DB handle MUST NOT expose raw `INSERT`, `UPDATE`, or `DELETE` statements targeting any non-prefix-matching table (i.e., any table that does not start with `<plugin_id_snake>__`). `SELECT` against core tables is permitted (read-only access). Violation of this invariant indicates either a plugin bug or a gap in the host's enforcement layer — both are critical defects.
+  - **Enumerated core-table write helpers exposed by `plugin_api` (M16)**: `record_spend()`, `add_pool_segment()`, `add_audio_candidate()`, `add_tr_candidate()`, plus any host-provided helpers for updating `pool_segments.context_entity_type` / `context_entity_id` / `variant_kind`. No other core-table-write surface is exposed to plugins in M16.
+  - **M16 enforcement**: structural + convention. The `plugin_api` module MUST NOT export a raw DB connection or equivalent. Plugins authored in-tree (generate-music) pass code review verifying they only call the enumerated helpers. No runtime rejection layer yet — that lands in M17.
+  - **M17 enforcement** (forward-looking, captured in the plugin-lifecycle spike): plugins receive a wrapped DB handle that rejects non-prefix-matching writes at runtime with `PermissionError` or equivalent. Migration-time enforcement (R11) already blocks `CREATE/ALTER/DROP` of non-prefixed tables; R9a extends the same principle to runtime `INSERT/UPDATE/DELETE`.
 - **R10**: Two new columns are added to `pool_segments` via core migration: `context_entity_type TEXT NULL` and `context_entity_id TEXT NULL`. M13's existing `derived_from` column is UNTOUCHED (used only by lipsync variants per M13 design). The plugin writes `variant_kind='music'` (new enum value in a column M13 already added).
 - **R11**: All plugin-owned table names MUST use the `<plugin_id_snake>__<name>` prefix convention (double underscore delimiter). Plugin id in `plugin.yaml` MUST match the regex `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` (no consecutive hyphens, no numeric-only starts).
 
@@ -94,7 +100,7 @@ Requirements are numbered and individually testable. Each test in the Tests sect
   - Downloads the `audio_url` to `pool/segments/<uuid>.mp3`.
   - Inserts a `pool_segments` row with `kind='generated'`, `created_by='plugin:generate-music'`, `variant_kind='music'`, `context_entity_type`/`context_entity_id` copied from the parent generation row, and `generation_params` JSON containing `{provider, model, action, style, lyrics, task_id, cover_url}`.
   - Inserts a `generate_music__tracks` row linking the generation to the new pool_segment.
-- **R19**: After a successful generation (all tasks completed), the worker calls `plugin_api.record_credit_spend(plugin_id='generate-music', user_id=<triggering user>, credits=<N>, operation='generate-music.run', job_ref=<generation_id>)` and the `generate_music__generations` row transitions to `status='completed'`.
+- **R19**: After a successful generation (all tasks completed), the worker calls `plugin_api.record_spend(plugin_id='generate-music', user_id=<triggering user>, amount=<N>, unit='credit', operation='generate-music.run', job_ref=<generation_id>, metadata={'task_ids': [...]})` and the `generate_music__generations` row transitions to `status='completed'`. Each successful task contributes 1 credit (`amount=N` where N = count of successfully-completed Musicful tasks).
 - **R20**: If at least one task fails and at least one succeeds (partial success), the generation row transitions to `status='completed'` with non-empty `error` describing the partial failure. Successful stems are still inserted and linked; failed stems are NOT inserted.
 - **R21**: If ALL tasks fail, `status='failed'` with `error=<concatenated Musicful fail_reasons>`. NO pool_segments or `generate_music__tracks` rows are inserted. NO credit spend is recorded.
 
@@ -161,7 +167,21 @@ Requirements are numbered and individually testable. Each test in the Tests sect
 
 - **R52**: Backend reads `MUSICFUL_API_KEY` from `os.environ` exactly once at plugin activation. The value is held in the plugin module's scope; never logged, never returned in API responses, never included in any error message.
 - **R53**: If `MUSICFUL_API_KEY` is missing at activation, the plugin still registers (panel + tool are visible) but the run endpoint + chat tool return the error string `"This plugin requires a Musicful API key. Please contact your administrator."` verbatim.
-- **R54**: Credit ledger writes capture `user_id` from the current request's authenticated user; if there is no authenticated user, `user_id=''` (empty string).
+- **R54**: Spend ledger writes capture the authenticated instance user and their active org as typed foreign keys: `spend_ledger.username REFERENCES users.username ON DELETE RESTRICT`, `spend_ledger.org REFERENCES orgs.name ON DELETE RESTRICT`. Both are NOT NULL. Attempting to record a spend without an authenticated user fails the request.
+- **R54a** (double-gate auth): Every request to the run endpoint, chat tool invocation path, and `get_music_credits` path MUST pass two auth checks before any plugin code runs:
+  1. A valid session (from password login; M6 auth layer).
+  2. A valid, unexpired API key presented as the header `X-Scenecraft-API-Key: <key>`. The key MUST match the session's authenticated username.
+  Requests missing either credential, or with a mismatched pair, are rejected with HTTP 401 by the auth middleware. The plugin does NOT re-implement these checks; it relies on the middleware.
+- **R54b** (password-change gate): If the authenticated user still has `must_change_password=1`, the auth middleware rejects the request with HTTP 403 and a body instructing the user to change their password before continuing. The plugin does NOT see such requests.
+- **R54c** (key expiry): If the API key's `expires_at < now`, the auth middleware rejects the request with HTTP 401 and a body indicating the key is expired. Maximum key lifetime is 1 year from issuance.
+- **R54d** (key rotation): API keys are rotated by admins only; end users cannot self-rotate. Admin issues a new key (invalidating or co-existing with the old one per admin policy) via the scenecraft.online portal OR the box's CLI. Once rotated, the old key's subsequent requests MUST be rejected per R54c's expired-key behavior (or a separate revoked-key error, at the auth middleware's discretion).
+- **R54e** (active org resolution): When the authenticated user belongs to multiple orgs, the active org for the request is resolved in this order:
+  1. If the request includes header `X-Scenecraft-Org: <name>` and the user is a member of that org → use it.
+  2. Else if the current session has a `last_active_org` value and the user is still a member → use it.
+  3. Else if the user belongs to exactly one org → use it.
+  4. Else reject the request with HTTP 400 and a body indicating org must be specified.
+  The resolved org is stored in `spend_ledger.org`.
+- **R54f** (forensics — `api_key_id`): `spend_ledger` gains a nullable `api_key_id TEXT` column, populated with the id of the API key used for the request. Enables admins to trace "which key issued these spends" when investigating key rotations or compromise.
 
 ### Testing
 
@@ -215,21 +235,41 @@ CREATE TABLE generate_music__tracks (
 CREATE INDEX idx_gm_tracks_pool ON generate_music__tracks(pool_segment_id);
 ```
 
-### `credit_ledger` (core-owned)
+### `spend_ledger` (core-owned)
+
+Generalized to support multiple paid services (Musicful credits, Veo $-cost video, Replicate per-second compute, OpenAI tokens, ElevenLabs characters, etc.). All amounts stored as integers in the smallest atomic unit of the declared `unit`. Aggregation always groups by `unit` — you cannot sum credits and dollars into one number.
 
 ```sql
-CREATE TABLE credit_ledger (
-    id         TEXT PRIMARY KEY,                                -- UUID
-    plugin_id  TEXT NOT NULL,                                   -- 'generate-music' | ...
-    user_id    TEXT NOT NULL,                                   -- bare id; '' if no auth context
-    credits    INTEGER NOT NULL,                                -- negative on refund
-    operation  TEXT NOT NULL,                                   -- 'generate-music.run'
-    job_ref    TEXT,                                            -- optional back-ref to plugin run
-    created_at TEXT NOT NULL
+-- Lives in server.db (per-box root), NOT project.db — it spans projects within a box.
+CREATE TABLE spend_ledger (
+    id          TEXT PRIMARY KEY,                                               -- UUID
+    plugin_id   TEXT NOT NULL,                                                  -- 'generate-music' | 'video-gen' | ...
+    username    TEXT NOT NULL REFERENCES users(username) ON DELETE RESTRICT,    -- authenticated instance user
+    org         TEXT NOT NULL REFERENCES orgs(name) ON DELETE RESTRICT,         -- active org from R54e
+    api_key_id  TEXT,                                                           -- rotation forensics (R54f)
+    amount      INTEGER NOT NULL,                                               -- smallest atomic unit of `unit`; negative on refund
+    unit        TEXT NOT NULL,                                                  -- 'credit' | 'usd_micro' | 'token' | 'character' | ...
+    source      TEXT NOT NULL DEFAULT 'local',                                  -- 'local' (BYO: key lives on this box) | 'broker' (scenecraft.online brokered)
+    operation   TEXT NOT NULL,                                                  -- 'generate-music.run' | ...
+    job_ref     TEXT,                                                           -- optional back-ref to plugin run
+    metadata    TEXT,                                                           -- JSON: provider-specific (e.g. model, duration_seconds)
+    created_at  TEXT NOT NULL
 );
-CREATE INDEX idx_ledger_user    ON credit_ledger(user_id, created_at);
-CREATE INDEX idx_ledger_plugin  ON credit_ledger(plugin_id, created_at);
+CREATE INDEX idx_ledger_user    ON spend_ledger(username, unit, created_at);
+CREATE INDEX idx_ledger_org     ON spend_ledger(org, unit, created_at);
+CREATE INDEX idx_ledger_plugin  ON spend_ledger(plugin_id, created_at);
+CREATE INDEX idx_ledger_unit    ON spend_ledger(unit, created_at);
+CREATE INDEX idx_ledger_source  ON spend_ledger(source, created_at);
 ```
+
+Unit conventions (open-ended; plugins declare their own, no core enum change required when a new unit lands):
+- `credit` — discrete credits (Musicful: 1 song = 1 credit)
+- `usd_micro` — one-millionth of a USD (e.g. $0.175 = 175_000). Handles sub-cent billing (Replicate compute time).
+- `token` — LLM tokens (OpenAI / Anthropic).
+- `character` — ElevenLabs text-to-speech character count.
+- `second` — raw compute-seconds where that's the right metric.
+
+Budget-limit enforcement is a separate policy layer not in scope for M16 — it's a `SUM(amount) WHERE user_id=? AND unit=? AND created_at >= ?` check against a per-user or per-org limit, performed before `record_spend` is called. Enforcement lands with M17's admin layer.
 
 ### `pool_segments` column additions (core)
 
@@ -336,7 +376,7 @@ See R47 for the four event types and their payloads.
 6. Musicful returns `task_ids`. Backend updates row: `task_ids_json`, `status='running'`. Creates JobManager job; emits `job_started` WS event.
 7. Worker polls `/v1/music/tasks?ids=...` every 5s.
 8. Each poll that returns newly-completed tasks: worker downloads each mp3 to `pool/segments/<uuid>.mp3`, inserts `pool_segments` + `generate_music__tracks` rows, emits `job_progress`.
-9. When all tasks terminal: worker calls `record_credit_spend`, updates generation row to `status='completed'`, emits `job_completed`.
+9. When all tasks terminal: worker calls `record_spend`, updates generation row to `status='completed'`, emits `job_completed`.
 10. Panel receives WS event; refetches run list; refetches credits; shows new run card with downloadable tracks.
 11. User drags a track onto any audio lane; `AudioLane.tsx` drop handler creates `audio_clip`; clip renders purple.
 
@@ -418,7 +458,7 @@ The core behavior contract: happy path + primary bad paths + primary positive/ne
 - **tracks-linked**: Exactly 2 rows in `generate_music__tracks` with `generation_id` matching the new generation.
 - **mp3-files-on-disk**: 2 new files in `pool/segments/` with extension `.mp3`.
 - **no-candidate-rows**: Zero new rows in `audio_candidates` or `tr_candidates`.
-- **credit-ledger-row**: Exactly 1 new row in `credit_ledger` with `plugin_id='generate-music'`, `operation='generate-music.run'`, `job_ref=<generation_id>`, positive `credits`.
+- **spend-ledger-row**: Exactly 1 new row in `spend_ledger` with `plugin_id='generate-music'`, `operation='generate-music.run'`, `job_ref=<generation_id>`, `unit='credit'`, `amount > 0`, `metadata` parseable as JSON.
 - **job-started-emitted**: WS subscribers receive a `job_started` event with `jobType='generate_music'` and `meta.generationId=<id>`.
 - **job-completed-emitted**: WS subscribers receive a `job_completed` event with `result.pool_segment_ids` of length 2.
 
@@ -458,7 +498,7 @@ The core behavior contract: happy path + primary bad paths + primary positive/ne
 - **http-400**: Backend returns HTTP 400 with an explicit error string mentioning "not supported in MVP".
 - **no-musicful-call**: The mock Musicful server receives zero requests.
 - **no-db-row**: No `generate_music__generations` row is created.
-- **no-ledger-row**: No `credit_ledger` row is created.
+- **no-ledger-row**: No `spend_ledger` row is created.
 
 #### Test: missing-api-key-admin-error (covers R4, R52, R53)
 
@@ -485,7 +525,7 @@ The core behavior contract: happy path + primary bad paths + primary positive/ne
 **Then**:
 - **no-musicful-call**: Mock Musicful server receives zero requests.
 - **no-db-row**: No `generate_music__generations` row created.
-- **no-ledger-row**: No `credit_ledger` row created.
+- **no-ledger-row**: No `spend_ledger` row created.
 - **tool-returns-cancelled**: The tool call result is a structured error with message containing `"cancelled by user"`.
 
 #### Test: elicitation-accept-runs (covers R42)
@@ -508,7 +548,7 @@ The core behavior contract: happy path + primary bad paths + primary positive/ne
 **Then**:
 - **no-elicitation-fired**: No elicitation event is emitted.
 - **returns-count**: Tool returns `{credits: 237, last_checked_at: <iso-timestamp>}`.
-- **no-ledger-row**: No `credit_ledger` row is created (this is a read).
+- **no-ledger-row**: No `spend_ledger` row is created (this is a read).
 
 #### Test: panel-filters-to-context (covers R27, R28)
 
@@ -568,7 +608,7 @@ The core behavior contract: happy path + primary bad paths + primary positive/ne
 - **status-failed**: `generate_music__generations.status='failed'`, `error` contains `"model_overloaded"`.
 - **no-pool-segments**: Zero new `pool_segments` rows for this generation.
 - **no-tracks**: Zero `generate_music__tracks` rows.
-- **no-ledger-row**: Zero new `credit_ledger` rows.
+- **no-ledger-row**: Zero new `spend_ledger` rows.
 - **panel-shows-failed-card**: Panel refetch renders a card with `✗ failed`, the error text, and a `Retry` button.
 
 **When** (continuation): User clicks Retry.
@@ -590,6 +630,102 @@ The core behavior contract: happy path + primary bad paths + primary positive/ne
 - **header-shows-237**: Panel header contains the string `"237"`.
 - **post-run-refresh**: Mock receives a second GET after `job_completed` WS event.
 - **header-updates-to-235**: Panel header updates to contain `"235"` within one render cycle of the second fetch.
+
+#### Test: rejects-missing-session (covers R54a)
+
+**Given**: A request to the run endpoint or chat tool path with NO session cookie / NO session JWT.
+
+**When**: Request hits the auth middleware.
+
+**Then**:
+- **http-401**: Response is HTTP 401.
+- **no-plugin-code-ran**: The plugin's `run` handler is never invoked (verifiable via a spy or log-check in integration tests).
+- **no-db-writes**: Zero new rows in `generate_music__generations`, `pool_segments`, `spend_ledger`.
+- **no-musicful-call**: Mock Musicful server receives zero requests.
+
+#### Test: rejects-missing-api-key-header (covers R54a)
+
+**Given**: A request with valid session cookie but NO `X-Scenecraft-API-Key` header.
+
+**When**: Request hits the auth middleware.
+
+**Then**:
+- **http-401**: Response is HTTP 401.
+- **error-mentions-api-key**: Response body contains a reference to the required API key header (no key value leaked).
+- **no-plugin-code-ran**: Plugin code never invoked.
+
+#### Test: rejects-session-key-mismatch (covers R54a)
+
+**Given**: A valid session for user `alice` and an `X-Scenecraft-API-Key` belonging to user `bob`.
+
+**When**: Request hits the auth middleware.
+
+**Then**:
+- **http-401**: Response is HTTP 401.
+- **no-spend-row**: No `spend_ledger` row is created (request rejected before plugin runs).
+- **no-key-values-in-logs**: Neither `alice`'s nor `bob`'s actual key value appears in captured logs.
+
+#### Test: rejects-expired-api-key (covers R54c)
+
+**Given**: An API key with `expires_at` in the past, presented with a matching session.
+
+**When**: Request hits the auth middleware.
+
+**Then**:
+- **http-401**: Response is HTTP 401.
+- **error-mentions-expired**: Response body indicates the key is expired (without leaking the key).
+- **no-plugin-code-ran**: Plugin code never invoked.
+
+#### Test: forces-password-change-on-first-login (covers R54b)
+
+**Given**: User with `must_change_password=1`. Valid session + API key otherwise.
+
+**When**: Request hits the auth middleware.
+
+**Then**:
+- **http-403**: Response is HTTP 403.
+- **error-mentions-password-change**: Response body instructs the user to change their password.
+- **no-plugin-code-ran**: Plugin code never invoked; no `spend_ledger` row.
+
+#### Test: active-org-resolved-from-header (covers R54e)
+
+**Given**: User `alice` is a member of orgs `org-A` and `org-B`. Request includes `X-Scenecraft-Org: org-B`.
+
+**When**: Request succeeds and a generation completes.
+
+**Then**:
+- **ledger-org-is-org-b**: The `spend_ledger.org` value equals `'org-B'`.
+- **request-accepted**: No 400 error.
+
+#### Test: active-org-falls-back-to-session (covers R54e)
+
+**Given**: User `alice` is a member of orgs `org-A` and `org-B`. Session has `last_active_org='org-A'`. Request does NOT include `X-Scenecraft-Org`.
+
+**When**: Request succeeds and a generation completes.
+
+**Then**:
+- **ledger-org-is-org-a**: `spend_ledger.org='org-A'`.
+
+#### Test: ambiguous-org-rejected (covers R54e)
+
+**Given**: User `alice` is a member of orgs `org-A` and `org-B`. No `X-Scenecraft-Org` header and no `last_active_org` on the session.
+
+**When**: Request hits the auth middleware.
+
+**Then**:
+- **http-400**: Response is HTTP 400.
+- **error-mentions-org**: Response body instructs the caller to specify the org.
+- **no-spend-row**: No ledger write.
+
+#### Test: api-key-id-recorded (covers R54f)
+
+**Given**: User `alice`'s API key has id `ak-7`.
+
+**When**: A successful generation completes.
+
+**Then**:
+- **ledger-api-key-id**: `spend_ledger.api_key_id='ak-7'`.
+- **ledger-user-matches**: `spend_ledger.username='alice'`.
 
 #### Test: out-of-credits-blocks-generate (covers R36)
 
@@ -652,7 +788,7 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **one-pool-segment**: Exactly 1 new `pool_segments` row (for `t1`).
 - **one-track**: Exactly 1 `generate_music__tracks` row linking the generation to the `t1` pool_segment.
 - **no-orphan-track**: No `generate_music__tracks` row exists with a missing `pool_segment_id`.
-- **ledger-row-for-success**: Exactly 1 `credit_ledger` row with `credits=1` (not 2).
+- **ledger-row-for-success**: Exactly 1 `spend_ledger` row with `unit='credit'` and `amount=1` (not 2).
 
 #### Test: concurrent-generations-independent (covers R14, R16, R47)
 
@@ -663,7 +799,7 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 **Then**:
 - **two-generation-rows**: Exactly 2 `generate_music__generations` rows.
 - **distinct-pool-segments**: Each generation has its own pool_segment rows; no cross-contamination.
-- **two-ledger-rows**: Exactly 2 `credit_ledger` rows, one per generation.
+- **two-ledger-rows**: Exactly 2 `spend_ledger` rows, one per generation.
 - **ws-events-distinguishable**: Both `job_completed` events fire with distinct `jobId`s.
 - **no-db-deadlock**: Test completes within a reasonable timeout without sqlite lock errors.
 
@@ -783,8 +919,8 @@ NOTE: The migration runner is M17 scope; this test lives in the M17 spike's test
 
 **Then**:
 - **pool-segments-created-by**: New `pool_segments.created_by` equals the string `"plugin:generate-music"` exactly.
-- **ledger-user-id**: `credit_ledger.user_id='alice'` (bare id, NOT prefixed — per R54's separation from the actor scheme).
-- **ledger-plugin-id**: `credit_ledger.plugin_id='generate-music'` (bare kebab id).
+- **ledger-user-id**: `spend_ledger.user_id='alice'` (bare id, NOT prefixed — per R54's separation from the actor scheme).
+- **ledger-plugin-id**: `spend_ledger.plugin_id='generate-music'` (bare kebab id).
 
 #### Test: no-auth-context-records-empty-user (covers R54)
 
@@ -793,7 +929,7 @@ NOTE: The migration runner is M17 scope; this test lives in the M17 spike's test
 **When**: Generation completes.
 
 **Then**:
-- **ledger-user-empty**: `credit_ledger.user_id=''` (empty string).
+- **ledger-user-empty**: `spend_ledger.user_id=''` (empty string).
 - **no-null-fk-error**: Insert succeeds despite empty string.
 
 #### Test: duplicate-task-id-idempotent-poll (covers R16)
@@ -805,7 +941,7 @@ NOTE: The migration runner is M17 scope; this test lives in the M17 spike's test
 **Then**:
 - **single-pool-segment**: Exactly 1 new `pool_segments` row (not 2).
 - **single-track**: Exactly 1 `generate_music__tracks` row.
-- **no-duplicate-ledger**: 1 `credit_ledger` row, not 2.
+- **no-duplicate-ledger**: 1 `spend_ledger` row, not 2.
 
 #### Test: very-long-style-accepted (covers R13)
 
@@ -925,13 +1061,13 @@ NOTE: If M16 implements server-side filtering instead of client-side, relax this
 
 #### Test: no-cross-plugin-ledger-writes (covers R9)
 
-**Given**: Plugin `generate-music` attempts to call `plugin_api.record_credit_spend(plugin_id='isolate-vocals', user_id='...', credits=1, operation='isolate-vocals.run')`.
+**Given**: Plugin `generate-music` attempts to call `plugin_api.record_spend(plugin_id='isolate-vocals', user_id='...', amount=1, unit='credit', operation='isolate-vocals.run')`.
 
 **When**: The call is made.
 
 **Then**:
 - **call-rejected**: Helper raises an error about plugin-id mismatch.
-- **no-ledger-row**: No new `credit_ledger` row.
+- **no-ledger-row**: No new `spend_ledger` row.
 
 #### Test: singleton-polling-worker-per-generation (covers R16, negative-concurrency)
 
@@ -954,6 +1090,33 @@ NOTE: If M16 implements server-side filtering instead of client-side, relax this
 - **instrumental-checked**: Instrumental checkbox is checked.
 - **style-empty**: Style textarea is empty.
 - **all-other-fields-default**: Lyrics, Title, Gender, Model are at their respective empty/default values.
+
+#### Test: plugin-api-exposes-no-raw-db-handle (covers R9a)
+
+**Given**: A code-review / AST / static-analysis inspection of `scenecraft-engine/src/scenecraft/plugin_api.py` (the host-facing surface imported by plugins).
+
+**When**: Inspect the module's public exports (names accessible via `plugin_api.*`).
+
+**Then** (assertions):
+- **no-raw-connection-exported**: The module does NOT export any symbol named `conn`, `connection`, `get_connection`, `db`, `cursor`, `execute`, `session`, or any other raw-DB-handle equivalent.
+- **core-write-helpers-enumerated**: The exported helpers for core-table writes are EXACTLY the enumerated set from R9a: `record_spend`, `add_pool_segment`, `add_audio_candidate`, `add_tr_candidate`, plus any pool_segments-update helpers. No other core-table write surface.
+- **read-helpers-ok**: Read-only helpers (e.g. `get_pool_segment`, `get_audio_clip`, `get_transition`) ARE exported and permitted.
+- **plugin-module-does-not-import-raw-db**: `scenecraft-engine/src/scenecraft/plugins/generate_music/` modules do NOT import `scenecraft.db` directly (only `scenecraft.plugin_api`). Violation here is a code-review defect; the test guards against regressions.
+
+This is a structural / compile-time test (executable as a one-liner with `grep` + import inspection). It enforces R9a's architectural constraint in M16 ahead of the runtime-rejection layer that lands in M17.
+
+#### Test: plugin-direct-core-write-rejected (M17 scope; documented here for continuity)
+
+**Given**: (M17) a plugin has been handed a wrapped DB handle.
+
+**When**: Plugin code attempts `handle.execute("INSERT INTO spend_ledger (...) VALUES (...)")` bypassing the helper.
+
+**Then** (assertions):
+- **raises-permission-error**: Execution raises `PermissionError` (or framework-equivalent exception) with a message referencing the prefix-scope rule.
+- **no-row-written**: `spend_ledger` has no new rows attributable to this attempt.
+- **no-partial-write**: No other core-table state has changed.
+
+This test MUST NOT run in M16 (the wrapped handle does not exist yet). It's specified here so the M17 implementer has a concrete failure scenario to implement against without re-deriving it from R9a. Captured as a TODO in `task-spike-plugin-schemas-and-unified-jobs.md`.
 
 #### Test: synchronous-backend-no-hidden-concurrency (covers R14-R19, negative)
 
@@ -1002,8 +1165,9 @@ Unresolved items that should be pinned before implementation begins:
 3. **Panel filtering: client-side vs server-side** — Spec's default test assumes client-side filtering (no extra HTTP on selection change). Server-side filtering is also acceptable and might be preferred for large projects. Implementer choice; flag in PR.
 4. **WS `job_progress` cadence** — Spec says "every poll cycle." For a 5s polling interval, that's 1 WS event every 5s — fine. If implementer reduces polling to 1s, the cascade of WS events may flood clients. Cap frontend to 1 event per 2s minimum OR emit `job_progress` only on state change (not every poll).
 5. **Selection context captured on Generate click: value vs. ref** — Spec says "reads selection at click-time." What if the selection changed between form focus and click (race window)? Confirm: the value captured is the click-time snapshot, not a ref. Low-probability edge case; test `mid-form-deselect-clears-context` covers the deselect case but not rapid-reselect. Decide if worth a test.
-6. **Credit ledger schema ownership** — `credit_ledger` is a core table landing in M16 to support M16's first paid plugin. The M17 spike will formalize the `plugin_api.record_credit_spend()` helper API. Pin the helper signature now or evolve it in M17? Recommendation: freeze now to what M16 ships; M17 can add fields as `NULL`-by-default.
+6. **Credit ledger schema ownership** — `spend_ledger` is a core table landing in M16 to support M16's first paid plugin. The M17 spike will formalize the `plugin_api.record_spend()` helper API. Pin the helper signature now or evolve it in M17? Recommendation: freeze now to what M16 ships; M17 can add fields as `NULL`-by-default.
 7. **Purple-color definition** — Spec says "purple color class." Which exact tailwind class? (`purple-500`, `violet-400`?) Implementer picks; should match scenecraft's existing palette conventions.
+8. **API key scope: per (user, box) or per user globally?** — Explicitly left open by user decision. Today's spec assumes per (user, box): a user with access to two boxes has two unrelated keys. If scenecraft.online later centralizes key issuance, this could shift to per-user-globally with the box fetching/caching the key. Decision deferred to the scenecraft.online platform design (`local.scenecraft-online-platform.md`).
 
 ---
 
@@ -1020,8 +1184,9 @@ Carried forward from clarification-10 answers (rounds 1-5). This is the settled 
 ### Schema
 
 - **Table naming: `<plugin_id_snake>__<name>` convention** with `__` delimiter (clarification-10 lifecycle block). Enforced at migration parse time once M17 ships; pre-adopted in M16.
-- **Credit tracking: core `credit_ledger` table** (Q4.1 correction). Plugins never own credit columns; they write via `plugin_api.record_credit_spend()`.
-- **Plugins cannot ALTER core tables** (Q4.1 correction). But core engineering can add core tables/columns in service of a plugin feature (e.g. `credit_ledger`, `pool_segments.context_entity_*`).
+- **Spend tracking: core `spend_ledger` table** (Q4.1 correction; generalized per R9a scope expansion). Plugins never own spend columns; they write via `plugin_api.record_spend()` with `amount` + `unit` fields so the same table tracks Musicful credits, Veo $-cost video, Replicate compute seconds, etc.
+- **Plugins cannot ALTER core tables** (Q4.1 correction). But core engineering can add core tables/columns in service of a plugin feature (e.g. `spend_ledger`, `pool_segments.context_entity_*`).
+- **Core-table write invariant (R9a)**: plugins write to core tables only via enumerated `plugin_api` helpers. No raw DB handle exposed. M16 enforcement is structural (plugin_api surface + code review); M17 adds runtime rejection via wrapped DB handle.
 - **Actor attribution: `<actor_type>:<actor_id>`** (Q2.1 Option A accepted). Reuses existing `created_by`/`last_modified_by` columns; pool_segments write `plugin:generate-music`.
 
 ### Context and provenance

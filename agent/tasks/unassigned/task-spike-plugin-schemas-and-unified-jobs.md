@@ -122,7 +122,8 @@ Based on the two designs, enumerate tasks that M17 should ship:
 - Unified `jobs` table + `JobManager` DB-backed refactor
 - Plugin invariant harness: manifest parser, check-runner, `plugin_invariants` table, severity-handling in UI
 - Admin UI for invariant status (simple table view)
-- Core `credit_ledger` table + `plugin_api.record_credit_spend()` helper (core-owned; plugins call into it)
+- Core `spend_ledger` table (generalized with `amount` + `unit` + `metadata` columns; supports credits, usd_micro, tokens, characters, seconds) + `plugin_api.record_spend()` helper (core-owned; plugins call into it)
+- **Runtime enforcement of the core-table-write invariant (spec R9a)**: wrapped DB handle that intercepts plugin SQL execution and rejects any `INSERT`/`UPDATE`/`DELETE` targeting a non-prefix-matching table. `SELECT` on core tables stays permitted. Design needs to cover: how the wrapper works (SQL parsing? table-name extraction? cost); which errors are raised; whether plugins can opt-in to specific core-table writes via a manifest `contributes.core_writes` declaration (future — out of this spike's scope unless the design demands it); test coverage ref `plugin-direct-core-write-rejected` in `local.music-generation-plugin.md`.
 - Docs + tests
 
 Produce rough estimate (~1.5-2 weeks) and task ordering/dependency graph.
