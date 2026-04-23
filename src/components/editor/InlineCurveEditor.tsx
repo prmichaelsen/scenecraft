@@ -20,6 +20,18 @@
  * Color is assigned by the parent (R42 color map is parent responsibility).
  * Stacking multiple editors on the same lane is the parent's job (R41);
  * the component renders one curve per instance.
+ *
+ * ## Copy/paste integration (M13 task-56, spec R43-R47)
+ *
+ * When the parent supplies `selectedIndices` + `onSelectionChange` with
+ * `multiSelect=true`, the parent can lift the selection into a cross-curve
+ * / cross-track `SelectedKeyframe[]` and pass it to `useAutomationClipboard`.
+ * The hook listens at window-level for Ctrl+C / Ctrl+V and handles
+ * serialization, trackDelta resolution, and the single-undo-unit batch
+ * POST to `/effect-curves/batch`.
+ *
+ * This component doesn't own the keyboard — it just reports selection to the
+ * parent. See `src/components/editor/useAutomationClipboard.ts`.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'

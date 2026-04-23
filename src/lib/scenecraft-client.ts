@@ -1216,3 +1216,56 @@ export async function postExtendVideo(project: string, transitionId: string, vid
   if (!res.ok) throw new Error(`Failed to extend video: ${res.status} ${await res.text()}`)
   return res.json()
 }
+
+// ── M13 effect-curves ──
+
+/**
+ * Update a single effect_curve row (task-52 endpoint — individual update).
+ * For multi-curve paste (task-56) prefer `postEffectCurveBatchUpdate` so
+ * the whole paste collapses into a single undo unit (spec R47).
+ */
+export async function postUpdateEffectCurve(
+  project: string,
+  curveId: string,
+  patch: { points?: Array<[number, number]>; interpolation?: 'bezier' | 'linear' | 'step'; visible?: boolean },
+): Promise<{ id: string; points: Array<[number, number]>; interpolation: string; visible: boolean }> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/effect-curves/${encodeURIComponent(curveId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error(`Failed to update effect curve: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+/**
+ * Batch-update multiple effect_curve rows atomically inside a single
+ * undo group (spec R47).
+ *
+ * Backing endpoint: `POST /effect-curves/batch`. Implementation in
+ * `scenecraft-engine/src/scenecraft/api_server.py` wraps the updates in
+ * one `undo_begin(...)` call so the whole paste shows up as ONE entry in
+ * the undo history — undoing it reverts every pasted keyframe at once
+ * (spec test `simultaneous-copy-paste-across-10-tracks`).
+ */
+export async function postEffectCurveBatchUpdate(
+  project: string,
+  updates: Array<{
+    curve_id: string
+    points?: Array<[number, number]>
+    interpolation?: 'bezier' | 'linear' | 'step'
+    visible?: boolean
+  }>,
+  opts?: { description?: string },
+): Promise<{ success: boolean; updated: string[] }> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/effect-curves/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      description: opts?.description ?? `Paste automation (${updates.length} curves)`,
+      updates,
+    }),
+  })
+  if (!res.ok) throw new Error(`Failed to batch-update effect curves: ${res.status} ${await res.text()}`)
+  return res.json()
+}
