@@ -29,6 +29,7 @@ import { recordPreview } from '@/lib/preview-recorder'
 import { PreviewViewport, type PreviewViewportHandle } from './PreviewViewport'
 import { ImportDialog } from './ImportDialog'
 import { RulesTrack, type RuleSection } from './RulesTrack'
+import { TrackHeaderPill } from './TrackHeaderPill'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
@@ -56,29 +57,46 @@ const TrackHeader = memo(function TrackHeader({ track, isActive, scrollLeft, onS
       className={`relative h-6 border-b shrink-0 cursor-pointer ${isActive ? 'bg-blue-900/15 border-blue-500/40' : 'bg-gray-950/50 border-gray-800'}`}
       onClick={onSelect}
     >
-      <div className="absolute top-0 h-full flex items-center gap-1.5 px-2 z-[5] bg-inherit" style={{ left: scrollLeft }}>
-      <span className="text-[10px] text-gray-400 font-medium truncate">{track.name}</span>
-
-      <button
-        onClick={(e) => { e.stopPropagation(); onOpenSettings?.() }}
-        className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
-        title="Track properties"
-      >Properties</button>
-
-      <button
-        onClick={(e) => { e.stopPropagation(); onUpdate({ muted: !track.muted }) }}
-        className={`text-[10px] px-1 rounded font-medium ${!track.muted ? 'text-green-400 hover:text-green-300' : 'text-red-400 hover:text-red-300'}`}
-        title={track.muted ? 'Unmute track' : 'Mute track'}
-      >{track.muted ? 'Muted' : 'Mute'}</button>
-
-      <button
-        onClick={(e) => { e.stopPropagation(); onUpdate({ solo: !track.solo }) }}
-        className={`text-[10px] px-1 rounded font-medium ${track.solo ? 'text-yellow-400 hover:text-yellow-300' : 'text-gray-500 hover:text-gray-300'}`}
-        title={track.solo ? 'Un-solo track' : 'Solo track — silences non-solo tracks'}
-      >{track.solo ? 'Solo' : 'Solo'}</button>
-
-      {onMoveUp && <button onClick={(e) => { e.stopPropagation(); onMoveUp() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track up">▲</button>}
-      {onMoveDown && <button onClick={(e) => { e.stopPropagation(); onMoveDown() }} className="text-[10px] text-gray-500 hover:text-gray-300" title="Move track down">▼</button>}
+      <div className="absolute top-0 h-full flex items-center gap-1.5 px-2 z-[5]" style={{ left: scrollLeft }}>
+        <TrackHeaderPill
+          label={track.name}
+          muted={track.muted}
+          onMuteToggle={(e) => { e.stopPropagation(); onUpdate({ muted: !track.muted }) }}
+          solo={track.solo}
+          onSoloToggle={(e) => { e.stopPropagation(); onUpdate({ solo: !track.solo }) }}
+          actions={
+            <>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onOpenSettings?.() }}
+                className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
+                title="Track properties"
+              >
+                Properties
+              </button>
+              {onMoveUp && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onMoveUp() }}
+                  className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
+                  title="Move track up"
+                >
+                  ▲
+                </button>
+              )}
+              {onMoveDown && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onMoveDown() }}
+                  className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
+                  title="Move track down"
+                >
+                  ▼
+                </button>
+              )}
+            </>
+          }
+        />
       </div>
     </div>
   )

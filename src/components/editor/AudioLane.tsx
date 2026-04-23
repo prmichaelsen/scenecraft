@@ -4,6 +4,7 @@ import { AudioWaveform } from './AudioWaveform'
 import { useEditorState } from './EditorStateContext'
 import { useContextMenu } from '@/contexts/ContextMenuContext'
 import { Wand2, Trash2, VolumeX, Volume2, Pencil, ArrowUp, ArrowDown } from 'lucide-react'
+import { TrackHeaderPill } from './TrackHeaderPill'
 
 type AudioLaneProps = {
   projectName: string
@@ -290,10 +291,13 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
       {/* Track header — sticky so it stays visible during horizontal scroll.
           `draggable` is scoped to the header only so the lane body (where
           clips live) keeps its existing mousedown gestures.
-          Background + blur tint keep the M / S / track-name labels legible
-          over whatever waveform scrolls beneath them. */}
+          The outer div stays transparent + full-height so it preserves its
+          drag / drop / context-menu hit area; the inner pill gets the
+          translucent background + blur so ONLY the label/buttons row is
+          tinted (mirrors the Align-Waveforms modal's `bg-black/50
+          backdrop-blur-sm` look). */}
       <div
-        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit cursor-grab active:cursor-grabbing bg-gray-950/80 backdrop-blur-sm shadow-[2px_0_4px_-2px_rgba(0,0,0,0.6)]"
+        className="sticky left-0 z-10 flex items-center gap-2 px-2 h-full w-fit cursor-grab active:cursor-grabbing"
         draggable
         onDragStart={(e) => {
           e.stopPropagation()
@@ -329,57 +333,45 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           <div className="absolute -bottom-px left-0 right-0 h-[2px] bg-cyan-400 pointer-events-none z-20" />
         )}
 
-        <span className="text-[9px] text-gray-500 uppercase tracking-wider pointer-events-none">
-          A{track.display_order + 1}
-        </span>
-        {renaming ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={nameDraft}
-            onChange={(e) => setNameDraft(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') commitRename()
-              else if (e.key === 'Escape') cancelRename()
-            }}
-            onBlur={commitRename}
-            onClick={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
-            // Prevent the surrounding draggable header from starting a drag
-            // when the user clicks into the input to edit.
-            draggable={false}
-            onDragStart={(e) => { e.preventDefault(); e.stopPropagation() }}
-            className="text-[10px] text-gray-200 bg-gray-900 border border-cyan-600/70 rounded px-1 py-0 focus:outline-none focus:border-cyan-400 max-w-[120px]"
-          />
-        ) : (
-          <span
-            className="text-[10px] text-gray-400 truncate max-w-[120px] cursor-text"
-            title="Double-click to rename"
-            onDoubleClick={(e) => {
-              e.stopPropagation()
-              setRenaming(true)
-            }}
-          >
-            {track.name}
-          </span>
-        )}
-        <button
-          onClick={(e) => {
+        <TrackHeaderPill
+          prefix={`A${track.display_order + 1}`}
+          label={renaming ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') commitRename()
+                else if (e.key === 'Escape') cancelRename()
+              }}
+              onBlur={commitRename}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              // Prevent the surrounding draggable header from starting a drag
+              // when the user clicks into the input to edit.
+              draggable={false}
+              onDragStart={(e) => { e.preventDefault(); e.stopPropagation() }}
+              className="text-[10px] text-gray-200 bg-gray-900 border border-cyan-600/70 rounded px-1 py-0 focus:outline-none focus:border-cyan-400 max-w-[120px]"
+            />
+          ) : track.name}
+          labelTitle="Double-click to rename"
+          onLabelDoubleClick={(e) => {
+            e.stopPropagation()
+            setRenaming(true)
+          }}
+          muted={track.muted}
+          onMuteToggle={(e) => {
             e.stopPropagation()
             onUpdateTrack?.(track.id, { muted: !track.muted })
           }}
-          className={`text-[9px] px-1 rounded font-medium ${track.muted ? 'text-red-400 hover:text-red-300' : 'text-green-400 hover:text-green-300'}`}
-          title={track.muted ? 'Unmute track' : 'Mute track'}
-        >M</button>
-        <button
-          onClick={(e) => {
+          solo={track.solo}
+          onSoloToggle={(e) => {
             e.stopPropagation()
             onUpdateTrack?.(track.id, { solo: !track.solo })
           }}
-          className={`text-[9px] px-1 rounded font-medium ${track.solo ? 'text-yellow-400 hover:text-yellow-300' : 'text-gray-500 hover:text-gray-300'}`}
-          title={track.solo ? 'Un-solo track' : 'Solo track — silences non-solo tracks'}
-        >S</button>
+        />
       </div>
 
       {/* Clips */}

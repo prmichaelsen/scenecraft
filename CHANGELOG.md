@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.22.1] - 2026-04-23
+
+### Changed
+- **Refactor**: extracted `TrackHeaderPill` — the translucent pill containing a track's label + mute/solo (+ extra actions) — into a shared component. Both `AudioLane` and the video track's `TrackHeader` now consume it. No visible change; preparation for the upcoming split-column timeline layout where track headers live in a dedicated left column. Mute/solo buttons also bumped to `text-[10px] px-1.5 py-px` for a reliable click hitbox.
+
 ## [0.22.0] - 2026-04-23
 
 ### Added
