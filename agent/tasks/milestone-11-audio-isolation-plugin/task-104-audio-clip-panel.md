@@ -1,204 +1,277 @@
-# Task 104: AudioClipPanel (Candidates UI)
+# Task 104: AudioIsolationsPanel (runs + stems list, mini-waveforms)
 
 **Milestone**: [M11 - Audio Isolation Plugin](../../milestones/milestone-11-audio-isolation-plugin.md)
-**Design Reference**: [local.audio-isolation-plugin.md](../../design/local.audio-isolation-plugin.md)
+**Design Reference**: [local.audio-isolation-plugin.md](../../design/local.audio-isolation-plugin.md) — UX: AudioIsolationsPanel, Peaks Endpoint
 **Estimated Time**: 5 hours
-**Dependencies**: [Task 100: Schema & helpers](task-100-schema-and-helpers.md), [Task 101: Plugin host scaffolding](task-101-plugin-host-scaffolding.md)
+**Dependencies**: [Task 100b: isolations schema](task-100b-isolations-schema.md), [Task 101: Plugin host](task-101-plugin-host-scaffolding.md), [Task 102: Backend plugin + peaks route](task-102-backend-plugin.md), [Task 103: Frontend plugin client](task-103-frontend-plugin.md)
 **Status**: Not Started
 
 ---
 
 ## Objective
 
-Create the new `AudioClipPanel.tsx` — analogous to `KeyframePanel` / `TransitionPanel` — that shows an audio clip's candidate list, the currently-selected one, and lets the user switch selection. Also hook up the right-click context menu to dispatch plugin operations.
+Build `AudioIsolationsPanel` — the primary UX surface for M11. Panel shows the *runs* (not candidates) for the currently-selected entity (`audio_clip` OR `transition`), each run expanding to its stems with mini-waveforms, play controls, and drag handles for task 104b. Embeds the `IsolateVocalsRunForm` from task 103 at the top as the kickoff entry point.
 
-Implements in `scenecraft/src/components/editor/AudioClipPanel.tsx` + panel registration in the editor layout.
+Implements in `scenecraft/src/plugins/isolate-vocals/AudioIsolationsPanel.tsx` (inside the plugin dir, not `components/editor/`, so the plugin boundary stays clean) + panel registration in `EditorPanelLayout.tsx`.
 
 ---
 
 ## Steps
 
-### 1. REST endpoints the panel needs
+### 1. Verify backend endpoints exist (from task 102)
 
-Confirm (or add, if missing) backend endpoints:
+- `GET /api/projects/:name/audio-isolations?entityType=...&entityId=...` — returns `{isolations: [{id, status, model, range_mode, trim_in, trim_out, created_at, stems: [...]}, ...]}`
+- `GET /api/projects/:name/pool/:seg_id/peaks?resolution=N` — float16 peaks for a raw pool_segment (stems aren't audio_clips, can't use the clip-keyed route)
+- `GET /api/projects/:name/files/:pool_path` — existing range-request streaming for ▶ play
 
-- `GET /api/projects/:name/audio-clips/:clipId/candidates` → `{candidates: [pool_segment_dict, ...]}`
-  - Backed by `db.get_audio_candidates(project_dir, clip_id)`
-- `POST /api/projects/:name/audio-clips/:clipId/assign-candidate` body `{ pool_segment_id: string | null }`
-  - Backed by `db.assign_audio_candidate(project_dir, clip_id, pool_segment_id)` + `undo_begin`
-- `GET /api/projects/:name/audio-clips/:clipId` → includes `selected`
+If any are missing when this task starts, fall back to implementing them locally before continuing.
 
-If any are missing in `api_server.py`, add them. Keep response shapes consistent with existing keyframe/transition candidate endpoints.
+### 2. `AudioIsolationsPanel.tsx`
 
-### 2. `AudioClipPanel.tsx`
-
-Mirror `KeyframePanel.tsx` / `TransitionPanel.tsx` structure. Two main sections:
-
-**Header:** clip name, timeline position, duration, track name.
-
-**Candidates list:** scrollable list of candidates including an implicit "Original" row (pool_segment_id=null, representing the clip's native source file). Each row:
-- Mini-waveform preview (reuse existing waveform-rendering component if available; simple static SVG bars as placeholder is OK for MVP)
-- Source badge (`Original` / `Imported` / `Plugin — isolate-vocals` / `Generated`)
-- Created timestamp
-- Selected indicator (radio / checkmark) — clicking assigns this candidate via the REST endpoint
-- Secondary actions: Delete candidate (calls `remove_audio_candidate`, skipped for MVP if time-constrained)
-
-**Job-in-flight indicator:** if `PluginHost.pendingJobs[clipId]` exists, show a spinner row at the top of the list with the current progress.
+Structure:
 
 ```tsx
-type Candidate = {
-  id: string | null              // pool_segment_id, null = original source
-  poolPath?: string
-  source: string                 // 'original' | 'generated' | 'imported' | 'plugin'
-  createdAt?: string
-  durationSeconds?: number
-}
+type EntitySelection =
+  | { type: 'audio_clip'; id: string; durationSeconds?: number; label?: string }
+  | { type: 'transition'; id: string; durationSeconds?: number; label?: string }
+  | null
 
 type Props = {
-  clip: AudioClip
+  entity: EntitySelection
   projectName: string
   onClose?: () => void
-  onSelectChange?: () => void    // triggers router.invalidate() in parent
 }
 
-export function AudioClipPanel({ clip, projectName, onClose, onSelectChange }: Props) {
-  const [candidates, setCandidates] = useState<Candidate[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(clip.selected ?? null)
+export function AudioIsolationsPanel({ entity, projectName, onClose }: Props) {
+  if (!entity) return <EmptyState message="Select an audio clip or transition to isolate audio." />
+
+  const [runs, setRuns] = useState<IsolationRun[]>([])
+  const [inFlight, setInFlight] = useState<Map<string, { pct: number; detail: string }>>(new Map())
   const [loading, setLoading] = useState(true)
 
+  // Load + refresh on entity change
   useEffect(() => {
-    loadCandidates(projectName, clip.id).then(list => {
-      setCandidates([
-        { id: null, source: 'original', durationSeconds: clip.end_time - clip.start_time },
-        ...list,
-      ])
-      setSelectedId(clip.selected ?? null)
-      setLoading(false)
-    })
-  }, [projectName, clip.id, clip.selected])
+    setLoading(true)
+    fetchIsolations(projectName, entity.type, entity.id)
+      .then(list => { setRuns(list); setLoading(false) })
+  }, [projectName, entity.type, entity.id])
 
-  const handleAssign = async (candidateId: string | null) => {
-    await assignCandidate(projectName, clip.id, candidateId)
-    setSelectedId(candidateId)
-    onSelectChange?.()
+  // Subscribe to in-flight jobs, patch progress & drop+refetch on completion
+  const handleKickoff = (k: { isolation_id: string; job_id: string }) => {
+    setInFlight(m => new Map(m).set(k.isolation_id, { pct: 0, detail: 'starting' }))
+    subscribeIsolationJob(k.job_id, {
+      progress: (pct, detail) => setInFlight(m => {
+        const nm = new Map(m); nm.set(k.isolation_id, { pct, detail }); return nm
+      }),
+      completed: () => {
+        setInFlight(m => { const nm = new Map(m); nm.delete(k.isolation_id); return nm })
+        fetchIsolations(projectName, entity.type, entity.id).then(setRuns)
+      },
+      failed: (err) => {
+        setInFlight(m => { const nm = new Map(m); nm.delete(k.isolation_id); return nm })
+        fetchIsolations(projectName, entity.type, entity.id).then(setRuns)  // reflect 'failed' status
+      },
+    })
   }
 
-  const contextMenuItems = PluginHost.getContextMenuItems('audio_clip')
-
   return (
-    <Panel>
-      <Header clip={clip} onClose={onClose} />
-      <section>
-        <h3 className="text-xs font-semibold text-gray-400 mb-2">Candidates ({candidates.length})</h3>
-        <ul className="space-y-1">
-          {candidates.map(c => (
-            <CandidateRow
-              key={c.id ?? '_original'}
-              candidate={c}
-              selected={c.id === selectedId}
-              onClick={() => handleAssign(c.id)}
+    <Panel title={`Audio Isolations — ${entity.label ?? entity.id}`} onClose={onClose}>
+      <IsolateVocalsRunForm entity={entity} projectName={projectName} onStart={handleKickoff} />
+
+      <section className="mt-3">
+        <h3 className="text-xs text-gray-400 mb-1">Runs ({runs.length})</h3>
+        {loading && <SkeletonRunList />}
+        {!loading && runs.length === 0 && <div className="text-xs text-gray-500">No isolations yet — click Run above to start.</div>}
+        <ul className="space-y-2">
+          {runs.map(run => (
+            <RunCard
+              key={run.id}
+              run={run}
+              projectName={projectName}
+              inFlight={inFlight.get(run.id)}
             />
           ))}
         </ul>
-      </section>
-      <section>
-        <h3 className="text-xs font-semibold text-gray-400 mb-2 mt-4">Operations</h3>
-        {contextMenuItems.map(item => (
-          <button
-            key={item.operation}
-            onClick={() => dispatchOperation(item.operation, 'audio_clip', clip.id, projectName)}
-            className="w-full text-left px-2 py-1 text-xs hover:bg-gray-800"
-          >
-            {item.label}
-          </button>
-        ))}
       </section>
     </Panel>
   )
 }
 ```
 
-`dispatchOperation` lives in `lib/plugin-api.ts` (or a new helper file); same code path as the context-menu click in task 103 — keeps the two surfaces in sync.
+### 3. `RunCard` — one run
 
-### 3. `CandidateRow` component
+Shows run metadata + stems.
 
 ```tsx
-function CandidateRow({ candidate, selected, onClick }: { ... }) {
-  const label = candidate.source === 'original' ? 'Original source'
-             : candidate.source === 'plugin' ? 'Plugin — isolate-vocals'
-             : candidate.source
+function RunCard({ run, projectName, inFlight }: {
+  run: IsolationRun
+  projectName: string
+  inFlight?: { pct: number; detail: string }
+}) {
+  const statusColor = {
+    pending: 'bg-gray-700', running: 'bg-amber-700',
+    completed: 'bg-emerald-700', failed: 'bg-red-800',
+  }[run.status]
+
   return (
-    <li
-      onClick={onClick}
-      className={`flex items-center gap-2 p-2 rounded cursor-pointer ${
-        selected ? 'bg-blue-900/30 border border-blue-700/60' : 'hover:bg-gray-800/40'
-      }`}
-    >
-      <div className="w-3 h-3 rounded-full flex-shrink-0 border border-gray-600"
-           data-selected={selected}>
-        {selected && <div className="w-full h-full rounded-full bg-blue-500" />}
-      </div>
-      <MiniWaveform poolPath={candidate.poolPath} className="flex-1 h-6" />
-      <div className="text-xs">
-        <div className="text-gray-200">{label}</div>
-        {candidate.createdAt && (
-          <div className="text-gray-500 text-[10px]">
-            {new Date(candidate.createdAt).toLocaleString()}
-          </div>
-        )}
-      </div>
+    <li className="border border-gray-800 rounded p-2 bg-gray-900/30">
+      <header className="flex items-center gap-2 text-xs">
+        <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide text-white ${statusColor}`}>
+          {run.status}
+        </span>
+        <span className="text-gray-300">{run.model}</span>
+        <span className="text-gray-500">·</span>
+        <span className="text-gray-500">
+          {run.range_mode === 'full' ? 'full' : `${run.trim_in}s–${run.trim_out}s`}
+        </span>
+        <span className="ml-auto text-gray-500 text-[10px]">
+          {new Date(run.created_at).toLocaleString()}
+        </span>
+      </header>
+
+      {run.status === 'running' && inFlight && (
+        <ProgressBar pct={inFlight.pct} detail={inFlight.detail} />
+      )}
+
+      {run.status === 'failed' && run.error && (
+        <div className="mt-1 text-xs text-red-400 break-all">{run.error}</div>
+      )}
+
+      {run.status === 'completed' && (
+        <ul className="mt-2 space-y-1">
+          {run.stems.map(s => (
+            <StemRow key={s.pool_segment_id} stem={s} projectName={projectName} />
+          ))}
+        </ul>
+      )}
     </li>
   )
 }
 ```
 
-`MiniWaveform` — for MVP, can be a placeholder `<div className="bg-gray-800">` with `{candidate.durationSeconds?.toFixed(1)}s` as text. Real waveform rendering can come later (or reuse whatever `AudioTrack.tsx` uses for the timeline).
-
-### 4. Panel registration
-
-Add `AudioClipPanel` to `EditorPanelLayout.tsx`'s panel registry (similar to how `KeyframePanel` is wired):
+### 4. `StemRow` — vocal/background row with waveform + ▶ + drag handle
 
 ```tsx
-function PropertiesPanelComponent() {
-  const { selectedAudioClip, ... } = useEditorState()
-  if (selectedAudioClip) return <Panel><AudioClipPanel clip={selectedAudioClip} ... /></Panel>
-  // ... existing keyframe / transition branches
+function StemRow({ stem, projectName }: { stem: IsolateStem & { duration_seconds: number }; projectName: string }) {
+  const stemColor = stem.stem_type === 'vocal' ? 'text-emerald-400' : 'text-sky-400'
+
+  const onDragStart = (ev: React.DragEvent) => {
+    ev.dataTransfer.effectAllowed = 'copy'
+    ev.dataTransfer.setData('application/x-scenecraft-stem', JSON.stringify({
+      pool_segment_id: stem.pool_segment_id,
+      pool_path: stem.pool_path,
+      stem_type: stem.stem_type,
+      duration_seconds: stem.duration_seconds,
+    }))
+  }
+
+  return (
+    <li
+      draggable
+      onDragStart={onDragStart}
+      className="flex items-center gap-2 p-1.5 bg-gray-900 rounded cursor-grab hover:bg-gray-800"
+    >
+      <span className={`text-[10px] w-16 uppercase tracking-wide ${stemColor}`}>{stem.stem_type}</span>
+      <PoolPeaksMiniWaveform
+        projectName={projectName}
+        poolSegmentId={stem.pool_segment_id}
+        durationSeconds={stem.duration_seconds}
+        className="flex-1 h-6"
+      />
+      <span className="text-[10px] text-gray-500 w-14 text-right">
+        {stem.duration_seconds.toFixed(1)}s
+      </span>
+      <PoolAudioPlayButton projectName={projectName} poolPath={stem.pool_path} />
+    </li>
+  )
 }
 ```
 
-If `selectedAudioClip` doesn't yet exist in `EditorStateContext`, add it alongside `selectedKeyframe` / `selectedTransition` (new selection type). Clicking an audio clip on the timeline sets it; clicking elsewhere clears it.
+### 5. `PoolPeaksMiniWaveform` — mini canvas from `/pool/:seg_id/peaks`
 
-### 5. Auto-refresh on job completion
+Thin clone of the existing audio-clip mini-waveform component, but sourced from the new pool peaks route. If there's already a `MiniWaveform` that accepts a custom peaks URL, reuse it; otherwise create one local to this plugin.
 
-When the isolate-vocals job completes (via the WS broadcast from task 102), the panel should re-fetch candidates so the new candidate appears without a page refresh.
+```tsx
+function PoolPeaksMiniWaveform({ projectName, poolSegmentId, durationSeconds, className }: {...}) {
+  const [peaks, setPeaks] = useState<Float32Array | null>(null)
+  useEffect(() => {
+    const url = `${API_URL}/api/projects/${encodeURIComponent(projectName)}/pool/${poolSegmentId}/peaks?resolution=200`
+    fetch(url).then(r => r.arrayBuffer()).then(buf => setPeaks(decodeFloat16(buf)))
+  }, [projectName, poolSegmentId])
 
-Options:
-1. Subscribe to WS `job_completed` events for this clip, invalidate state on match
-2. Use a global refetch after any plugin-registered operation via `router.invalidate()` in `onSelectChange`
+  // Render peaks to a 200×20 canvas inside className; simple min/max bars
+  ...
+}
+```
 
-For MVP: option 2 — call `router.invalidate()` in the plugin's client-side success callback. It's a hammer but it's what existing flows use.
+`decodeFloat16` exists as a frontend helper for the audio-clip peaks flow — reuse.
 
-### 6. Right-click timeline hookup
+### 6. `PoolAudioPlayButton` — native audio with range streaming
 
-Wherever audio clips render in the timeline (probably `src/components/editor/AudioTrack.tsx`), add a right-click menu that consults `PluginHost.getContextMenuItems('audio_clip')` and dispatches through the same `dispatchOperation` helper. This overlaps with task 103; coordinate so there's one `dispatchOperation` implementation.
+```tsx
+function PoolAudioPlayButton({ projectName, poolPath }: { projectName: string; poolPath: string }) {
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const src = `${API_URL}/api/projects/${encodeURIComponent(projectName)}/files/${poolPath}`
 
-### 7. Tests
+  const toggle = () => {
+    if (!audioRef.current) audioRef.current = new Audio(src)
+    if (playing) { audioRef.current.pause(); setPlaying(false) }
+    else { audioRef.current.play(); setPlaying(true) }
+  }
 
-`__tests__/AudioClipPanel.test.tsx`:
-- Mount with a clip that has 0 candidates → only "Original source" row, selected
-- Mount with a clip that has 2 candidates → 3 rows (original + 2), correct one highlighted as selected
-- Click a row → POST fires to `/assign-candidate` with the right id → `onSelectChange` called
-- Plugin operation list is populated from `PluginHost.getContextMenuItems('audio_clip')`
+  useEffect(() => () => { audioRef.current?.pause() }, [])
+
+  return <button onClick={toggle} className="text-gray-400 hover:text-gray-200">{playing ? '■' : '▶'}</button>
+}
+```
+
+### 7. Panel registration in `EditorPanelLayout.tsx`
+
+Register a new `panel:audio-isolations` panel type with dockview (or the existing panel registry). Content component reads the current entity selection from `EditorStateContext` and renders `<AudioIsolationsPanel entity={...} projectName={projectName} />`.
+
+Add a default docking position — suggest right-rail, sibling to the keyframe/transition panels. Opens in response to:
+- Clicking the "Audio Isolations" panel in the panel menu
+- The `reveals: panel:audio-isolations` hint from the context-menu items (task 103 manifest) — requires a tiny helper in `EditorPanelLayout` that opens a panel by id.
+
+`EditorStateContext` selection already handles `selectedKeyframe` and `selectedTransition`. This task adds/consumes `selectedAudioClip` (if not already present from M10-era audio work). The panel consumes whichever of those three is set.
+
+### 8. Auto-refresh on completion
+
+Completion flow uses the in-panel WS subscription (step 2). The `AudioIsolationsPanel` doesn't call `router.invalidate()` — the runs list is panel-local state driven by `fetchIsolations` on entity change + on completion.
+
+If the user has the panel open on entity A and then switches to entity B, the effect re-fires and re-fetches. Good.
+
+### 9. Tests
+
+`src/plugins/isolate-vocals/__tests__/AudioIsolationsPanel.test.tsx`:
+- Empty state: no entity → "Select an audio clip or transition…"
+- Entity with zero runs → Run form + "No isolations yet…"
+- Entity with two completed runs → two RunCards, each with 2 StemRows (vocal + background)
+- In-flight run: subscribe callback fires → progress bar updates
+- On job completed → `fetchIsolations` refetches → new run appears in completed state
+
+`__tests__/StemRow.test.tsx`:
+- Drag start sets `application/x-scenecraft-stem` payload with pool_segment_id + stem_type + duration_seconds + pool_path
+- Play button toggles `<audio>` play/pause
+- Stem label colored by stem_type
+
+`__tests__/PoolPeaksMiniWaveform.test.tsx`:
+- Fetches `/pool/:seg_id/peaks?resolution=200`; renders canvas after peaks arrive
+- Error response → renders placeholder, no crash
 
 ---
 
 ## Verification
 
-- [ ] `AudioClipPanel.tsx` exists and renders for audio_clip selections
-- [ ] REST endpoints for `/audio-clips/:id/candidates` and `/audio-clips/:id/assign-candidate` exist and are wired
-- [ ] "Original source" row is always present and selectable (assigns `null`)
-- [ ] Plugin-generated candidates appear with a distinct source label
-- [ ] Clicking a candidate updates `audio_clips.selected` via REST; UI reflects the change
-- [ ] Context menu / Operations section shows "Isolate vocals…" (via PluginHost)
-- [ ] After a job completes, the new candidate appears without manual refresh (router invalidation works)
-- [ ] Panel tests pass
+- [ ] `AudioIsolationsPanel.tsx` lives under `src/plugins/isolate-vocals/` (plugin boundary)
+- [ ] Panel renders for both `audio_clip` and `transition` selections
+- [ ] Run form embedded at top; kicking off a job adds an in-flight RunCard immediately with progress bar
+- [ ] Completed runs show each stem with a mini-waveform (via `/pool/:seg_id/peaks`), ▶ play, drag handle
+- [ ] Stem drag sets `application/x-scenecraft-stem` MIME payload (consumed by task 104b)
+- [ ] `EditorPanelLayout` registers `panel:audio-isolations` panel type; context-menu `reveals` opens it
+- [ ] Entity-change effect re-fetches runs without stale state
+- [ ] Completion path refetches the runs list (no full page reload)
+- [ ] Failed-run state shows the error string; failed stems NOT rendered
+- [ ] No cross-boundary imports from editor internals into the plugin (beyond `@/lib/plugin-api`)
+- [ ] All tests pass

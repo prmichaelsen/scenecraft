@@ -1,18 +1,18 @@
-# Task 102: Backend isolate-vocals Plugin
+# Task 102: Backend isolate-vocals Plugin (DFN3 + Residual, Multi-Stem)
 
 **Milestone**: [M11 - Audio Isolation Plugin](../../milestones/milestone-11-audio-isolation-plugin.md)
-**Design Reference**: [local.audio-isolation-plugin.md](../../design/local.audio-isolation-plugin.md)
-**Estimated Time**: 6 hours
-**Dependencies**: [Task 100: Schema & helpers](task-100-schema-and-helpers.md), [Task 101: Plugin host scaffolding](task-101-plugin-host-scaffolding.md)
+**Design Reference**: [local.audio-isolation-plugin.md](../../design/local.audio-isolation-plugin.md) — Architecture / Backend Handler Sketch / Peaks Endpoint
+**Estimated Time**: 7 hours
+**Dependencies**: [Task 100b: isolations schema](task-100b-isolations-schema.md), [Task 101: Plugin host scaffolding](task-101-plugin-host-scaffolding.md)
 **Status**: Not Started
 
 ---
 
 ## Objective
 
-Build the backend side of the isolate-vocals plugin: DeepFilterNet3 integration, threaded job kickoff, REST endpoint, and `PluginHost` registration. Output appends a new `audio_candidate` and auto-selects it.
+Build the backend isolate-vocals plugin: DeepFilterNet3 enhancement + numpy residual subtraction to emit **two stems** (`vocal` + `background`) per run. Output is grouped under one `audio_isolations` row and fanned out via `isolation_stems`. Supports both `audio_clip` and `transition` as source entities. Registers a REST kickoff route and a new pool peaks route.
 
-Implements in `scenecraft-engine/src/scenecraft/plugins/isolate_vocals/`.
+Implements in `scenecraft-engine/src/scenecraft/plugins/isolate_vocals/` and adds `GET /api/projects/:name/pool/:seg_id/peaks` to `api_server.py`.
 
 ---
 
@@ -24,24 +24,27 @@ Create `scenecraft-engine/src/scenecraft/plugins/isolate_vocals/plugin.yaml`:
 
 ```yaml
 name: isolate-vocals
-version: 0.1.0
+version: 0.2.0
 displayName: "Isolate Vocals"
-description: "Strip background noise from an audio clip using DeepFilterNet3."
+description: "Separate a voice-over-noise audio source into vocal and background stems using DeepFilterNet3."
 publisher: scenecraft
 license: MIT
 
 activationEvents:
   - onCommand:isolate-vocals.run
   - onContextMenu:audio_clip
+  - onContextMenu:transition
 
 contributes:
   operations:
     - id: isolate-vocals.run
       label: "Isolate vocals"
-      entityTypes: [audio_clip]                 # MVP: audio_clip only
+      entityTypes: [audio_clip, transition]
       handler: "backend:isolate_vocals.run"
-      ui: "frontend:isolate_vocals.Dialog"
-      output: audio_candidate
+      panel: "frontend:isolate_vocals.AudioIsolationsPanel"
+      outputs:
+        - kind: pool_segment
+          stem_type_enum: [vocal, background]
 
   contextMenus:
     - entityType: audio_clip
@@ -49,23 +52,29 @@ contributes:
         - operation: isolate-vocals.run
           label: "Isolate vocals…"
           icon: wave
+          reveals: panel:audio-isolations
+    - entityType: transition
+      items:
+        - operation: isolate-vocals.run
+          label: "Isolate vocals from audio track…"
+          icon: wave
+          reveals: panel:audio-isolations
 ```
 
 ### 2. `plugins/isolate_vocals/__init__.py`
 
 ```python
-"""isolate-vocals plugin: DeepFilterNet3-based audio denoising."""
+"""isolate-vocals plugin: DFN3 + residual multi-stem audio isolation."""
 
 from scenecraft.plugin_host import PluginHost, OperationDef
 from . import isolate_vocals as impl
 
 
 def activate(plugin_api):
-    """Called once by PluginHost.register at server startup."""
     PluginHost.register_operation(OperationDef(
         id="isolate-vocals.run",
         label="Isolate vocals",
-        entity_types=["audio_clip"],
+        entity_types=["audio_clip", "transition"],
         handler=impl.run,
     ))
     plugin_api.register_rest_endpoint(
@@ -74,16 +83,15 @@ def activate(plugin_api):
     )
 
 
-# Public re-exports for the host / tests
 run = impl.run
 ```
 
 ### 3. `plugins/isolate_vocals/isolate_vocals.py`
 
-The kickoff helper — patterned on `chat_generation.py`'s `start_keyframe_generation`.
+The run handler. Creates an `audio_isolations` row, kicks off a thread, writes two stems as pool_segments, links them via `isolation_stems`, updates the run status.
 
 ```python
-"""Kickoff helper for the isolate-vocals operation."""
+"""isolate-vocals: DFN3 vocal extraction + numpy residual → background."""
 
 import threading
 import uuid
@@ -92,200 +100,268 @@ from pathlib import Path
 
 
 def run(entity_type: str, entity_id: str, context: dict) -> dict:
-    """Kick off a denoise job. Returns {job_id, audio_clip_id} or {error}.
+    """Returns {isolation_id, job_id} on kickoff, or {error}.
 
-    context expected keys:
-      - project_dir: Path
-      - project_name: str
+    context keys:
+      - project_dir (Path)
+      - project_name (str)
+      - range_mode: 'full' | 'subset'
+      - trim_in (float | None), trim_out (float | None)
     """
     from scenecraft import plugin_api
-    from scenecraft.plugin_host import PluginHost  # noqa
 
-    if entity_type != "audio_clip":
-        return {"error": f"unsupported entity_type for MVP: {entity_type}"}
+    if entity_type not in ("audio_clip", "transition"):
+        return {"error": f"unsupported entity_type: {entity_type}"}
 
     project_dir: Path = context["project_dir"]
     project_name: str = context.get("project_name", "")
+    range_mode = context.get("range_mode", "full")
+    trim_in = context.get("trim_in")
+    trim_out = context.get("trim_out")
 
-    clip = plugin_api.get_audio_clip(project_dir, entity_id)
-    if not clip:
-        return {"error": f"audio_clip not found: {entity_id}"}
+    source_path = _resolve_source_path(project_dir, entity_type, entity_id)
+    if source_path is None or not source_path.exists():
+        return {"error": "source audio not found"}
 
-    src = plugin_api.get_audio_clip_effective_path(project_dir, clip)
-    src_path = project_dir / src
-    if not src_path.exists():
-        return {"error": f"source file not found: {src}"}
-
-    # Pre-generate pool_segment UUID so we can write the file straight to its final path
-    seg_id = uuid.uuid4().hex
-    pool_dir = project_dir / "pool" / "segments"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    out_filename = f"{seg_id}.wav"   # WAV for MVP simplicity; mp3 transcode can follow later
-    out_path = pool_dir / out_filename
-
+    isolation_id = plugin_api.add_audio_isolation(
+        project_dir,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        model="deepfilternet3",
+        range_mode=range_mode,
+        trim_in=trim_in,
+        trim_out=trim_out,
+    )
     job_id = plugin_api.job_manager.create_job(
         "isolate_vocals",
         total=100,
-        meta={"audioClipId": entity_id, "project": project_name, "plugin": "isolate-vocals"},
+        meta={
+            "isolationId": isolation_id,
+            "entityType": entity_type,
+            "entityId": entity_id,
+            "project": project_name,
+            "plugin": "isolate-vocals",
+        },
     )
 
     def _work():
         try:
+            plugin_api.update_audio_isolation_status(project_dir, isolation_id, "running")
+
+            # 1. Stage + decode source to canonical WAV
+            pool_dir = project_dir / "pool" / "segments"
+            pool_dir.mkdir(parents=True, exist_ok=True)
+            tmp_in = pool_dir / f"_tmp_isolate_in_{isolation_id}.wav"
+            _extract_source_wav(source_path, tmp_in, range_mode, trim_in, trim_out)
+            plugin_api.job_manager.update_progress(job_id, 20, "source decoded")
+
+            # 2. DFN3 → vocal (same duration as tmp_in, speech-enhanced)
             from .model import denoise_wav
-            plugin_api.job_manager.update_progress(job_id, 5, "loading model")
+            tmp_vocal = pool_dir / f"_tmp_isolate_vocal_{isolation_id}.wav"
+            denoise_wav(tmp_in, tmp_vocal)
+            plugin_api.job_manager.update_progress(job_id, 65, "vocal extracted")
 
-            # 1. ffmpeg: source → wav_in (temp)
-            tmp_wav = pool_dir / f"_tmp_isolate_{seg_id}.wav"
-            plugin_api.extract_audio_as_wav(src_path, tmp_wav, sample_rate=48000)
-            plugin_api.job_manager.update_progress(job_id, 20, "denoising")
+            # 3. Residual: background = source − vocal (time-domain subtraction)
+            tmp_bg = pool_dir / f"_tmp_isolate_bg_{isolation_id}.wav"
+            _subtract_audio_wav(tmp_in, tmp_vocal, tmp_bg)
+            plugin_api.job_manager.update_progress(job_id, 80, "residual computed")
 
-            # 2. DFN3: wav_in → wav_out
-            denoise_wav(tmp_wav, out_path)
-            tmp_wav.unlink(missing_ok=True)
-            plugin_api.job_manager.update_progress(job_id, 80, "saving")
+            # 4. Pre-generate pool_segment UUIDs (pattern from chat_generation.py)
+            vocal_seg_id = uuid.uuid4().hex
+            bg_seg_id = uuid.uuid4().hex
+            vocal_out = pool_dir / f"{vocal_seg_id}.wav"
+            bg_out = pool_dir / f"{bg_seg_id}.wav"
+            tmp_vocal.rename(vocal_out)
+            tmp_bg.rename(bg_out)
+            tmp_in.unlink(missing_ok=True)
 
-            # 3. Register as pool_segment + candidate + auto-select
-            # Write SQL directly (pre-generated UUID means add_pool_segment can't be used as-is)
-            from scenecraft.db import get_db, _retry_on_locked
+            # 5. Register both as pool_segments + junction rows (inside one undo group)
+            dur = _wav_duration_seconds(vocal_out)
             now_iso = datetime.now().astimezone().isoformat()
+            plugin_api.undo_begin(project_dir, f"Isolate vocals: {entity_type} {entity_id}")
 
-            def _insert_seg():
-                conn = get_db(project_dir)
-                conn.execute(
-                    """INSERT INTO pool_segments
-                       (id, pool_path, kind, created_by, created_at)
-                       VALUES (?, ?, 'generated', 'isolate-vocals', ?)""",
-                    (seg_id, f"pool/segments/{out_filename}", now_iso),
-                )
-                conn.commit()
-            _retry_on_locked(_insert_seg)
+            _insert_pool_segment(project_dir, vocal_seg_id, f"pool/segments/{vocal_seg_id}.wav",
+                                 duration=dur, created_by="isolate-vocals", created_at=now_iso)
+            _insert_pool_segment(project_dir, bg_seg_id, f"pool/segments/{bg_seg_id}.wav",
+                                 duration=dur, created_by="isolate-vocals", created_at=now_iso)
 
-            plugin_api.undo_begin(project_dir, f"Isolate vocals: {entity_id}")
-            plugin_api.add_audio_candidate(
-                project_dir,
-                audio_clip_id=entity_id,
-                pool_segment_id=seg_id,
-                source="plugin",
-            )
-            plugin_api.assign_audio_candidate(project_dir, entity_id, seg_id)
+            plugin_api.add_isolation_stem(project_dir, isolation_id, vocal_seg_id, "vocal")
+            plugin_api.add_isolation_stem(project_dir, isolation_id, bg_seg_id, "background")
+
+            plugin_api.update_audio_isolation_status(project_dir, isolation_id, "completed")
 
             plugin_api.job_manager.complete_job(job_id, {
-                "audio_clip_id": entity_id,
-                "pool_segment_id": seg_id,
-                "pool_path": f"pool/segments/{out_filename}",
+                "isolation_id": isolation_id,
+                "stems": [
+                    {"stem_type": "vocal",      "pool_segment_id": vocal_seg_id, "pool_path": f"pool/segments/{vocal_seg_id}.wav"},
+                    {"stem_type": "background", "pool_segment_id": bg_seg_id,    "pool_path": f"pool/segments/{bg_seg_id}.wav"},
+                ],
             })
         except Exception as e:
             import sys
             print(f"[isolate-vocals] failed: {e}", file=sys.stderr)
+            plugin_api.update_audio_isolation_status(
+                project_dir, isolation_id, "failed", error=str(e)
+            )
             plugin_api.job_manager.fail_job(job_id, str(e))
 
     threading.Thread(target=_work, daemon=True).start()
-    return {"job_id": job_id, "audio_clip_id": entity_id, "pool_segment_id": seg_id}
+    return {"isolation_id": isolation_id, "job_id": job_id}
 
 
 def handle_rest(path: str, project_dir: Path, project_name: str, body: dict) -> dict:
-    """POST /api/projects/:name/plugins/isolate-vocals/run — thin wrapper over run()."""
-    entity_id = body.get("audio_clip_id") or body.get("entity_id")
+    """POST /api/projects/:name/plugins/isolate-vocals/run"""
+    entity_type = body.get("entity_type") or "audio_clip"
+    entity_id = body.get("entity_id")
     if not entity_id:
-        return {"error": "missing audio_clip_id"}
-    return run("audio_clip", entity_id, {"project_dir": project_dir, "project_name": project_name})
+        return {"error": "missing entity_id"}
+    context = {
+        "project_dir": project_dir,
+        "project_name": project_name,
+        "range_mode": body.get("range_mode", "full"),
+        "trim_in": body.get("trim_in"),
+        "trim_out": body.get("trim_out"),
+    }
+    return run(entity_type, entity_id, context)
 ```
 
-### 4. `plugins/isolate_vocals/model.py`
+### 4. Source resolution + ffmpeg helpers
 
-DeepFilterNet3 loader + inference. Lazy — model loads on first call, cached for the process lifetime.
+Same module, private helpers:
 
 ```python
-"""DeepFilterNet3 loader and denoise inference."""
+def _resolve_source_path(project_dir: Path, entity_type: str, entity_id: str) -> Path | None:
+    """audio_clip → its effective source (selected pool_segment or source_path).
+       transition → extract the selected video candidate's audio to audio_staging/."""
+    from scenecraft import plugin_api
+
+    if entity_type == "audio_clip":
+        clip = plugin_api.get_audio_clip(project_dir, entity_id)
+        if not clip:
+            return None
+        rel = plugin_api.get_audio_clip_effective_path(project_dir, clip)
+        return project_dir / rel
+
+    if entity_type == "transition":
+        # Extract audio from the transition's selected video candidate
+        # (pool_segment.poolPath) into audio_staging/, return that wav.
+        # Shape mirrors existing staged-audio flow.
+        ...
+
+    return None
+
+
+def _extract_source_wav(src: Path, out: Path, range_mode, trim_in, trim_out) -> None:
+    """ffmpeg: mono 48kHz PCM. If range_mode='subset', apply -ss trim_in -to trim_out."""
+
+def _subtract_audio_wav(src_wav: Path, vocal_wav: Path, out_wav: Path) -> None:
+    """Load both as float32 numpy arrays (same sample rate, same length),
+       write (src - vocal) to out_wav as 16-bit PCM."""
+
+def _wav_duration_seconds(p: Path) -> float:
+    """ffprobe or soundfile-based duration read."""
+
+def _insert_pool_segment(project_dir: Path, seg_id: str, pool_path: str, *,
+                         duration: float, created_by: str, created_at: str) -> None:
+    """Direct INSERT into pool_segments (kind='generated') bypassing add_pool_segment
+       so we can use a pre-generated seg_id. Uses _retry_on_locked."""
+```
+
+### 5. `plugins/isolate_vocals/model.py`
+
+Lazy DFN3 loader + inference — unchanged from prior plan. Input: mono WAV. Output: same-duration speech-enhanced WAV.
+
+```python
+"""DeepFilterNet3 loader + denoise."""
 
 from pathlib import Path
 
-_model = None
-_df_state = None
+_state = {"init": False}
 
 
 def _ensure_model():
-    global _model, _df_state
-    if _model is not None:
+    if _state["init"]:
         return
-    # pip install deepfilternet  (weights lazy-download on first construct)
     from df.enhance import init_df, enhance, load_audio, save_audio
-    _model_ref, _df_state_ref, _ = init_df()  # downloads weights on first call
-    globals()["_model"] = (_model_ref, enhance, load_audio, save_audio)
-    globals()["_df_state"] = _df_state_ref
+    model, df_state, _ = init_df()
+    _state.update(init=True, model=model, enhance=enhance, load=load_audio, save=save_audio, sr=df_state.sr(), df_state=df_state)
 
 
 def denoise_wav(in_path: Path, out_path: Path) -> None:
-    """Read a WAV, run DFN3 enhancement, write a WAV."""
     _ensure_model()
-    (model_ref, enhance, load_audio, save_audio) = _model
-    audio, _sr = load_audio(str(in_path), sr=_df_state.sr())
-    enhanced = enhance(model_ref, _df_state, audio)
-    save_audio(str(out_path), enhanced, _df_state.sr())
+    audio, _ = _state["load"](str(in_path), sr=_state["sr"])
+    enhanced = _state["enhance"](_state["model"], _state["df_state"], audio)
+    _state["save"](str(out_path), enhanced, _state["sr"])
 ```
 
-Notes:
-- The `df` package (DeepFilterNet3's Python module) handles weight downloading on first `init_df()`
-- If `df` is not installed, the `ImportError` is surfaced via the job's `fail_job` — the error message tells the user `pip install deepfilternet`
-- GPU usage: DFN3 auto-detects; no explicit device code needed
+### 6. Peaks endpoint: `GET /pool/:seg_id/peaks`
 
-### 5. pyproject.toml
+In `api_server.py`, add route (before plugin dispatch):
 
-Add `deepfilternet` as an optional dep. Example:
-
-```toml
-[project.optional-dependencies]
-plugins = [
-    "deepfilternet>=0.5.6",
-]
+```python
+m = re.match(r"^/api/projects/([^/]+)/pool/([^/]+)/peaks$", path)
+if m and self.command == "GET":
+    return self._handle_pool_peaks(m.group(1), m.group(2))
 ```
 
-Document in plugin README that users run `pip install scenecraft-engine[plugins]`.
+Handler body per design doc §Peaks Endpoint — thin wrapper over `compute_peaks(pool_path, source_offset=0, duration=seg.durationSeconds, resolution, project_dir)`. 404 on missing seg or missing file. Response is `application/octet-stream` with `X-Peak-Resolution` and `X-Peak-Duration` headers, matching the audio-clip peaks response shape.
 
-### 6. Wire into api_server.py
+### 7. List runs endpoint: `GET /audio-isolations`
 
-Uncomment the plugin import from task 101:
+```python
+m = re.match(r"^/api/projects/([^/]+)/audio-isolations$", path)
+if m and self.command == "GET":
+    entity_type = self._qs_get("entityType")
+    entity_id = self._qs_get("entityId")
+    rows = get_isolations_for_entity(project_dir, entity_type, entity_id)
+    return self._json({"isolations": rows})
+```
+
+### 8. Wire plugin into api_server startup
+
+Uncomment the stub from task 101:
 
 ```python
 from scenecraft.plugins import isolate_vocals
 PluginHost.register(isolate_vocals)
 ```
 
-And add route dispatch for plugin-registered routes inside the request handler (after all built-in routes):
+And make the plugin REST dispatch hook fire on POST paths that don't match built-in routes (design doc §Implementation).
 
-```python
-# Plugin-registered POST routes
-result = PluginHost.dispatch_rest(path, project_dir, m.group(1), self._read_json_body() or {})
-if result is not None:
-    return self._json_response(result)
-```
+### 9. pyproject.toml
 
-### 7. Tests
+Add `deepfilternet>=0.5.6` under `[project.optional-dependencies].plugins`. Document `pip install scenecraft-engine[plugins]` in the plugin README.
+
+### 10. Tests
 
 `plugins/isolate_vocals/tests/test_isolate_vocals.py`:
+- Mock `model.denoise_wav` so tests don't hit DFN3 binaries (fake copies input to output → residual subtraction yields silence, but schema wiring is tested).
+- `run('audio_clip', clip_id, context)` returns `{isolation_id, job_id}`.
+- Poll `job_manager.get_job(job_id)` until terminal; assert `audio_isolations.status == 'completed'`, 2 `isolation_stems` rows, 2 `pool_segments` rows (`kind='generated'`, `created_by='isolate-vocals'`).
+- Residual test: feed a synthetic source + known vocal; assert `_subtract_audio_wav` writes a WAV whose samples are `source − vocal` within rounding.
+- Error paths: missing entity → `{error}`, missing source file → `fail_job` + `audio_isolations.status='failed'` with `error` populated.
+- `transition` entity path: mocked `_resolve_source_path` returns a staged WAV; run completes same way.
+- Undo: complete a run; undo the `Isolate vocals: ...` group; `audio_isolations` + both `isolation_stems` + both `pool_segments` rows get reverted.
 
-- Mock `model.denoise_wav` so tests don't require the DFN3 binary (use a fake that copies input to output)
-- Fixture audio_clip with a small WAV source
-- Invoke `run("audio_clip", clip_id, context)` → verify `{job_id, audio_clip_id, pool_segment_id}`
-- Poll `job_manager.get_job(job_id)` until completed
-- Assert:
-  - File at `pool/segments/{seg_id}.wav` exists
-  - `pool_segments` row created with `kind='generated'` and `created_by='isolate-vocals'` (NB: `kind` is provenance, not media type — 'audio' is NOT a valid value)
-  - `audio_candidates` row created with `source='plugin'`
-  - `audio_clips.selected` is set to the new pool_segment_id
-  - `undo_groups` has a matching "Isolate vocals: ..." entry
-- Error paths: missing clip, missing source file, model raises → `fail_job` surfaces
+`tests/test_pool_peaks_endpoint.py`:
+- GET `/api/projects/:name/pool/:seg_id/peaks?resolution=400` returns 200, `application/octet-stream`, `X-Peak-Resolution: 400`, body size matches float16 layout for the given resolution.
+- 404 on unknown seg_id.
+- 404 when the file is missing on disk.
 
 ---
 
 ## Verification
 
-- [ ] `plugins/isolate_vocals/plugin.yaml` matches the design's manifest shape
-- [ ] `activate(plugin_api)` registers the operation and the REST route
-- [ ] `run(...)` kicks off a thread, returns `{job_id, audio_clip_id, pool_segment_id}`
-- [ ] On completion: pool_segment row + audio_candidate row + audio_clips.selected all updated
-- [ ] On failure: `job_manager.fail_job` called; no partial state
+- [ ] `plugins/isolate_vocals/plugin.yaml` matches v2 manifest (panel contribution, dual entity types, outputs spec)
+- [ ] `activate(plugin_api)` registers the operation + the REST route
+- [ ] `run(...)` returns `{isolation_id, job_id}`; progress ticks through 20/65/80/100
+- [ ] Completion path: `audio_isolations` row status=completed, 2 `isolation_stems` rows, 2 `pool_segments` rows
+- [ ] Failure path: status=failed, error populated, job fail_job called
+- [ ] Residual subtraction produces samples within floating-point tolerance of `source − vocal`
+- [ ] Both entity types (`audio_clip` and `transition`) resolve to a valid source WAV and complete a run
+- [ ] `GET /pool/:seg_id/peaks` returns peaks bytes; 404 on missing/deleted seg
+- [ ] `GET /audio-isolations?entityType=...&entityId=...` returns runs with nested stems
 - [ ] POST `/api/projects/:name/plugins/isolate-vocals/run` routes through `PluginHost.dispatch_rest`
-- [ ] DeepFilterNet3 weights lazy-download on first real call (test with mock so CI doesn't need network)
-- [ ] All tests pass with the mock model client
-- [ ] Error message is friendly when `deepfilternet` isn't installed
+- [ ] DFN3 weights lazy-download on first real call (tests use mock model)
+- [ ] Undo group round-trip: undo reverts all three tables; redo re-applies them
+- [ ] No writes to `audio_candidates` or `audio_clips.selected` (confirm via test assertion)

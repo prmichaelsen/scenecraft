@@ -861,8 +861,8 @@ milestones:
     started: 2026-04-19
     completed: null
     file: agent/milestones/milestone-11-audio-isolation-plugin.md
-    tasks_total: 6
-    tasks_completed: 1
+    tasks_total: 8
+    tasks_completed: 6
     estimated_weeks: 2
     tasks:
       - id: task-100
@@ -873,42 +873,69 @@ milestones:
         actual_hours: 0.5
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-100-schema-and-helpers.md
         estimated_hours: 3
-        notes: "Done via worktree task/m11-100-schema (commit 8ac3f6a, merged as 451ff2d). Agent caught that pool_segments.kind is provenance ('generated'|'imported'), not media type — patched design + task-102 docs accordingly."
+        notes: "Done via worktree task/m11-100-schema (commit 8ac3f6a, merged as 451ff2d). audio_candidates schema is NOT written by the v2 isolate-vocals operation (stems land in audio_isolations + isolation_stems via task-100b). Kept for future generated-audio ops."
+      - id: task-100b
+        name: audio_isolations + isolation_stems schema & helpers
+        status: completed
+        started: 2026-04-22T00:15:00Z
+        completed_date: 2026-04-22T00:45:00Z
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-100b-isolations-schema.md
+        estimated_hours: 2
+        actual_hours: 0.5
+        notes: "Completed via worktree (commit 14700c6). 20/20 new tests pass. Deviation: isolation_stems FK is DEFERRABLE INITIALLY DEFERRED to let redo_execute replay captured inverse SQL in seq ASC order without FK-constraint failure on stem-before-parent re-insert."
       - id: task-101
         name: Plugin host scaffolding (plugin-api + PluginHost)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-21T13:00:00Z
+        completed_date: 2026-04-21T23:55:00Z
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-101-plugin-host-scaffolding.md
         estimated_hours: 4
         actual_hours: null
+        notes: "Completed via worktrees (fb99028 engine, 980071d frontend). 9/9 backend + 7/7 frontend plugin-host tests pass. getSubscribeJob() added on frontend plugin-api (small scope expansion for task-103 dependency)."
       - id: task-102
-        name: Backend isolate-vocals plugin (DFN3 + REST)
-        status: not_started
-        started: null
+        name: Backend isolate-vocals plugin (DFN3 + residual, multi-stem)
+        status: completed
+        started: 2026-04-22T00:50:00Z
+        completed_date: 2026-04-22T01:45:00Z
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-102-backend-plugin.md
-        estimated_hours: 6
-        actual_hours: null
+        estimated_hours: 7
+        actual_hours: 1.0
+        notes: "Completed (commit 1e4aeb6). 12/12 new tests pass (8 isolate-vocals + 4 pool-peaks). Scope deviation: transition entity resolution returns 'not_implemented' — audio_clip only for MVP."
       - id: task-103
-        name: Frontend isolate-vocals plugin (manifest + descriptor + dialog + client)
-        status: not_started
-        started: null
+        name: Frontend isolate_vocals plugin (manifest + run form + client)
+        status: completed
+        started: 2026-04-23T04:00:00Z
+        completed_date: 2026-04-23T04:50:00Z
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-103-frontend-plugin.md
-        estimated_hours: 5
-        actual_hours: null
+        estimated_hours: 4
+        actual_hours: 0.8
+        notes: "Completed. 19/19 tests pass. panel? descriptor field added to OperationDescriptor. reveals? field added to context-menu items. AudioIsolationsPanel ships as a placeholder — task-104 builds the real body. Installed @testing-library/react + happy-dom for component tests."
       - id: task-104
-        name: AudioClipPanel (candidates UI)
-        status: not_started
-        started: null
+        name: AudioIsolationsPanel body (runs + stems list, mini-waveforms)
+        status: completed
+        started: 2026-04-23T05:00:00Z
+        completed_date: 2026-04-23T05:45:00Z
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-104-audio-clip-panel.md
         estimated_hours: 5
-        actual_hours: null
-      - id: task-105
-        name: Chat tool isolate_vocals + elicitation gate
+        actual_hours: 0.8
+        notes: "Completed. 5 new tests pass (20 plugin tests total). Scope: panel body only — the wrapper in EditorPanelLayout reads selectedAudioClipId from context but does not look up the full clip (EditorData doesn't carry audioClips). Lazy durationSeconds — run form tolerates undefined; can be enriched in a follow-up."
+      - id: task-104b
+        name: Drag stem → timeline (overwrite-with-split)
         status: not_started
         started: null
+        file: agent/tasks/milestone-11-audio-isolation-plugin/task-104b-drag-to-timeline.md
+        estimated_hours: 5
+        actual_hours: null
+        notes: "Added for v2. New /audio-clips/batch-ops endpoint (single undo group) + resolveOverlapsWithSplit pure function + AudioLane.tsx drop handler with trim/split/delete/insert rules."
+      - id: task-105
+        name: Chat tool isolate_vocals__run + elicitation gate
+        status: completed
+        started: 2026-04-23T00:30:00Z
+        completed_date: 2026-04-23T01:00:00Z
         file: agent/tasks/milestone-11-audio-isolation-plugin/task-105-chat-tool.md
         estimated_hours: 2
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "Completed (commit dbe8d65). 12/12 new tests pass. Naming convention: chat tool is 'isolate_vocals__run' ({plugin}__{tool} since Claude tool-name regex forbids dots); internal operation id stays 'isolate_vocals.run' (dot fine). Applied to task-102 too — refactor commit e53c3c6 standardized kebab→snake + dot-internal."
 
   - id: milestone_13
     name: Audio Sync Tab (Lipsync via Candidate Variants)
@@ -1669,41 +1696,57 @@ tasks:
   milestone_11:
     - id: task-100
       name: Schema & audio_candidates helpers
-      status: not_started
+      status: completed
       milestone_id: milestone_11
       file: agent/tasks/milestone-11-audio-isolation-plugin/task-100-schema-and-helpers.md
       estimated_hours: 3
+      actual_hours: 0.5
+      started: 2026-04-19T06:00:00Z
+    - id: task-100b
+      name: audio_isolations + isolation_stems schema & helpers
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-100b-isolations-schema.md
+      estimated_hours: 2
       actual_hours: null
       started: null
     - id: task-101
       name: Plugin host scaffolding (plugin-api + PluginHost)
-      status: not_started
+      status: in_progress
       milestone_id: milestone_11
       file: agent/tasks/milestone-11-audio-isolation-plugin/task-101-plugin-host-scaffolding.md
       estimated_hours: 4
       actual_hours: null
-      started: null
+      started: 2026-04-21T13:00:00Z
     - id: task-102
-      name: Backend isolate-vocals plugin (DFN3 + REST)
+      name: Backend isolate-vocals plugin (DFN3 + residual, multi-stem)
       status: not_started
       milestone_id: milestone_11
       file: agent/tasks/milestone-11-audio-isolation-plugin/task-102-backend-plugin.md
-      estimated_hours: 6
+      estimated_hours: 7
       actual_hours: null
       started: null
     - id: task-103
-      name: Frontend isolate-vocals plugin
+      name: Frontend isolate-vocals plugin (manifest + run form + client)
       status: not_started
       milestone_id: milestone_11
       file: agent/tasks/milestone-11-audio-isolation-plugin/task-103-frontend-plugin.md
-      estimated_hours: 5
+      estimated_hours: 4
       actual_hours: null
       started: null
     - id: task-104
-      name: AudioClipPanel (candidates UI)
+      name: AudioIsolationsPanel (runs + stems list, mini-waveforms)
       status: not_started
       milestone_id: milestone_11
       file: agent/tasks/milestone-11-audio-isolation-plugin/task-104-audio-clip-panel.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+    - id: task-104b
+      name: Drag stem → timeline (overwrite-with-split)
+      status: not_started
+      milestone_id: milestone_11
+      file: agent/tasks/milestone-11-audio-isolation-plugin/task-104b-drag-to-timeline.md
       estimated_hours: 5
       actual_hours: null
       started: null
@@ -1966,7 +2009,7 @@ next_steps:
   - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
   - "M15: Audio Clip Editing + Track Management — delete/move/trim clips, track add/rename/reorder, unlinked drop, cross-highlight, extraction ghost (7 tasks, ~20h, 2-2.5 weeks)"
   - "M13: Audio Sync Tab — lipsync via candidate variants (sync.so + ElevenLabs TTS/S2S); 9 tasks, ~30 hours, 2-3 weeks"
-  - "M11: Audio Isolation Plugin — first real plugin (DFN3 denoise); validates plugin seams (6 tasks, ~25 hours, 2 weeks)"
+  - "M11: Audio Isolation Plugin — first real plugin (DFN3 + residual → vocal + background stems, isolations panel, drag-to-timeline); validates plugin seams (8 tasks, ~32 hours, 2 weeks)"
   - "M6: Git-Style Version Control — SSH auth, UUID migration, object store, branches, merge (15 tasks, ~85 hours)"
   - "M2: Dynamic Panel Layout — migrate all panels to 4-column dockview layout"
   - "M3: Contribution Points — backend/frontend placeholders, plugin manifest schema"

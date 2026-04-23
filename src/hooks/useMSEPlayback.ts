@@ -83,8 +83,12 @@ export function useMSEPlayback(
       sourceBufferRef.current = sb
       sb.addEventListener('updateend', () => {
         const v = videoEl
+        const appendStart = (sb as SourceBuffer & { _appendStart?: number })._appendStart
+        const appendMs = appendStart !== undefined
+          ? (performance.now() - appendStart).toFixed(0)
+          : '?'
         console.log(
-          '[useMSEPlayback] sb updateend — buffered:',
+          '[mse-audit] updateend append=' + appendMs + 'ms buffered:',
           v.buffered.length ? `${v.buffered.start(0).toFixed(2)}-${v.buffered.end(v.buffered.length - 1).toFixed(2)}` : 'empty',
           'currentTime=', v.currentTime.toFixed(2),
           'readyState=', v.readyState,
@@ -136,6 +140,56 @@ export function useMSEPlayback(
       }
     }
   }, [projectName])
+
+  // Performance audit: report dropped-frame counters every second during
+  // playback + long-task (main-thread block) observer that correlates React
+  // render stalls with video stutter.
+  useEffect(() => {
+    if (!playing) return
+    const videoEl = videoRef.current
+    if (!videoEl) return
+    let lastTotal = 0
+    let lastDropped = 0
+    const statsTimer = setInterval(() => {
+      const q = (videoEl as HTMLVideoElement & {
+        getVideoPlaybackQuality?: () => { totalVideoFrames: number; droppedVideoFrames: number }
+      }).getVideoPlaybackQuality?.()
+      if (!q) return
+      const dTotal = q.totalVideoFrames - lastTotal
+      const dDrop = q.droppedVideoFrames - lastDropped
+      lastTotal = q.totalVideoFrames
+      lastDropped = q.droppedVideoFrames
+      const buffered = videoEl.buffered.length > 0
+        ? videoEl.buffered.end(videoEl.buffered.length - 1) - videoEl.currentTime
+        : 0
+      console.log(
+        `[mse-audit] frames=+${dTotal} dropped=+${dDrop} ` +
+        `buffered-ahead=${buffered.toFixed(2)}s ` +
+        `currentTime=${videoEl.currentTime.toFixed(2)} ` +
+        `readyState=${videoEl.readyState}`,
+      )
+    }, 1000)
+
+    let longTaskObserver: PerformanceObserver | null = null
+    try {
+      longTaskObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.duration >= 50) {
+            console.log(
+              `[long-task] ${entry.duration.toFixed(0)}ms at ${entry.startTime.toFixed(0)}ms ` +
+              `name=${entry.name} attribution=${(entry as PerformanceEntry & { attribution?: unknown[] }).attribution?.length ?? 0}`,
+            )
+          }
+        }
+      })
+      longTaskObserver.observe({ entryTypes: ['longtask'] })
+    } catch { /* longtask not supported */ }
+
+    return () => {
+      clearInterval(statsTimer)
+      longTaskObserver?.disconnect()
+    }
+  }, [playing])
 
   // Play/pause: drive the backend via action messages on the live socket.
   useEffect(() => {
@@ -233,7 +287,12 @@ export function useMSEPlayback(
   }, [currentTime, playing])
 
   function enqueueFragment(bytes: ArrayBuffer) {
-    console.log('[useMSEPlayback] fragment received:', bytes.byteLength, 'bytes (queue now', pendingFragments.current.length + 1, ')')
+    const receivedAt = performance.now()
+    ;(bytes as ArrayBuffer & { _receivedAt?: number })._receivedAt = receivedAt
+    console.log(
+      '[mse-audit] fragment received:', bytes.byteLength, 'bytes',
+      'at', receivedAt.toFixed(0), '(queue now', pendingFragments.current.length + 1, ')',
+    )
     pendingFragments.current.push(bytes)
     flushPending()
   }
@@ -246,7 +305,12 @@ export function useMSEPlayback(
     const next = pendingFragments.current.shift()
     if (!next) return
     try {
-      console.log('[useMSEPlayback] appending', next.byteLength, 'bytes to SourceBuffer')
+      const receivedAt = (next as ArrayBuffer & { _receivedAt?: number })._receivedAt
+      const enqueueLag = receivedAt !== undefined
+        ? (performance.now() - receivedAt).toFixed(0) + 'ms since receive'
+        : ''
+      console.log('[mse-audit] appending', next.byteLength, 'bytes to SourceBuffer', enqueueLag)
+      ;(sb as SourceBuffer & { _appendStart?: number })._appendStart = performance.now()
       sb.appendBuffer(new Uint8Array(next))
     } catch (err) {
       const videoEl = videoRef.current

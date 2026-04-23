@@ -62,8 +62,16 @@ class PluginHostImpl {
   private contextMenus: ContextMenuDescriptor[] = []
   private registered: string[] = []
 
-  /** Activate a plugin module — calls `plugin.activate(this)`. */
+  /**
+   * Activate a plugin module — calls `plugin.activate(this)`.
+   *
+   * Idempotent per `name`: Vite HMR re-evaluates the editor entry module,
+   * which can call `register` again with the same plugin. The first call
+   * wins; subsequent calls with a matching name are a no-op so the
+   * underlying `registerOperation` doesn't throw a duplicate-id error.
+   */
   register(plugin: PluginModule, name = '<unknown>'): void {
+    if (this.registered.includes(name)) return
     plugin.activate(this)
     this.registered.push(name)
   }

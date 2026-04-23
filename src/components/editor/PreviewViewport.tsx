@@ -117,13 +117,24 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     const prefetchControllerRef = useRef<AbortController | null>(null)
     const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+    // Stable flag for the prefetch inner loop to check — avoids a deps-chain
+    // rerun of schedulePrefetch on every playing toggle.
+    const playingRef = useRef(playing)
+    playingRef.current = playing
+
     const schedulePrefetch = useCallback((centerT: number) => {
       // Cancel the previous batch
       prefetchControllerRef.current?.abort()
-      if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current)
+      if (prefetchTimerRef.current) {
+        clearTimeout(prefetchTimerRef.current)
+        prefetchTimerRef.current = null
+      }
 
       // Debounce: only kick in after the playhead has been still for 200ms.
       prefetchTimerRef.current = setTimeout(() => {
+        prefetchTimerRef.current = null
+        // Playback started between debounce schedule and fire — skip.
+        if (playingRef.current) return
         const controller = new AbortController()
         prefetchControllerRef.current = controller
         // Offsets radiating outward from the playhead. Forward first, then
@@ -157,8 +168,15 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
 
     useEffect(() => {
       if (playing) {
-        // Don't prefetch during playback — MSE is driving render pipeline
+        // Don't prefetch during playback — it competes with the render
+        // worker for cycles and causes playback to stutter. Cancel any
+        // in-flight batch AND kill the pending debounce timer so a timer
+        // scheduled by the last pre-play scrub doesn't fire mid-playback.
         prefetchControllerRef.current?.abort()
+        if (prefetchTimerRef.current) {
+          clearTimeout(prefetchTimerRef.current)
+          prefetchTimerRef.current = null
+        }
         return
       }
       const t = currentTime
