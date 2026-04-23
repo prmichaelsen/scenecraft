@@ -112,47 +112,51 @@ describe('EFFECT_TYPES registry', () => {
   })
 
   it('build() returns an object conforming to the EffectNode shape', () => {
-    // happy-dom lacks a native AudioContext; provide a mock rich enough for
-    // every EFFECT_TYPES builder — stubs only call createGain, but the real
-    // factories from tasks 49/50/51 exercise every node type. This mock is
-    // shared with audio-effects-dynamics-eq, audio-effects-spatial-send, and
-    // audio-effects-modulation-drive test suites — keep in sync.
+    // happy-dom lacks a native AudioContext; this mock satisfies every
+    // EFFECT_TYPES builder across tasks 49/50/51 (dynamics/EQ/spatial/send/
+    // modulation/drive). Shared with all sibling audio-effects test suites —
+    // keep in sync.
     const makeParam = () => ({
       value: 0,
       setValueAtTime: () => {},
+      setValueCurveAtTime: () => {},
       linearRampToValueAtTime: () => {},
+      cancelScheduledValues: () => {},
     })
-    const makeNode = () => ({
-      connect: () => {},
+    const makeNode = (extra: Record<string, unknown> = {}) => ({
+      connect: (dst: unknown) => dst,
       disconnect: () => {},
-      gain: makeParam(),
-      pan: makeParam(),
+      ...extra,
     })
-    const fakeDynamicsNode = () => ({
+    const fakeDynamicsNode = () => makeNode({
       threshold: makeParam(),
       ratio: makeParam(),
       attack: makeParam(),
       release: makeParam(),
       knee: makeParam(),
-      connect: () => {},
-      disconnect: () => {},
     })
-    const fakeBiquadNode = () => ({
+    const fakeBiquadNode = () => makeNode({
       type: 'peaking' as BiquadFilterType,
       frequency: makeParam(),
       gain: makeParam(),
       Q: makeParam(),
-      connect: () => {},
-      disconnect: () => {},
     })
     const fakeCtx = {
       currentTime: 0,
-      createGain: () => makeNode(),
-      createStereoPanner: () => makeNode(),
+      createGain: () => makeNode({ gain: makeParam() }),
+      createOscillator: () => makeNode({
+        type: 'sine',
+        frequency: makeParam(),
+        start: () => {},
+        stop: () => {},
+      }),
+      createStereoPanner: () => makeNode({ pan: makeParam() }),
       createChannelSplitter: () => makeNode(),
       createChannelMerger: () => makeNode(),
-      createDynamicsCompressor: fakeDynamicsNode,
+      createDelay: () => makeNode({ delayTime: makeParam() }),
       createBiquadFilter: fakeBiquadNode,
+      createDynamicsCompressor: fakeDynamicsNode,
+      createWaveShaper: () => makeNode({ curve: null, oversample: 'none' }),
     } as unknown as AudioContext
 
     for (const spec of Object.values(EFFECT_TYPES)) {

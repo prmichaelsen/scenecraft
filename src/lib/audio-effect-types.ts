@@ -33,6 +33,14 @@ import {
 } from './audio-effects/eq'
 import { buildPan, buildStereoWidth } from './audio-effects/spatial'
 import { buildReverbSend, buildDelaySend, buildEchoSend } from './audio-effects/send'
+import {
+  buildTremolo,
+  buildAutoPan,
+  buildChorus,
+  buildFlanger,
+  buildPhaser,
+} from './audio-effects/modulation'
+import { buildDrive } from './audio-effects/drive'
 
 export type { FrequencyLabelPreset }
 
@@ -90,40 +98,6 @@ export interface EffectTypeSpec {
  * POST /track-effects endpoint. See spec R8a.
  */
 export const SYNTHETIC_SEND_EFFECT_TYPE = '__send'
-
-/**
- * Placeholder EffectNode returned by every registry stub. Real WebAudio
- * construction lands in task-47/48.
- *
- * TODO(task-47): replace with per-effect-type node graphs.
- */
-function makeStubNode(ctx: AudioContext): EffectNode {
-  // A GainNode is a convenient audible pass-through that satisfies both
-  // `input` and `output` until the real graph is built.
-  const node = ctx.createGain()
-  return {
-    input: node,
-    output: node,
-    setParam: () => {
-      // TODO(task-47): real implementation — will look up the corresponding
-      // AudioParam and call setValueAtTime / setTargetAtTime.
-    },
-    scheduleCurve: () => {
-      // TODO(task-47): real implementation — will delegate to
-      // audio-mixer.ts's curve scheduler.
-    },
-    dispose: () => {
-      try {
-        node.disconnect()
-      } catch {
-        // GainNode may already be disconnected; ignore.
-      }
-    },
-  }
-}
-
-/** Convenience: a build factory that returns a stub node. */
-const stubBuild: EffectTypeSpec['build'] = (ctx) => makeStubNode(ctx)
 
 /**
  * The complete registry of v1 effect types. Key = `type` string; value =
@@ -293,7 +267,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'rate', label: 'Rate', animatable: false, range: { min: 0.1, max: 20 }, scale: 'log', default: 5 },
       { name: 'depth', label: 'Depth', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildTremolo,
   },
 
   auto_pan: {
@@ -304,7 +278,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'rate', label: 'Rate', animatable: false, range: { min: 0.1, max: 20 }, scale: 'log', default: 1 },
       { name: 'depth', label: 'Depth', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.75 },
     ],
-    build: stubBuild,
+    build: buildAutoPan,
   },
 
   chorus: {
@@ -316,7 +290,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'depth', label: 'Depth', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildChorus,
   },
 
   flanger: {
@@ -329,7 +303,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'feedback', label: 'Feedback', animatable: true, range: { min: 0, max: 0.95 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildFlanger,
   },
 
   phaser: {
@@ -342,7 +316,7 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'feedback', label: 'Feedback', animatable: true, range: { min: 0, max: 0.95 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
     ],
-    build: stubBuild,
+    build: buildPhaser,
   },
 
   // ----- Distortion ----------------------------------------------------
@@ -358,6 +332,6 @@ export const EFFECT_TYPES: Record<string, EffectTypeSpec> = {
       { name: 'tone', label: 'Tone', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 0.5 },
       { name: 'mix', label: 'Mix', animatable: true, range: { min: 0, max: 1 }, scale: 'linear', default: 1 },
     ],
-    build: stubBuild,
+    build: buildDrive,
   },
 }
