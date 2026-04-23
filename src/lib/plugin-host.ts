@@ -10,7 +10,13 @@
 import type { ComponentType } from 'react'
 
 export type OperationDescriptor = {
-  /** Stable operation id (e.g. "isolate-vocals.run"). Must be unique process-wide. */
+  /**
+   * Stable operation id. Convention: `{plugin_name}.{member}` where
+   * `plugin_name` is snake_case matching the Python backend module. Example:
+   * `isolate_vocals.run`. Must be unique process-wide. (Dots are fine for
+   * internal ids; chat-tool names that cross the Claude API boundary use
+   * `{plugin_name}__{member}` because Claude's tool-name regex forbids dots.)
+   */
   id: string
   /** Human-readable label used in menus / buttons. */
   label: string
@@ -18,18 +24,33 @@ export type OperationDescriptor = {
   entityTypes: string[]
   /**
    * Optional dialog component the caller should render before dispatching the
-   * operation (e.g. confirm / parameter picker). The caller passes whatever
-   * props are appropriate for the entity; the operation itself is responsible
-   * for any backend side-effects once the dialog resolves.
+   * operation (confirm / parameter picker). Complementary with `panel`: a
+   * plugin that ships a dedicated panel typically doesn't need a dialog.
    */
   dialog?: ComponentType<unknown>
+  /**
+   * Optional panel component the plugin contributes. Registered with the
+   * editor's dockview layout so context-menu `reveals` hints and chat-tool
+   * invocations can focus the plugin's primary UX surface.
+   */
+  panel?: ComponentType<unknown>
 }
 
 export type ContextMenuDescriptor = {
   /** Entity kind this context menu contributes to. */
   entityType: string
   /** Menu items; each references a previously registered operation id. */
-  items: Array<{ operation: string; label: string; icon?: string }>
+  items: Array<{
+    operation: string
+    label: string
+    icon?: string
+    /**
+     * Optional panel focus hint (e.g. "panel:audio_isolations") — the editor
+     * can use this to reveal the corresponding panel on menu-click before or
+     * alongside dispatching the operation.
+     */
+    reveals?: string
+  }>
 }
 
 export type PluginModule = {
