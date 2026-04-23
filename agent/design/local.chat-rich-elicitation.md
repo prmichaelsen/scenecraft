@@ -128,18 +128,36 @@ Client-side validation on submit (pattern, min/max, required) — show inline fi
 
 ### Timeout and cancel
 
-- Client has a configurable idle timeout (default 5 min) — on expiry, sends `{action: "cancel"}` automatically
+- Client has a configurable idle timeout (default **5 min**) — on expiry, sends `{action: "cancel"}` automatically
 - Server treats `cancel` as "user didn't engage" — graceful fail with no error surfaced to the LLM's context
 - Server treats `decline` as "user explicitly said no" — the plugin decides whether that's an error or a normal branch
 - Unmounting the chat panel during a live elicitation sends `cancel`
 
+Elicitation is explicitly **not** the mechanism for long-running work. Tools that take more than a few seconds return a task ID and the client subscribes to progress via the separate job-progress channel (`useScenecraftSocket` + `JobStateContext`). Elicitation is the synchronous "quick question" channel — if you're holding a user for 5 minutes, the design is wrong.
+
 ### Capability negotiation
 
-Chat connection opens a `capabilities` handshake message:
-- Client announces: `{ elicitation: { schemas: true } }` — "I support schema-driven elicitation"
-- Server checks before sending rich elicitation; for clients without the flag, falls back to binary accept/decline (describe the request in natural language in the `message` field, ignore `content` on response)
+Piggyback on the existing chat `hello`/first-message handshake — don't add a new `capabilities` message type. The client's first WS frame on connect already carries client identification; extend it with a `capabilities` sub-object:
 
-This keeps old clients functional and new clients feature-complete.
+```json
+{
+  "type": "hello",
+  "clientVersion": "scenecraft-frontend/0.21.0",
+  "capabilities": {
+    "elicitation": { "schemas": true }
+  }
+}
+```
+
+Server stores capabilities per-connection. Before sending a rich elicitation, it checks `session.capabilities.elicitation?.schemas`. Old clients (no `capabilities` field or no `schemas: true`) get the degenerate accept/decline fallback — server strips `requestedSchema` from the outbound payload and the client renders the familiar two-button card.
+
+The decision to piggyback rather than introduce a new message: one fewer round-trip on connect, no ordering races between the capabilities exchange and the first real tool call, and it's the canonical pattern in other protocols that grew similar extensions (LSP, DAP). MCP spec does capability negotiation during `initialize` which is effectively the same shape.
+
+### Single in-flight elicitation per session
+
+Server enforces at most one pending elicitation per chat session. If a plugin calls `ctx.elicit` while another elicitation is already live for the same session, the second call raises `ElicitationInFlight` rather than racing onto the wire. Clients render exactly one card; concurrent cards are visually unmanageable and confuse users ("which form am I filling out?").
+
+The typical cause of accidental concurrent elicitations is a bug — parallel tool execution that each needs input. Surface it as a plugin error, not a protocol race.
 
 ---
 
@@ -233,12 +251,14 @@ On decline / cancel, `ctx.elicit` raises a typed exception; the plugin decides w
 
 ---
 
-## Open Questions
+## Resolved Decisions (from chat iteration)
 
-- **Timeout default.** 5 min matches Continue.dev; Claude Desktop has no hard timeout. Lean: 5 min for scenecraft since plugin operations should resolve quickly.
-- **Should validation errors be a distinct action?** Right now fail → `cancel`. Alternative: `action: "invalid", errors: [...]` so client can re-render the same form with field-level errors. Leaning: stick with re-elicitation per spec, simpler.
-- **Multiple concurrent elicitations?** Spec doesn't forbid, but UI can only meaningfully show one at a time. Enforce single-in-flight per chat session server-side?
-- **Capability advertisement timing.** Add to existing chat `hello` handshake, or introduce a new `capabilities` message? Leaning: piggyback on the existing handshake.
+| Question | Resolution | Notes |
+|---|---|---|
+| Timeout default | **5 min → auto-cancel** | Matches Continue.dev. Elicitation is for quick questions; long ops return task IDs and stream progress separately. |
+| Capability advertisement | **Piggyback on existing `hello` handshake** | One connect round-trip, no ordering race, mirrors LSP/DAP/MCP-init conventions. |
+| Concurrent elicitations | **Enforce single in-flight per session server-side** | Second `ctx.elicit` while one's already live raises `ElicitationInFlight`. |
+| Validation fail flow | **Re-elicitation with a fresh id** (per spec) | Simpler protocol; minor UI flicker is acceptable. No `action: "invalid"` round-trip. |
 
 ---
 
