@@ -112,33 +112,45 @@ describe('EFFECT_TYPES registry', () => {
   })
 
   it('build() returns an object conforming to the EffectNode shape', () => {
-    // happy-dom lacks a native AudioContext; provide a tiny stub that matches
-    // what the stub factory + the task-49 real dynamics/EQ builders use.
-    const fakeGainNode = {
-      disconnect: () => {},
-    } as unknown as AudioNode
-    const makeFakeParam = () => ({
+    // happy-dom lacks a native AudioContext; provide a mock rich enough for
+    // every EFFECT_TYPES builder — stubs only call createGain, but the real
+    // factories from tasks 49/50/51 exercise every node type. This mock is
+    // shared with audio-effects-dynamics-eq, audio-effects-spatial-send, and
+    // audio-effects-modulation-drive test suites — keep in sync.
+    const makeParam = () => ({
       value: 0,
       setValueAtTime: () => {},
+      linearRampToValueAtTime: () => {},
+    })
+    const makeNode = () => ({
+      connect: () => {},
+      disconnect: () => {},
+      gain: makeParam(),
+      pan: makeParam(),
     })
     const fakeDynamicsNode = () => ({
-      threshold: makeFakeParam(),
-      ratio: makeFakeParam(),
-      attack: makeFakeParam(),
-      release: makeFakeParam(),
-      knee: makeFakeParam(),
+      threshold: makeParam(),
+      ratio: makeParam(),
+      attack: makeParam(),
+      release: makeParam(),
+      knee: makeParam(),
+      connect: () => {},
       disconnect: () => {},
     })
     const fakeBiquadNode = () => ({
       type: 'peaking' as BiquadFilterType,
-      frequency: makeFakeParam(),
-      gain: makeFakeParam(),
-      Q: makeFakeParam(),
+      frequency: makeParam(),
+      gain: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
       disconnect: () => {},
     })
     const fakeCtx = {
       currentTime: 0,
-      createGain: () => fakeGainNode,
+      createGain: () => makeNode(),
+      createStereoPanner: () => makeNode(),
+      createChannelSplitter: () => makeNode(),
+      createChannelMerger: () => makeNode(),
       createDynamicsCompressor: fakeDynamicsNode,
       createBiquadFilter: fakeBiquadNode,
     } as unknown as AudioContext
