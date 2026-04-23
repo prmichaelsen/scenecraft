@@ -21,6 +21,7 @@ import { TransitionPanel } from './TransitionPanel'
 import { ChatPanel } from './ChatPanel'
 import { MCPPanel } from './MCPPanel'
 import { AudioPropertiesPanel } from './AudioPropertiesPanel'
+import { MacroPanel } from './MacroPanel'
 import { saveWorkspaceView } from '@/lib/workspace-client'
 import { ContextMenuProvider } from '@/contexts/ContextMenuContext'
 import { PluginHost } from '@/lib/plugin-host'
@@ -198,6 +199,10 @@ function MCPPanelComponent() {
   return <Panel><MCPPanel onClose={() => {}} /></Panel>
 }
 
+function MacroPanelComponent() {
+  return <Panel><MacroPanel /></Panel>
+}
+
 // Generic wrapper for any PluginHost-contributed panel. Looks the panel up
 // by id at render time so when the plugin deactivates (HMR or dynamic
 // unload), the panel body is replaced by a fallback without a stale
@@ -279,6 +284,7 @@ const panels: PanelRegistry = {
   sections:    { component: SectionsPanelComponent, title: 'Sections' },
   chat:        { component: ChatPanelComponent, title: 'Chat' },
   mcp:         { component: MCPPanelComponent, title: 'MCP' },
+  'macro-panel': { component: MacroPanelComponent, title: 'Macro Panel' },
 }
 
 // Merge plugin-contributed panels on top of the built-in registry. Called
@@ -322,7 +328,7 @@ const defaultLayout: LayoutNode = {
           direction: 'vertical',
           ratio: 0.5,
           children: [
-            { type: 'group', id: 'properties-group', tabs: ['properties'], activeTab: 'properties' },
+            { type: 'group', id: 'properties-group', tabs: ['properties', 'macro-panel'], activeTab: 'properties' },
             { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'audio_isolations', 'settings', 'extensions'], activeTab: 'bin' },
           ],
         },
