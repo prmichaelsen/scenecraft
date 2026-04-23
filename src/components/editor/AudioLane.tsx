@@ -118,13 +118,37 @@ type AudioLaneProps = {
    * standalone (unlinked) clip sized to the segment's duration.
    */
   onDropPoolAudio?: (trackId: string, startTime: number, poolPath: string) => void
+  /**
+   * M11 task-104b — drop of an audio-isolation stem from AudioIsolationsPanel.
+   * AudioLane parses the `application/x-scenecraft-stem` payload and computes
+   * the cursor time; the parent (Timeline) runs the overlap resolution +
+   * batch-ops POST since it owns the refresh pipeline. `existingClips` is
+   * this lane's current clip snapshot so the parent can feed it into
+   * `resolveOverlapsWithSplit` without re-fetching.
+   */
+  onDropStem?: (
+    trackId: string,
+    startTime: number,
+    stem: StemDropPayload,
+    existingClips: AudioClip[],
+  ) => void
+}
+
+/** Shape of the `application/x-scenecraft-stem` drag payload. Mirrored by
+ *  the AudioIsolationsPanel's `StemDragPayload`. */
+export type StemDropPayload = {
+  pool_segment_id: string
+  pool_path: string
+  stem_type: 'vocal' | 'background'
+  duration_seconds: number
+  source_label: string
 }
 
 /**
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio, onDropStem }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -218,18 +242,24 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
         setSelectedAudioTrackId(track.id)
       }}
       onDragOver={(e) => {
-        // Pool audio drop (Task 123) — only claim pool-path drags; let the
-        // header's own drag infra handle track-reorder drops.
-        if (!e.dataTransfer.types.includes('application/x-scenecraft-pool-path')) return
+        // Accept pool-audio drops (Task 123) + stem drops from
+        // AudioIsolationsPanel (M11 task-104b). Both use the same visual
+        // affordance. Skip any other drag types so track-reorder still
+        // works on the header.
+        const types = e.dataTransfer.types
+        const isPool = types.includes('application/x-scenecraft-pool-path')
+        const isStem = types.includes('application/x-scenecraft-stem')
+        if (!isPool && !isStem) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'copy'
         if (!poolDropActive) setPoolDropActive(true)
       }}
       onDragLeave={() => setPoolDropActive(false)}
       onDrop={(e) => {
-        const poolPath = e.dataTransfer.getData('application/x-scenecraft-pool-path')
         setPoolDropActive(false)
-        if (!poolPath || !onDropPoolAudio) return
+        const stemRaw = e.dataTransfer.getData('application/x-scenecraft-stem')
+        const poolPath = e.dataTransfer.getData('application/x-scenecraft-pool-path')
+        if (!stemRaw && !poolPath) return
         e.preventDefault()
         e.stopPropagation()
         // Resolve x → timeline seconds using the nearest horizontally-scrollable
@@ -242,7 +272,19 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           node = node.parentElement
         }
         const startTime = Math.max(0, (e.clientX - rect.left + scrollLeft) / pxPerSec)
-        onDropPoolAudio(track.id, startTime, poolPath)
+
+        if (stemRaw && onDropStem) {
+          try {
+            const payload = JSON.parse(stemRaw) as StemDropPayload
+            onDropStem(track.id, startTime, payload, clips)
+          } catch (err) {
+            console.error('[AudioLane] bad stem payload:', err)
+          }
+          return
+        }
+        if (poolPath && onDropPoolAudio) {
+          onDropPoolAudio(track.id, startTime, poolPath)
+        }
       }}
     >
       {/* Track header — sticky so it stays visible during horizontal scroll.

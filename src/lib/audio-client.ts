@@ -103,6 +103,31 @@ export async function postDeleteAudioClip(project: string, clipId: string): Prom
 }
 
 /**
+ * Apply a list of audio_clip mutations inside a single undo group. Used by
+ * the stem-drop handler (M11 task-104b) so trim/split/delete/insert ops
+ * produced by `resolveOverlapsWithSplit` plus the terminal insert of the
+ * dropped clip all collapse into one Ctrl+Z.
+ */
+export async function postAudioClipBatchOps(
+  project: string,
+  label: string,
+  ops: unknown[],
+): Promise<void> {
+  const res = await fetch(
+    `${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/audio-clips/batch-ops`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, ops }),
+    },
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`audio-clips/batch-ops failed: ${res.status} ${text}`)
+  }
+}
+
+/**
  * Drop a pool audio asset onto a lane as a standalone (unlinked) clip. The
  * backend resolves the segment (by id preferred, or poolPath), validates it's
  * audio, and creates a clip spanning `startTime → startTime + durationSeconds`.

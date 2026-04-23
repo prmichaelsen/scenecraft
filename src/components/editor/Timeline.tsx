@@ -2769,6 +2769,41 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                             console.error('Failed to add audio clip from pool:', err)
                           }
                         }}
+                        onDropStem={async (trackId, startTime, stem, existingClips) => {
+                          // M11 task-104b — overwrite-with-split drop of an
+                          // isolation stem. Resolve overlaps, append the
+                          // terminal insert, POST the whole thing as one
+                          // undo group.
+                          try {
+                            const { resolveOverlapsWithSplit } = await import('@/lib/audio-overlap')
+                            const { postAudioClipBatchOps } = await import('@/lib/audio-client')
+                            const genId = () => `audio_clip_${Math.random().toString(16).slice(2, 10)}`
+                            const dropped = {
+                              start: startTime,
+                              end: startTime + stem.duration_seconds,
+                            }
+                            const ops = resolveOverlapsWithSplit(dropped, existingClips, genId)
+                            ops.push({
+                              op: 'insert',
+                              clip: {
+                                id: genId(),
+                                track_id: trackId,
+                                source_path: stem.pool_path,
+                                start_time: dropped.start,
+                                end_time: dropped.end,
+                                source_offset: 0,
+                              },
+                            })
+                            await postAudioClipBatchOps(
+                              data.projectName,
+                              `Drop ${stem.stem_type} stem`,
+                              ops,
+                            )
+                            refreshTimeline()
+                          } catch (err) {
+                            console.error('Failed to drop stem:', err)
+                          }
+                        }}
                         onRequestAlignWaveforms={(clipIds) => {
                           // Promote right-clicked clip into selection (AudioLane did this
                           // eagerly in the list it passes us). Mirror that in state so
