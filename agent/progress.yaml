@@ -1127,7 +1127,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-16-music-generation-plugin.md
     tasks_total: 9
-    tasks_completed: 3
+    tasks_completed: 4
     estimated_weeks: 1
     tasks:
       - id: task-126
@@ -1167,11 +1167,13 @@ milestones:
         notes: "12/12 integration tests pass with mocked Musicful server. Happy path, 429 retry/exhaust, partial success, context-aware candidate routing (audio_candidates + tr_candidates), payload field-filter, missing API key admin error, input validation. Auth-gate tests (R54a-f) deferred per skip-auth directive. Plugin module: __init__/client/generate_music + test_generate_music."
       - id: task-130
         name: Backend REST + WS (run/list/retry/credits + JobManager events)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T06:30:00Z
+        completed_date: 2026-04-24T06:40:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-130-backend-rest-and-ws.md
         estimated_hours: 3
-        actual_hours: null
+        actual_hours: 0.2
+        notes: "Four REST endpoints wired (POST /run, GET /generations, POST /generations/:id/retry, GET /credits) via plugin_api.register_rest_endpoint. Plugin-host _rest_routes extended to per-method buckets; register_rest_endpoint gains kwarg method='POST'; dispatch_rest(method, path, ...) signature. api_server.do_GET gains plugin-fallback block parallel to do_POST. WS integration free — generate_music.run already drives plugin_api.job_manager over /ws/jobs (M11 seam). Auth (task-126) stays deferred. 51 tests pass (16 plugin_host + 27 generate_music + 8 isolate_vocals). Also fixed pre-existing activate(context) vs (plugin_api, context) signature mismatch that was latent because generate_music had never been PluginHost.register()'d."
       - id: task-131
         name: Frontend plugin module (plugin.yaml, REST + WS client, activate + panel registration)
         status: not_started
@@ -2109,12 +2111,13 @@ tasks:
       completed_date: 2026-04-23T01:00:00Z
     - id: task-130
       name: Backend REST + WS (run/list/retry/credits + JobManager events)
-      status: not_started
+      status: completed
       milestone_id: milestone_16
       file: agent/tasks/milestone-16-music-generation-plugin/task-130-backend-rest-and-ws.md
       estimated_hours: 3
-      actual_hours: null
-      started: null
+      actual_hours: 0.2
+      started: 2026-04-24T06:30:00Z
+      completed_date: 2026-04-24T06:40:00Z
     - id: task-131
       name: Frontend plugin module (plugin.yaml, REST + WS client, activate + panel registration)
       status: not_started
@@ -2209,6 +2212,7 @@ progress:
   overall: 75
 
 recent_work:
+  - "M16 Task 130: Musicful REST endpoints (POST /run, GET /generations, POST /generations/:id/retry, GET /credits) + plugin-host method routing. _rest_routes split into per-method buckets; register_rest_endpoint gains method kwarg (POST default); dispatch_rest(method, path, ...). api_server do_GET gains plugin-fallback. WS free via existing JobManager /ws/jobs seam. 51 tests pass"
   - "Editor: per-track level meter collapses to single bar for mono tracks (Reaper-style — no track-type concept, derives from max clip channel count; master stays stereo). audio-mixer.getTrackChannelCount, useTrackChannels 2Hz polling hook, LevelMeter channels prop"
   - "M16 Task 129: Musicful client + backend plugin + polling worker — 12/12 integration tests pass with mocked Musicful server; happy path, 429 retry/exhaust, partial success, context-aware candidate routing. Auth-gate tests (R54a-f) deferred per skip-auth directive"
   - "M16 Task 127+128: spend_ledger + plugin schema + call_service shim — generate_music__{generations,tracks} (project.db), spend_ledger (server.db, '' username/org defaults while auth deferred), pool_segments.variant_kind/derived_from/context_entity_{type,id}. plugin_api.call_service with BYO mode; broker stub raises ServiceConfigError. R9a structural test passes"
@@ -2235,7 +2239,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
-  - "M16 continuation: task-130 (Backend REST + WS endpoints + JobManager events), task-131 (Frontend plugin module), task-132 (MusicGenerationsPanel), task-133 (Chat tools + elicitation), task-134 (Drag-to-timeline + purple styling). 5 tasks remaining (~17h). Engine-side Musicful worker already shipped via task-129; auth tasks (126) deferred until auth milestone begins"
+  - "M16 continuation: task-131 (Frontend plugin module), task-132 (MusicGenerationsPanel), task-133 (Chat tools + elicitation), task-134 (Drag-to-timeline + purple styling). 4 tasks remaining (~14h), all frontend. Engine-side fully shipped (tasks 127/128/129/130); auth (126) deferred until auth milestone begins"
   - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
   - "M15: Audio Clip Editing + Track Management — delete/move/trim clips, track add/rename/reorder, unlinked drop, cross-highlight, extraction ghost (7 tasks, ~20h, 2-2.5 weeks)"
   - "M13: Audio Sync Tab — lipsync via candidate variants (sync.so + ElevenLabs TTS/S2S); 9 tasks, ~30 hours, 2-3 weeks"
