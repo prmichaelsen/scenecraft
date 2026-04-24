@@ -1,5 +1,6 @@
-import { memo, useState, useRef, useEffect } from 'react'
+import { memo, useState, useRef, useEffect, useMemo } from 'react'
 import type { AudioTrack, AudioClip } from '@/lib/audio-client'
+import { getClipColorScheme } from '@/lib/clip-colors'
 import { AudioWaveform } from './AudioWaveform'
 import { useEditorState } from './EditorStateContext'
 import { useContextMenu } from '@/contexts/ContextMenuContext'
@@ -511,14 +512,15 @@ function AudioClipBlock({ projectName, clip, pxPerSec, laneHeight, isInMultiSele
   const showHighlight = isHighlighted && !selected
 
   const isDragging = dragOffsetPx !== 0 || dragOffsetPy !== 0
+  const colors = useMemo(() => getClipColorScheme(clip.variant_kind), [clip.variant_kind])
   return (
     <div
-      className={`absolute top-1 bottom-1 rounded-sm overflow-hidden border bg-cyan-900/30 hover:bg-cyan-900/50 ${isDragging ? '' : 'transition-colors'} ${
+      className={`absolute top-1 bottom-1 rounded-sm overflow-hidden border ${colors.bg} ${colors.bgHover} ${isDragging ? '' : 'transition-colors'} ${
         selected
-          ? 'border-cyan-300 ring-1 ring-cyan-300/60'
+          ? `${colors.borderSelected} ring-1 ${colors.ring}`
           : showHighlight
             ? 'border-yellow-300/70 ring-2 ring-yellow-300/60 shadow-[0_0_12px_rgba(252,211,77,0.4)]'
-            : 'border-cyan-700/60'
+            : colors.border
       } ${clip.muted ? 'opacity-40' : ''} ${isDragging ? 'cursor-grabbing opacity-80 shadow-lg z-40' : 'cursor-pointer'}`}
       style={{
         left,
