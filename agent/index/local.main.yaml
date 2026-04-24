@@ -77,3 +77,36 @@ local:
         before touching preview surfaces, plugin.yaml contribution points,
         or subclip drag-to-timeline behavior.
       applies: acp.proceed, acp.plan, acp.task-create, acp.design-create
+
+    - path: agent/design/local.light-show-scene-editor.md
+      weight: 0.8
+      kind: design
+      description: |
+        Light show scene editor MVP: three-tier data model (scene library,
+        timeline placements, single-slot live override), primitive catalog
+        (rotating_head + static_color at MVP), layered precedence evaluator,
+        and three action-dispatched MCP tools (scenes, scene_timeline,
+        scene_live). Consumer of fixtures/screens; sits below the broader
+        M17 scene DSL plan.
+      rationale: |
+        Required reading before implementing the light_show scene editor
+        or any follow-on work (compositions, modulation matrix, crossfade,
+        multi-layer merge). Pins the three-tier data model, precedence
+        rules, and tool surface so phase-2 additions compose cleanly.
+      applies: acp.proceed, acp.plan, acp.task-create, acp.design-create, acp.spec
+
+    - path: agent/specs/local.light-show-scene-editor.md
+      weight: 0.9
+      kind: spec
+      description: |
+        Implementation-ready contract for the light_show scene editor:
+        exact SQL schemas, REST endpoint signatures, MCP tool input
+        schemas, primitive apply() contracts, layered evaluator
+        precedence, and language-agnostic Given/When/Then tests for
+        each requirement (base cases + edge cases).
+      rationale: |
+        Primary source for task execution. Every requirement is covered
+        by at least one test; tests translate directly to pytest
+        (backend) and vitest (frontend). Read before implementing any
+        scene editor task.
+      applies: acp.proceed, acp.task-create
