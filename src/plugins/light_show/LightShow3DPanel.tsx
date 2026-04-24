@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
+import { EffectComposer } from '@react-three/postprocessing'
 
 import { useCurrentTime, usePlaybackState } from '@/components/editor/CurrentTimeContext'
 import { useEditorData } from '@/components/editor/EditorDataContext'
@@ -29,6 +30,7 @@ import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fix
 import { SCENES, getScene } from './scenes'
 import type { SceneContext } from './scene-types'
 import { BeamCone } from './BeamCone'
+import { VolumetricFog } from './VolumetricFog'
 import {
   fetchFixtures,
   fetchOverrides,
@@ -220,6 +222,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // visibly in the 3D scene without explicit refresh.
   const [rig, setRig] = useState<FixtureDef[]>(RIG)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  // Ref mirror of ``rig`` so VolumetricFog's shader updater can pull the
+  // latest rig each frame without re-subscribing a useFrame callback.
+  const rigRef = useRef<FixtureDef[]>(RIG)
+  useEffect(() => { rigRef.current = rig }, [rig])
 
   // Per-frame fixture state (intensity/color/pan/tilt). Refs because useFrame
   // mutates them hot-path — never goes through React state. Rebuilt when the
@@ -384,6 +390,14 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             <Fixture key={def.id} def={def} stateRef={stateRef} />
           ))}
           <OrbitControls target={[0, 1, 0]} enableDamping />
+
+          {/* Phase C — ray-marched volumetric fog. Beams illuminate
+              atmospheric haze in 3D space; crossing beams brighten on
+              intersection. Stacks on top of the existing additive cones
+              for the "physical beam body + atmospheric shaft" look. */}
+          <EffectComposer>
+            <VolumetricFog rigRef={rigRef} stateRef={stateRef} />
+          </EffectComposer>
         </Canvas>
       </div>
     </div>
