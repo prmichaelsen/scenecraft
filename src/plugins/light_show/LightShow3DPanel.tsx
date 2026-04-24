@@ -21,8 +21,12 @@ import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
 
+import { useCurrentTime, usePlaybackState } from '@/components/editor/CurrentTimeContext'
+import { useEditorData } from '@/components/editor/EditorDataContext'
+
 import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
 import { SCENES, getScene } from './scenes'
+import type { SceneContext } from './scene-types'
 import { BeamCone } from './BeamCone'
 import {
   fetchFixtures,
@@ -30,6 +34,23 @@ import {
   type FixtureRow,
   type Override,
 } from './light-show-client'
+
+/** Invisible component whose only job is to subscribe to the 20Hz playhead
+ *  context and write it into a ref. Re-renders happen here (leaf, no DOM),
+ *  not on the Canvas subtree. */
+function PlayheadFeeder({
+  playheadRef,
+  isPlayingRef,
+}: {
+  playheadRef: React.MutableRefObject<number>
+  isPlayingRef: React.MutableRefObject<boolean>
+}) {
+  const { currentTime } = useCurrentTime()
+  const { isPlaying } = usePlaybackState()
+  playheadRef.current = currentTime
+  isPlayingRef.current = isPlaying
+  return null
+}
 
 const POLL_INTERVAL_MS = 2000
 
@@ -98,35 +119,76 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
   )
 }
 
+export type Beat = { time: number; intensity: number }
+
 /** Ticks the active scene every frame, writing into the shared state array.
- *  After the scene runs, overrides win per-channel (intensity / color /
- *  pan / tilt) — chat-driven pins beat scene output until cleared. Also
- *  bumps ``diagDomRef`` every 15 frames as a visible liveness probe. */
+ *  Builds a SceneContext from the playhead + beat refs each frame so
+ *  audio-reactive scenes can consult them. After the scene runs, overrides
+ *  win per-channel. Also bumps ``diagDomRef`` every 15 frames as a visible
+ *  liveness probe. */
 function SceneRunner({
   activeSceneIdRef,
   stateRef,
   timeRef,
   diagDomRef,
   overridesRef,
+  playheadRef,
+  isPlayingRef,
+  beatsRef,
 }: {
   activeSceneIdRef: React.MutableRefObject<string>
   stateRef: React.MutableRefObject<FixtureState[]>
   timeRef: React.MutableRefObject<number>
   diagDomRef: React.MutableRefObject<HTMLSpanElement | null>
   overridesRef: React.MutableRefObject<Map<string, Override>>
+  playheadRef: React.MutableRefObject<number>
+  isPlayingRef: React.MutableRefObject<boolean>
+  beatsRef: React.MutableRefObject<Beat[]>
 }) {
   const tickRef = useRef(0)
+  // Bookkeeping for beat tracking: which beat was the most recent fired,
+  // so beatIndex increments on crossings rather than re-scanning every frame.
+  const lastBeatIdxRef = useRef<number>(-1)
+
   useFrame((_, delta) => {
     tickRef.current++
+
+    // Update beat bookkeeping based on current playhead. Handles forward
+    // play (increment) and scrub back (reset). Binary search would be
+    // fancier; linear scan is plenty for a few hundred beats.
+    const playheadTime = playheadRef.current
+    const beats = beatsRef.current
+    let lastIdx = -1
+    for (let i = 0; i < beats.length; i++) {
+      if (beats[i].time <= playheadTime) lastIdx = i
+      else break
+    }
+    lastBeatIdxRef.current = lastIdx
+
+    const lastBeat = lastIdx >= 0 ? beats[lastIdx] : null
+    const beatAge = lastBeat !== null ? playheadTime - lastBeat.time : Infinity
+    const lastBeatIntensity = lastBeat ? lastBeat.intensity : 0
+    const beatIndex = lastIdx + 1
+
     if (tickRef.current % 15 === 0 && diagDomRef.current) {
       const overrideCount = overridesRef.current.size
       const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
-      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${overrideLabel}`
+      const beatLabel = beats.length > 0 ? ` · beat ${beatIndex}/${beats.length}` : ''
+      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${beatLabel}${overrideLabel}`
     }
+
+    const context: SceneContext = {
+      playheadTime,
+      beatAge,
+      lastBeatIntensity,
+      beatIndex,
+      isPlaying: isPlayingRef.current,
+    }
+
     const scene = getScene(activeSceneIdRef.current)
     if (scene) {
       timeRef.current += delta
-      scene.apply(timeRef.current, stateRef.current)
+      scene.apply(timeRef.current, stateRef.current, context)
     }
     // Apply overrides after scene — they win per-channel until cleared.
     const overrides = overridesRef.current
@@ -178,6 +240,21 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // the polling loop; consumed by SceneRunner after scene.apply() runs.
   const overridesRef = useRef<Map<string, Override>>(new Map())
   const [overrideCount, setOverrideCount] = useState(0)
+  // Scenecraft main-timeline playhead + pre-analyzed beats fed into the
+  // render loop for audio-reactive scenes. PlayheadFeeder writes playhead
+  // from useCurrentTime; beats are refreshed whenever editorData.beats
+  // changes (rare).
+  const playheadRef = useRef<number>(0)
+  const isPlayingRef = useRef<boolean>(false)
+  const beatsRef = useRef<Beat[]>([])
+
+  // Beats come from scenecraft's audio intel loaded at editor mount.
+  // Absent beats (non-audio project) just means audio-reactive scenes
+  // render static / default behavior — no crash.
+  const editorData = useEditorData()
+  useEffect(() => {
+    beatsRef.current = (editorData.beats ?? []) as Beat[]
+  }, [editorData.beats])
 
   // Fetch fixtures + overrides from backend + poll. Only active when we
   // have a projectName.
@@ -254,6 +331,11 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
         </span>
       </div>
 
+      {/* Playhead feeder runs outside the Canvas — its re-renders don't
+          propagate into the 3D subtree. Only active when there's a
+          CurrentTime provider in the tree (i.e. the editor is mounted). */}
+      <PlayheadFeeder playheadRef={playheadRef} isPlayingRef={isPlayingRef} />
+
       {/* 3D scene — frameloop="always" so animation runs independent of any
           external playback state (the editor's timeline, audio playback, etc). */}
       <div className="flex-1 min-h-0">
@@ -288,6 +370,9 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             timeRef={timeRef}
             diagDomRef={diagDomRef}
             overridesRef={overridesRef}
+            playheadRef={playheadRef}
+            isPlayingRef={isPlayingRef}
+            beatsRef={beatsRef}
           />
           {rig.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />

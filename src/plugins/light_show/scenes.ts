@@ -9,14 +9,10 @@
  * aesthetic direction without backend coupling.
  */
 
-import type { FixtureState } from './fixtures'
+import type { SceneDef } from './scene-types'
+import { AUDIO_SCENES } from './audio-scenes'
 
-export interface SceneDef {
-  id: string
-  label: string
-  /** Mutates ``states`` in place to reflect the scene at time ``t`` (seconds). */
-  apply: (t: number, states: FixtureState[]) => void
-}
+export type { SceneDef, SceneContext } from './scene-types'
 
 /** Utility: HSV → RGB conversion, all components in [0, 1]. */
 function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
@@ -119,7 +115,7 @@ const allWhite: SceneDef = {
   },
 }
 
-export const SCENES: SceneDef[] = [allWhite, fullWash, rainbowChase, panSweep]
+export const SCENES: SceneDef[] = [allWhite, fullWash, rainbowChase, panSweep, ...AUDIO_SCENES]
 
 export function getScene(id: string): SceneDef | undefined {
   return SCENES.find((s) => s.id === id)
