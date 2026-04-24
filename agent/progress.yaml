@@ -1279,12 +1279,12 @@ milestones:
 
   - id: milestone_18
     name: Foley Generation Plugin (Replicate BYO mode)
-    status: in_progress
+    status: completed
     started: 2026-04-24
-    completed: null
+    completed: 2026-04-25
     file: agent/milestones/milestone-18-foley-generation-plugin.md
     tasks_total: 8
-    tasks_completed: 2
+    tasks_completed: 8
     estimated_weeks: 3
     tasks:
       - id: task-142
@@ -1307,52 +1307,58 @@ milestones:
         notes: "generate_foley__generations + __tracks added to db.py _ensure_schema. Six helpers (add/update/get × generation+tracks) exposed via plugin_api. 17 schema tests passing. Committed on feat/m18-143-foley-schema stacked on feat/m18-142-replicate-provider; not merged to main."
       - id: task-144
         name: Backend plugin module (run handler, pre-trim, pool insert, startup hook)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T23:45:00Z
+        completed_date: 2026-04-25T00:30:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-144-backend-plugin-module.md
         estimated_hours: 6
-        actual_hours: null
-        notes: "plugins/generate_foley/: run handler dispatches via providers.replicate. pretrim.py uses ffmpeg -ss/-to/-c copy with re-encode fallback. Status lifecycle + disconnect-survival hook."
+        actual_hours: 0.75
+        notes: "plugins/generate_foley/: run handler + worker + resume_in_flight. pretrim.py stream-copy with reencode fallback. 20 tests passing incl. t2fx+v2fx happy paths + all three error paths (ReplicateDownloadFailed preserves spend_ledger_id in error message). Committed on feat/m18-144-backend-plugin stacked on feat/m18-143-foley-schema."
       - id: task-145
         name: Backend REST + WS (run, list, retry, /ws/jobs events)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T00:30:00Z
+        completed_date: 2026-04-25T01:00:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-145-backend-rest-and-ws.md
         estimated_hours: 3
-        actual_hours: null
-        notes: "Three endpoints + four WS event types (job_started/progress/completed/failed). count=1 enforcement at the API boundary. Inherits M16 auth middleware."
+        actual_hours: 0.5
+        notes: "Three REST endpoints + WS via JobManager. 15 tests. Committed on feat/m18-145-backend-rest-ws."
       - id: task-146
         name: Frontend plugin module (plugin.yaml, client.ts, index.ts)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T01:00:00Z
+        completed_date: 2026-04-25T01:30:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-146-frontend-plugin-module.md
         estimated_hours: 3
-        actual_hours: null
-        notes: "Scaffold only; panel component in task-147. Registers with PanelRegistry. Manifest declares license.upstream_models (MMAudio CC-BY-NC 4.0)."
+        actual_hours: 0.5
+        notes: "Frontend scaffold: plugin.yaml, types.ts, client.ts (3 REST + WS), index.ts + editor.tsx registration. Committed on feat/m18-146-frontend-plugin."
       - id: task-147
         name: FoleyGenerationsPanel (selection-driven mode, Set-in/Set-out, run cards)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T02:00:00Z
+        completed_date: 2026-04-25T02:30:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-147-foley-generations-panel.md
         estimated_hours: 8
-        actual_hours: null
-        notes: "Largest UI task. Mode from selection state. In/out state machine with most-recent-click-wins invalidation. Duration presets + slider (t2fx only). Run cards with drag handles."
+        actual_hours: 0.5
+        notes: "Selection-driven mode, in/out state machine with most-recent-click-wins, duration presets, advanced params, run cards with drag handles, warning banner. Committed on feat/m18-147-foley-panel."
       - id: task-148
         name: generate_foley chat tool with elicitation gate
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T01:00:00Z
+        completed_date: 2026-04-25T01:30:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-148-chat-tool.md
         estimated_hours: 2
-        actual_hours: null
-        notes: "Single unified tool. t2fx vs. v2fx inferred from source_candidate_id presence. count=1 enforced. Registered in _DESTRUCTIVE_TOOL_PATTERNS."
+        actual_hours: 0.5
+        notes: "Tool schema + dispatch + 10 tests. Elicitation via existing 'generate_' pattern. Committed on feat/m18-148-chat-tool."
       - id: task-149
         name: Orange clip styling (variant_kind='foley')
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T01:30:00Z
+        completed_date: 2026-04-25T02:00:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-149-orange-clip-styling.md
         estimated_hours: 1
-        actual_hours: null
-        notes: "Add 'foley' → orange to VARIANT_KIND_COLORS map. Applies to Timeline, pool view, run cards, drag ghosts."
+        actual_hours: 0.5
+        notes: "Created centralized clip-colors.ts with getClipColorScheme(). Added variant_kind to AudioClip type. AudioLane wired to use color map. Committed on feat/m18-149-orange-clip."
 
 tasks:
   milestone_1:
