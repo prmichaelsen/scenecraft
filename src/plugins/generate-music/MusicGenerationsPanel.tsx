@@ -363,8 +363,12 @@ function RunForm({ form, setForm }: { form: FormState; setForm: (f: FormState) =
           value={form.model}
           onChange={(e) => update({ model: e.target.value })}
           className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs"
+          title="Musicful model. MFV2.0 = latest/highest quality; MFV1.0 = cheapest/drafts."
         >
-          <option value="MFV2.0">MFV2.0</option>
+          <option value="MFV2.0">MFV2.0 (latest)</option>
+          <option value="MFV1.5X">MFV1.5X</option>
+          <option value="MFV1.5">MFV1.5</option>
+          <option value="MFV1.0">MFV1.0</option>
         </select>
       </div>
     </div>
