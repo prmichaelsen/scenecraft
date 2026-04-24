@@ -62,13 +62,13 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
           {/* Yoke base — flat plate */}
           <mesh>
             <boxGeometry args={[0.25, 0.1, 0.25]} />
-            <meshStandardMaterial color="#222" />
+            <meshStandardMaterial color="#6b6b78" metalness={0.55} roughness={0.45} />
           </mesh>
           {/* Head + beam — rotates for pan/tilt, ref-driven per frame */}
           <group ref={headRef} position={[0, -0.15, 0]} rotation={def.rotation}>
             <mesh>
               <cylinderGeometry args={[0.1, 0.12, 0.25, 16]} />
-              <meshStandardMaterial color="#333" />
+              <meshStandardMaterial color="#8a8a95" metalness={0.6} roughness={0.35} />
             </mesh>
             <group position={[0, -0.125, 0]}>
               <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
@@ -81,7 +81,7 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
           <group rotation={def.rotation}>
             <mesh>
               <cylinderGeometry args={[0.1, 0.12, 0.2, 16]} />
-              <meshStandardMaterial color="#333" />
+              <meshStandardMaterial color="#8a8a95" metalness={0.6} roughness={0.35} />
             </mesh>
             <group position={[0, -0.1, 0]}>
               <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
@@ -227,7 +227,14 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
           shadows={false}
         >
           <color attach="background" args={['#050510']} />
-          <ambientLight intensity={0.08} />
+          {/* Lighting for the fixture bodies (NOT the beams — beams are their
+              own additive emissive geometry). Goal: give the rig physical
+              presence against the dark stage without killing the mood.
+              Key + rim + low ambient reads as "film set under work light". */}
+          <ambientLight intensity={0.25} />
+          <directionalLight position={[10, 12, 8]} intensity={0.9} color="#bfd4ff" />
+          <directionalLight position={[-8, 6, -10]} intensity={0.5} color="#ffc29e" />
+          <hemisphereLight args={['#6070a0', '#1a1a2a', 0.35]} />
           <Grid
             args={[20, 20]}
             position={[0, 0, 0]}
