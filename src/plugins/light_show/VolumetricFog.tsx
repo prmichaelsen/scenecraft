@@ -253,7 +253,8 @@ class VolumetricFogEffectImpl extends Effect {
       // We bake rotation into a direction vector rather than passing Euler
       // angles — the shader does a cone containment test, not full
       // rigid-body transforms, so a single unit vector is all it needs.
-      // Local aim axis is -Y (matches BeamCone geometry); rotate by the
+      // Local aim axis is -Y (fixture bodies aim straight down before rotation);
+      // rotate by the
       // fixture's (rotation_x + tilt) around X then (rotation_y + pan)
       // around Y, then rotation_z around Z, applied in XYZ order to
       // mirror three.js default Euler interpretation.

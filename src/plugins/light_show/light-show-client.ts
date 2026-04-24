@@ -133,3 +133,80 @@ export async function clearOverrides(
   if (body.error) throw new Error(body.error)
   return body.overrides ?? []
 }
+
+// ── Screens ───────────────────────────────────────────────────────────────
+
+/** One video screen in the 3D preview. MVP renders the scenecraft main
+ *  timeline's frame preview onto every screen via a shared texture. */
+export type ScreenRow = {
+  id: string
+  label: string
+  position_x: number
+  position_y: number
+  position_z: number
+  rotation_x: number
+  rotation_y: number
+  rotation_z: number
+  width: number
+  height: number
+}
+
+export type ScreenUpsert = {
+  id: string
+  label?: string
+  position_x?: number
+  position_y?: number
+  position_z?: number
+  rotation_x?: number
+  rotation_y?: number
+  rotation_z?: number
+  width?: number
+  height?: number
+}
+
+function screensPath(projectName: string) {
+  return `${API_URL}/api/projects/${encodeURIComponent(projectName)}/plugins/light_show/screens`
+}
+
+export async function fetchScreens(projectName: string): Promise<ScreenRow[]> {
+  const res = await fetch(screensPath(projectName))
+  if (!res.ok) throw new Error(`fetchScreens ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { screens?: ScreenRow[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.screens ?? []
+}
+
+export async function upsertScreens(
+  projectName: string,
+  screens: ScreenUpsert[],
+): Promise<ScreenRow[]> {
+  const res = await fetch(screensPath(projectName), {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ screens }),
+  })
+  if (!res.ok) throw new Error(`upsertScreens ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { screens?: ScreenRow[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.screens ?? []
+}
+
+export async function removeScreens(projectName: string, ids: string[]): Promise<ScreenRow[]> {
+  const res = await fetch(`${screensPath(projectName)}/remove`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw new Error(`removeScreens ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { screens?: ScreenRow[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.screens ?? []
+}
+
+export async function resetScreens(projectName: string): Promise<ScreenRow[]> {
+  const res = await fetch(`${screensPath(projectName)}/reset`, { method: 'POST' })
+  if (!res.ok) throw new Error(`resetScreens ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { screens?: ScreenRow[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.screens ?? []
+}

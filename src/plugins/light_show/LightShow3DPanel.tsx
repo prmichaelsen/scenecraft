@@ -29,13 +29,15 @@ import { subscribePluginEvent } from '@/hooks/useScenecraftSocket'
 import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
 import { SCENES, getScene } from './scenes'
 import type { SceneContext } from './scene-types'
-import { BeamCone } from './BeamCone'
 import { VolumetricFog } from './VolumetricFog'
+import { Screen } from './Screen'
 import {
   fetchFixtures,
   fetchOverrides,
+  fetchScreens,
   type FixtureRow,
   type Override,
+  type ScreenRow,
 } from './light-show-client'
 
 /** Invisible component whose only job is to subscribe to the 20Hz playhead
@@ -67,10 +69,27 @@ function rowToDef(row: FixtureRow): FixtureDef {
   }
 }
 
-/** One rigged fixture: body geometry + beam cone, driven by its state slot.
- *  Uses refs only — no React state in the per-frame path. */
+/** One rigged fixture: body geometry only. Beams are rendered by the
+ *  volumetric fog pass (Phase C); the Phase A cone meshes are gone.
+ *  Uses refs only — no React state in the per-frame path.
+ *
+ *  Rotation order note (fixes the 'pan animates on X axis' bug): three.js
+ *  default Euler order is 'XYZ' which applies intrinsic X first, then Y.
+ *  For a fixture aiming along local -Y, Y rotation (pan) has zero effect
+ *  on the -Y axis before X rotation tilts it off-axis — so pan never
+ *  visibly rotated the beam. Setting rotation order to 'YXZ' matches how
+ *  real moving-head yokes mechanically work (pan rotates the yoke first,
+ *  then tilt nods the head around the now-rotated horizontal axis) and
+ *  also matches the volumetric shader's aim vector math, which composes
+ *  Rx then Ry on the -Y aim vector. */
 function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRefObject<FixtureState[]> }) {
   const headRef = useRef<THREE.Group>(null!)
+
+  // Apply YXZ Euler order once on mount — setting rotation.order re-derives
+  // the object's internal quaternion on the next rotation mutation.
+  useEffect(() => {
+    if (headRef.current) headRef.current.rotation.order = 'YXZ'
+  }, [])
 
   useFrame(() => {
     if (def.role !== 'moving_head' || !headRef.current) return
@@ -81,8 +100,6 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
   })
 
   const isMover = def.role === 'moving_head'
-  const beamLength = isMover ? 6 : 4
-  const beamHalfAngle = isMover ? Math.PI / 24 : Math.PI / 12
 
   return (
     <group position={def.position}>
@@ -93,15 +110,12 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
             <boxGeometry args={[0.25, 0.1, 0.25]} />
             <meshStandardMaterial color="#9a9aa5" metalness={0.25} roughness={0.55} />
           </mesh>
-          {/* Head + beam — rotates for pan/tilt, ref-driven per frame */}
+          {/* Head — rotates for pan/tilt, ref-driven per frame */}
           <group ref={headRef} position={[0, -0.15, 0]} rotation={def.rotation}>
             <mesh>
               <cylinderGeometry args={[0.1, 0.12, 0.25, 16]} />
               <meshStandardMaterial color="#b0b0bb" metalness={0.3} roughness={0.5} />
             </mesh>
-            <group position={[0, -0.125, 0]}>
-              <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
-            </group>
           </group>
         </>
       ) : (
@@ -112,9 +126,6 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
               <cylinderGeometry args={[0.1, 0.12, 0.2, 16]} />
               <meshStandardMaterial color="#b0b0bb" metalness={0.3} roughness={0.5} />
             </mesh>
-            <group position={[0, -0.1, 0]}>
-              <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
-            </group>
           </group>
         </>
       )}
@@ -247,6 +258,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // the polling loop; consumed by SceneRunner after scene.apply() runs.
   const overridesRef = useRef<Map<string, Override>>(new Map())
   const [overrideCount, setOverrideCount] = useState(0)
+  // Video screens (flat textured planes). Empty by default — screens are
+  // authored via the `screens` MCP tool. All screens share the main
+  // timeline's preview surface (MVP).
+  const [screens, setScreens] = useState<ScreenRow[]>([])
   // Scenecraft main-timeline playhead + pre-analyzed beats fed into the
   // render loop for audio-reactive scenes. PlayheadFeeder writes playhead
   // from useCurrentTime; beats are refreshed whenever editorData.beats
@@ -271,9 +286,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
     let cancelled = false
     const tick = async () => {
       try {
-        const [rows, overrides] = await Promise.all([
+        const [rows, overrides, screenRows] = await Promise.all([
           fetchFixtures(projectName),
           fetchOverrides(projectName),
+          fetchScreens(projectName),
         ])
         if (cancelled) return
         setFetchError(null)
@@ -298,6 +314,9 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
         for (const o of overrides) next.set(o.fixture_id, o)
         overridesRef.current = next
         setOverrideCount(next.size)
+
+        // Screens — straight list; Screen components own per-fixture state.
+        setScreens(screenRows)
       } catch (e) {
         if (cancelled) return
         setFetchError((e as Error).message)
@@ -338,6 +357,7 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
         </select>
         <span className="ml-auto text-[10px] text-gray-600">
           {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'}
+          {screens.length > 0 ? ` · ${screens.length} screen${screens.length === 1 ? '' : 's'}` : ''}
           {overrideCount > 0 ? ` · ${overrideCount} pinned` : ''} ·{' '}
           <span ref={diagDomRef}>ticks 0 · t=0.0s</span>
         </span>
@@ -388,6 +408,9 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
           />
           {rig.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />
+          ))}
+          {screens.map((s) => (
+            <Screen key={s.id} def={s} />
           ))}
           <OrbitControls target={[0, 1, 0]} enableDamping />
 
