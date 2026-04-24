@@ -1122,22 +1122,23 @@ milestones:
 
   - id: milestone_16
     name: Music Generation Plugin (BYO mode)
-    status: in_progress
+    status: completed
     started: 2026-04-23
-    completed: null
+    completed: 2026-04-24
     file: agent/milestones/milestone-16-music-generation-plugin.md
     tasks_total: 9
-    tasks_completed: 4
+    tasks_completed: 9
     estimated_weeks: 1
     tasks:
       - id: task-126
         name: Auth layer prerequisites (api_keys table + double-gate middleware)
-        status: deferred
-        started: null
+        status: completed
+        started: 2026-04-24T19:00:00Z
+        completed_date: 2026-04-24T19:30:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-126-auth-prereqs.md
         estimated_hours: 4
-        actual_hours: null
-        notes: "Deferred per user directive (2026-04-23): skip all auth logic during dev phase; scenecraft not launched, auth not yet built. Revisit when auth milestone begins."
+        actual_hours: 0.5
+        notes: "Implemented 2026-04-24 after original defer: api_keys table + salt column (PBKDF2-HMAC-SHA256 hashing), users.must_change_password column + ALTER TABLE migration for existing DBs, require_paid_plugin_auth() decorator with JWT+API-key+org double-gate, CLI commands (scenecraft auth keys issue/list/revoke + users set-password), 10 middleware tests covering all 401/403/400/200 paths."
       - id: task-127
         name: Schema + helpers (plugin tables, spend_ledger, pool_segments cols, plugin_api helpers)
         status: completed
@@ -1176,32 +1177,40 @@ milestones:
         notes: "Four REST endpoints wired (POST /run, GET /generations, POST /generations/:id/retry, GET /credits) via plugin_api.register_rest_endpoint. Plugin-host _rest_routes extended to per-method buckets; register_rest_endpoint gains kwarg method='POST'; dispatch_rest(method, path, ...) signature. api_server.do_GET gains plugin-fallback block parallel to do_POST. WS integration free — generate_music.run already drives plugin_api.job_manager over /ws/jobs (M11 seam). Auth (task-126) stays deferred. 51 tests pass (16 plugin_host + 27 generate_music + 8 isolate_vocals). Also fixed pre-existing activate(context) vs (plugin_api, context) signature mismatch that was latent because generate_music had never been PluginHost.register()'d."
       - id: task-131
         name: Frontend plugin module (plugin.yaml, REST + WS client, activate + panel registration)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T00:00:00Z
+        completed_date: 2026-04-24T19:30:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-131-frontend-plugin-module.md
         estimated_hours: 3
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "Plugin.yaml manifest mirror, generate-music-client.ts (REST wrappers + useMusicGenerationEvents hook routing by jobType='generate_music'), types.ts, activate(host) at editor.tsx with HMR dispose. 4 activation smoke tests + 9 REST client tests."
       - id: task-132
         name: MusicGenerationsPanel (form, run cards, context filter, Reuse/Retry, credits header)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T00:00:00Z
+        completed_date: 2026-04-24T19:30:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-132-music-generations-panel.md
         estimated_hours: 6
-        actual_hours: null
+        actual_hours: 1.0
+        notes: "All fields always visible per R31-R33. buildPayload filters fields per action (R13). Context filter + Show all toggle, Reuse preserves generation's OWN entity context (R29-R30), Retry (R50-R51), credits header with out-of-credits disable (R34/R36). 14 tests: 7 buildPayload field-filter + 7 component-level render (empty state, form defaults, credits disabled, retry/reuse visibility, context badge, credits display)."
       - id: task-133
         name: Chat tools + elicitation (generate_music, get_music_credits)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T00:00:00Z
+        completed_date: 2026-04-24T19:30:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-133-chat-tools.md
         estimated_hours: 3
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "Tools registered via plugin.yaml mcpTools (contribution points) + PluginHost.register_declared — not hardcoded in chat.py. generate_music__run (destructive=true) and generate_music__credits (destructive=false). No generate_lyrics tool per spec. 11 tests covering registration, destructive flag, handler dispatch."
       - id: task-134
         name: Drag-to-timeline + purple styling via variant_kind
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T00:00:00Z
+        completed_date: 2026-04-24T19:30:00Z
         file: agent/tasks/milestone-16-music-generation-plugin/task-134-drag-and-purple-styling.md
         estimated_hours: 2
-        actual_hours: null
+        actual_hours: 0.5
+        notes: "Drag via application/x-scenecraft-pool-path (music = net-new audio, not a stem). audio-clip-styling.ts with getClipColors() returning structured {bg, bgHover, borderDefault, borderSelected} per variant_kind (music=purple, lipsync=teal, default=cyan). AudioLane wires colors into AudioClipBlock. Backend get_audio_clips bulk-resolves variant_kind via selected→pool_segments FK. 5 styling tests."
 
   - id: milestone_17
     name: Track Contribution Point and Light Show Plugin
