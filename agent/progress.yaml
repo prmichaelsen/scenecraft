@@ -1279,30 +1279,32 @@ milestones:
 
   - id: milestone_18
     name: Foley Generation Plugin (Replicate BYO mode)
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-24
     completed: null
     file: agent/milestones/milestone-18-foley-generation-plugin.md
     tasks_total: 8
-    tasks_completed: 0
+    tasks_completed: 2
     estimated_weeks: 3
     tasks:
       - id: task-142
         name: Replicate provider core (plugin_api.providers.replicate)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T22:30:00Z
+        completed_date: 2026-04-24T23:15:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-142-replicate-provider.md
         estimated_hours: 6
-        actual_hours: null
-        notes: "Typed provider: run_prediction, attach_polling, get_balance. Owns auth, HTTP, polling, 429 backoff, spend_ledger, disconnect-survival, download retry. Supersedes M16 call_service shim for Replicate-backed plugins."
+        actual_hours: 0.75
+        notes: "Typed provider: run_prediction, attach_polling, get_balance. Owns auth, HTTP, polling, 429 backoff, spend_ledger, disconnect-survival, download retry. Supersedes M16 call_service shim for Replicate-backed plugins. Converted plugin_api.py -> plugin_api/ package. 14 tests passing; R9a invariant preserved. Committed on feat/m18-142-replicate-provider (stacked worktree, not merged to main)."
       - id: task-143
         name: Foley schema + migrations (generate_foley__generations + __tracks)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T23:15:00Z
+        completed_date: 2026-04-24T23:45:00Z
         file: agent/tasks/milestone-18-foley-generation-plugin/task-143-schema-and-migrations.md
         estimated_hours: 2
-        actual_hours: null
-        notes: "Mirrors generate_music__generations + __tracks exactly. variant_count column for forward-looking multi-variant (MVP enforces 1)."
+        actual_hours: 0.5
+        notes: "generate_foley__generations + __tracks added to db.py _ensure_schema. Six helpers (add/update/get × generation+tracks) exposed via plugin_api. 17 schema tests passing. Committed on feat/m18-143-foley-schema stacked on feat/m18-142-replicate-provider; not merged to main."
       - id: task-144
         name: Backend plugin module (run handler, pre-trim, pool insert, startup hook)
         status: not_started
