@@ -53,6 +53,7 @@ export type AudioClip = {
    * by the timeline for cross-highlighting linked transition ↔ audio clip.
    */
   linked_transition_id?: string | null
+  variant_kind?: string | null
 }
 
 export type AudioClipLink = {

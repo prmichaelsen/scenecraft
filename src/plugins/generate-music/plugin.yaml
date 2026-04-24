@@ -1,0 +1,25 @@
+name: generate-music
+version: 1.0.0
+displayName: "Music Generation"
+description: "AI-composed music and scores via Musicful."
+publisher: scenecraft
+license: MIT
+schema_version: 1
+
+activationEvents:
+  - onCommand:generate-music.run
+
+contributes:
+  operations:
+    - id: generate-music.run
+      label: "Generate music"
+      entityTypes: [audio_clip, transition, null]
+      handler: "backend:generate_music.run"
+      panel: "frontend:generate_music.MusicGenerationsPanel"
+
+  invariants:
+    - id: "musicful-api-key-present"
+      description: "MUSICFUL_API_KEY environment variable must be set."
+      check: "backend:generate_music.check_api_key"
+      severity: blocking
+      user_message: "This plugin requires a Musicful API key. Please contact your administrator."

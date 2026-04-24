@@ -47,21 +47,24 @@ import { fetchWorkspaceView } from '@/lib/workspace-client'
 import { PluginHost } from '@/lib/plugin-host'
 import * as isolateVocals from '@/plugins/isolate_vocals'
 import * as lightShow from '@/plugins/light_show'
+import * as generateMusic from '@/plugins/generate-music'
 
 // First-party plugin registration — mirrors the backend's
-// `PluginHost.register(isolate_vocals)` call at startup. Dynamic loading can
+// `PluginHost.register(...)` calls at startup. Dynamic loading can
 // replace this later without changing consumers.
 PluginHost.register(isolateVocals, 'isolate_vocals')
 PluginHost.register(lightShow, 'light_show')
+PluginHost.register(generateMusic, 'generate_music')
 
-// HMR: on module re-evaluation, deactivate the plugin so its Disposables
-// fire and the registry is clean before the new module registers again.
-// This is the VSCode-style lifecycle — activate() always pairs with a
-// deactivate() whose timing the host controls.
+// HMR: on module re-evaluation, deactivate each plugin so its
+// Disposables fire and the registry is clean before the new module
+// registers again. This is the VSCode-style lifecycle — activate()
+// always pairs with a deactivate() whose timing the host controls.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     void PluginHost.deactivate('isolate_vocals')
     void PluginHost.deactivate('light_show')
+    void PluginHost.deactivate('generate_music')
   })
 }
 
