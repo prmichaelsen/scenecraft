@@ -12,16 +12,38 @@
  * any other future surface — the data determines the UI, not the event.
  */
 
-export const VARIANT_KIND_COLORS: Record<string, string> = {
-  music: 'bg-purple-500/70 border-purple-400',
-  lipsync: 'bg-teal-500/70 border-teal-400',
+export type ClipColors = {
+  bg: string
+  bgHover: string
+  borderDefault: string
+  borderSelected: string
 }
 
-export const DEFAULT_CLIP_COLOR = 'bg-blue-500/70 border-blue-400'
+const VARIANT_KIND_COLORS: Record<string, ClipColors> = {
+  music: {
+    bg: 'bg-purple-900/30',
+    bgHover: 'hover:bg-purple-900/50',
+    borderDefault: 'border-purple-700/60',
+    borderSelected: 'border-purple-300',
+  },
+  lipsync: {
+    bg: 'bg-teal-900/30',
+    bgHover: 'hover:bg-teal-900/50',
+    borderDefault: 'border-teal-700/60',
+    borderSelected: 'border-teal-300',
+  },
+}
 
-export function getClipColorClass(variantKind: string | null | undefined): string {
+const DEFAULT_CLIP_COLORS: ClipColors = {
+  bg: 'bg-cyan-900/30',
+  bgHover: 'hover:bg-cyan-900/50',
+  borderDefault: 'border-cyan-700/60',
+  borderSelected: 'border-cyan-300',
+}
+
+export function getClipColors(variantKind: string | null | undefined): ClipColors {
   if (variantKind && VARIANT_KIND_COLORS[variantKind]) {
     return VARIANT_KIND_COLORS[variantKind]
   }
-  return DEFAULT_CLIP_COLOR
+  return DEFAULT_CLIP_COLORS
 }
