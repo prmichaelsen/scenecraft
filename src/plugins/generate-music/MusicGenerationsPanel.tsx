@@ -21,7 +21,7 @@
  *     time, not from the drop payload (see src/lib/audio-clip-styling.ts).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useEditorState } from '@/components/editor/EditorStateContext'
 
@@ -238,7 +238,7 @@ export function MusicGenerationsPanel({ projectName }: PanelProps) {
           <div className="text-gray-500">No music generations yet.</div>
         )}
         {generations.map((gen) => (
-          <RunCard key={gen.id} gen={gen} onReuse={onReuse} onRetry={onRetry} />
+          <RunCard key={gen.id} projectName={projectName} gen={gen} onReuse={onReuse} onRetry={onRetry} />
         ))}
       </div>
 
@@ -375,11 +375,74 @@ function RunForm({ form, setForm }: { form: FormState; setForm: (f: FormState) =
   )
 }
 
+const API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '—'
+  // Guard against legacy rows where duration was stored as milliseconds
+  // (pre-2026-04-24 fix) — anything >10h is implausible music output.
+  const s = seconds > 36000 ? seconds / 1000 : seconds
+  const m = Math.floor(s / 60)
+  const r = Math.round(s - m * 60)
+  return `${m}:${r.toString().padStart(2, '0')}`
+}
+
+function PoolAudioPlayButton({
+  projectName,
+  poolPath,
+}: {
+  projectName: string
+  poolPath: string
+}) {
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  const src = `${API_URL}/api/projects/${encodeURIComponent(projectName)}/files/${poolPath
+    .split('/')
+    .map((s) => encodeURIComponent(s))
+    .join('/')}`
+
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!audioRef.current) {
+      audioRef.current = new Audio(src)
+      audioRef.current.addEventListener('ended', () => setPlaying(false))
+    }
+    if (playing) {
+      audioRef.current.pause()
+      setPlaying(false)
+    } else {
+      audioRef.current.play().catch(() => setPlaying(false))
+      setPlaying(true)
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause()
+    }
+  }, [])
+
+  return (
+    <button
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={toggle}
+      draggable={false}
+      className="text-gray-400 hover:text-gray-200 w-4 text-left"
+      aria-label={playing ? 'pause preview' : 'play preview'}
+    >
+      {playing ? '■' : '▶'}
+    </button>
+  )
+}
+
 function RunCard({
+  projectName,
   gen,
   onReuse,
   onRetry,
 }: {
+  projectName: string
   gen: Generation
   onReuse: (gen: Generation) => void
   onRetry: (gen: Generation) => void
@@ -443,9 +506,9 @@ function RunCard({
           }}
           className="flex items-center gap-2 text-[11px] px-1 py-0.5 bg-gray-900/60 rounded cursor-grab"
         >
-          <span className="text-gray-500">▶</span>
+          <PoolAudioPlayButton projectName={projectName} poolPath={tr.pool_path} />
           <span className="flex-1 truncate">{tr.song_title || `song ${i + 1}`}</span>
-          <span className="text-gray-500">{tr.duration_seconds?.toFixed(0) ?? '?'}s</span>
+          <span className="text-gray-500">{formatDuration(tr.duration_seconds)}</span>
           <span className="text-gray-600">⋮⋮</span>
         </div>
       ))}

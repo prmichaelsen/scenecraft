@@ -60,6 +60,7 @@ function makeGeneration(overrides: Partial<Generation> = {}): Generation {
       pool_segment_id: 'ps_1',
       musicful_task_id: 't1',
       song_title: 'Neon Midnight',
+      pool_path: 'segments/abc.mp3',
       duration_seconds: 167,
       cover_url: null,
     }],
