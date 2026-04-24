@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.1] - 2026-04-24
+
+### Added
+- **Playhead overlay on the Audio Properties Panel's volume curve editor.** `VolumeCurveEditor` now accepts `playheadProgress?: number` (0..1 of its x-domain) and forwards it to the shared `CurveEditor`. `AudioPropertiesPanel` pulls `currentTime` from `useCurrentTime()` and computes the fraction per editor — normalised clip space vs. seconds — matching what the transition curve editors already do.
+- **Auto-refresh after chat-agent tool runs.** `ChatPanel` fires a new `onMutation` callback on any successful `tool_result`; `EditorPanelLayout` wires it to `router.invalidate()`. When the embedded agent calls `update_volume_curve` / `add_audio_effect` / `apply_mix_plan` / etc., the Timeline + properties panels pick up the new DB state instead of sitting on the stale prop chain from the last loader call.
+
+### Changed
+- **iOS Safari soft-fail on preview stream.** `useMSEPlayback` now feature-detects `window.MediaSource` + `isTypeSupported(MIME_TYPE)` before constructing. If missing (iPhone Safari has no in-page MSE) or codec rejected (some mobile Chromium builds refuse `avc1.640028`), the hook logs a warning and leaves the `<video>` element inert. App no longer crashes on mobile browsers; proper HLS fallback is a future task.
+
 ## [0.23.0] - 2026-04-23
 
 ### Added

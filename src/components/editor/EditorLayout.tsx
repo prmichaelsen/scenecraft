@@ -165,6 +165,7 @@ function ExtensionsDockPanel() {
 function ChatDockPanel({ params }: IDockviewPanelProps<{ data?: EditorData; label?: string }>) {
   // Saved layouts from before chat was a real component may arrive with no data.
   const projectName = params?.data?.projectName
+  const router = useRouter()
   if (!projectName) {
     return (
       <div className="h-full flex items-center justify-center text-gray-600 text-sm bg-gray-900">
@@ -172,7 +173,15 @@ function ChatDockPanel({ params }: IDockviewPanelProps<{ data?: EditorData; labe
       </div>
     )
   }
-  return <DockPanel><ChatPanel projectName={projectName} onClose={() => {}} /></DockPanel>
+  return (
+    <DockPanel>
+      <ChatPanel
+        projectName={projectName}
+        onClose={() => {}}
+        onMutation={() => router.invalidate()}
+      />
+    </DockPanel>
+  )
 }
 
 function MCPDockPanel() {

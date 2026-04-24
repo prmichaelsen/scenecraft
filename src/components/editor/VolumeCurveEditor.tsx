@@ -14,6 +14,15 @@ type Props = {
   /** Debounce before committing `onChange` to the parent after drag. */
   debounceMs?: number
   label?: string
+  /**
+   * Current playhead position as a fraction of the editor's X-range [0, 1].
+   * When provided a vertical line draws on the curve canvas so the user can
+   * see where playback currently sits relative to the curve they're editing.
+   * Callers compute this from `currentTime` plus the curve's domain:
+   *   - clip (normalised):  (currentTime - clip.start) / (clip.end - clip.start)
+   *   - track (seconds):    currentTime / xAxisMax
+   */
+  playheadProgress?: number
 }
 
 const DEFAULT_YRANGE: [number, number] = [-60, 12]
@@ -34,6 +43,7 @@ export function VolumeCurveEditor({
   yRange = DEFAULT_YRANGE,
   debounceMs = 200,
   label,
+  playheadProgress,
 }: Props) {
   const xMin = 0
   const xMax = xAxis === 'normalised' ? 1 : Math.max(xAxisMax ?? 1, 0.01)
@@ -85,6 +95,7 @@ export function VolumeCurveEditor({
       formatY={(db) => db === 0 ? '0 dB' : db > 0 ? `+${db.toFixed(1)} dB` : `${db.toFixed(1)} dB`}
       aspect={4}
       label={label}
+      playheadProgress={playheadProgress}
     />
   )
 }

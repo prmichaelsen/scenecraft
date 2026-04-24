@@ -192,7 +192,16 @@ function ExtensionsPanelComponent() {
 
 function ChatPanelComponent() {
   const data = useEditorData()
-  return <Panel><ChatPanel projectName={data.projectName} onClose={() => {}} /></Panel>
+  const router = useRouter()
+  return (
+    <Panel>
+      <ChatPanel
+        projectName={data.projectName}
+        onClose={() => {}}
+        onMutation={() => router.invalidate()}
+      />
+    </Panel>
+  )
 }
 
 function MCPPanelComponent() {

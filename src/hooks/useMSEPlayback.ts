@@ -59,11 +59,32 @@ export function useMSEPlayback(
     const videoEl = videoRef.current
     if (!videoEl) return
 
+    // Feature-detect MSE before touching the constructor. iOS Safari
+    // (iPhone) does not expose `MediaSource` in-page at all — referencing
+    // `new MediaSource()` throws `ReferenceError` there. Fail soft: log
+    // once and leave the <video> element inert so the rest of the editor
+    // keeps rendering. A proper HLS fallback can layer on later without
+    // removing this guard.
+    if (typeof window === 'undefined' || typeof window.MediaSource === 'undefined') {
+      console.warn(
+        '[useMSEPlayback] MediaSource Extensions not available (likely iOS Safari on iPhone). ' +
+        'Preview stream disabled for this browser.',
+      )
+      return
+    }
+    if (!window.MediaSource.isTypeSupported(MIME_TYPE)) {
+      console.warn(
+        `[useMSEPlayback] MediaSource does not support ${MIME_TYPE}. ` +
+        'Preview stream disabled for this browser.',
+      )
+      return
+    }
+
     console.log('[useMSEPlayback] session open for project=', projectName)
 
     pendingFragments.current = []
 
-    const ms = new MediaSource()
+    const ms = new window.MediaSource()
     mediaSourceRef.current = ms
     const objectUrl = URL.createObjectURL(ms)
     objectUrlRef.current = objectUrl

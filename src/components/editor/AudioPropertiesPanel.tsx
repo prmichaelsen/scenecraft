@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { useEditorState } from './EditorStateContext'
+import { useCurrentTime } from './CurrentTimeContext'
 import { VolumeCurveEditor } from './VolumeCurveEditor'
 import { postUpdateAudioClip, postUpdateAudioTrack } from '@/lib/audio-client'
 import type { AudioClip, AudioTrack, CurvePoint } from '@/lib/audio-client'
@@ -22,6 +23,7 @@ type Props = {
  */
 export function AudioPropertiesPanel({ projectName, audioTracks, projectDurationSeconds, onChanged }: Props) {
   const { selectedAudioClipId, selectedAudioTrackId, setSelectedAudioClipId, setSelectedAudioTrackId } = useEditorState()
+  const { currentTime } = useCurrentTime()
 
   const { clip, clipTrack, track } = useMemo(() => {
     let clip: AudioClip | null = null
@@ -132,6 +134,15 @@ export function AudioPropertiesPanel({ projectName, audioTracks, projectDuration
           onChange={handleClipCurveChange}
           xAxis="normalised"
           label="Volume (clip-local, 0..1)"
+          playheadProgress={(() => {
+            // Clip curves are clip-local normalised [0, 1]. Map the project
+            // playhead into that space; return undefined (no marker) when
+            // the playhead is outside the clip's range.
+            const clipSpan = clip.end_time - clip.start_time
+            if (clipSpan <= 0) return undefined
+            const frac = (currentTime - clip.start_time) / clipSpan
+            return frac >= 0 && frac <= 1 ? frac : undefined
+          })()}
         />
       </div>
     )
@@ -176,6 +187,14 @@ export function AudioPropertiesPanel({ projectName, audioTracks, projectDuration
         xAxis="seconds"
         xAxisMax={Math.max(projectDurationSeconds, 1)}
         label="Volume (track-global, seconds)"
+        playheadProgress={(() => {
+          // Track curves span the whole project in seconds. Normalise the
+          // playhead against the editor's x-domain so the marker draws at
+          // the right horizontal position regardless of project duration.
+          const domain = Math.max(projectDurationSeconds, 1)
+          const frac = currentTime / domain
+          return frac >= 0 && frac <= 1 ? frac : undefined
+        })()}
       />
     </div>
   )

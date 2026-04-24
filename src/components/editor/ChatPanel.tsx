@@ -6,9 +6,17 @@ import { ChatWebSocket, fetchChatHistory, type ServerMessage, type PersistedMess
 type ChatPanelProps = {
   projectName: string
   onClose: () => void
+  /**
+   * Called after any successful agent tool call that could have mutated
+   * project state. Hosts wire this to `router.invalidate()` / `refreshTimeline()`
+   * so edit surfaces (AudioPropertiesPanel, MacroPanel, Timeline, etc.) pick
+   * up the change. Fires on `tool_result` events with `isError: false` —
+   * read-only tools like `sql_query` also fire it (cheap no-op refetch).
+   */
+  onMutation?: () => void
 }
 
-export function ChatPanel({ projectName }: ChatPanelProps) {
+export function ChatPanel({ projectName, onMutation }: ChatPanelProps) {
   const [messages, setMessages] = useState<PersistedMessage[]>([])
   const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
   const [input, setInput] = useState('')
@@ -69,6 +77,13 @@ export function ChatPanel({ projectName }: ChatPanelProps) {
             ? { ...b, status: msg.toolResult.isError ? 'error' : 'success', progress: undefined } as StreamingBlock
             : b
         ))
+        // Every successful tool run potentially mutated project state
+        // (update_volume_curve, add_audio_effect, apply_mix_plan, etc.).
+        // Notify the host so Timeline + panels refetch. Errors skip —
+        // no mutation occurred server-side to reflect.
+        if (!msg.toolResult.isError) {
+          onMutation?.()
+        }
         break
 
       case 'tool_progress':
