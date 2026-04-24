@@ -46,11 +46,13 @@ import { fetchSettings } from '@/lib/settings-client'
 import { fetchWorkspaceView } from '@/lib/workspace-client'
 import { PluginHost } from '@/lib/plugin-host'
 import * as isolateVocals from '@/plugins/isolate_vocals'
+import * as lightShow from '@/plugins/light_show'
 
 // First-party plugin registration — mirrors the backend's
 // `PluginHost.register(isolate_vocals)` call at startup. Dynamic loading can
 // replace this later without changing consumers.
 PluginHost.register(isolateVocals, 'isolate_vocals')
+PluginHost.register(lightShow, 'light_show')
 
 // HMR: on module re-evaluation, deactivate the plugin so its Disposables
 // fire and the registry is clean before the new module registers again.
@@ -59,6 +61,7 @@ PluginHost.register(isolateVocals, 'isolate_vocals')
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     void PluginHost.deactivate('isolate_vocals')
+    void PluginHost.deactivate('light_show')
   })
 }
 

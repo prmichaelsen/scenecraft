@@ -338,7 +338,7 @@ const defaultLayout: LayoutNode = {
           ratio: 0.5,
           children: [
             { type: 'group', id: 'properties-group', tabs: ['properties', 'macro-panel'], activeTab: 'properties' },
-            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'audio_isolations', 'settings', 'extensions'], activeTab: 'bin' },
+            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'audio_isolations', 'light_show', 'settings', 'extensions'], activeTab: 'bin' },
           ],
         },
         {
