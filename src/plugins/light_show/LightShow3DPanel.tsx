@@ -80,17 +80,27 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
   )
 }
 
-/** Ticks the active scene every frame, writing into the shared state array. */
+/** Ticks the active scene every frame, writing into the shared state array.
+ *  Also bumps ``diagDomRef`` every 15 frames as a visible liveness probe —
+ *  if the header doesn't show an incrementing tick count, useFrame isn't
+ *  firing and that's the bug to chase. */
 function SceneRunner({
   activeSceneIdRef,
   stateRef,
   timeRef,
+  diagDomRef,
 }: {
   activeSceneIdRef: React.MutableRefObject<string>
   stateRef: React.MutableRefObject<FixtureState[]>
   timeRef: React.MutableRefObject<number>
+  diagDomRef: React.MutableRefObject<HTMLSpanElement | null>
 }) {
+  const tickRef = useRef(0)
   useFrame((_, delta) => {
+    tickRef.current++
+    if (tickRef.current % 15 === 0 && diagDomRef.current) {
+      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s`
+    }
     const scene = getScene(activeSceneIdRef.current)
     if (!scene) return
     timeRef.current += delta
@@ -108,6 +118,7 @@ export function LightShow3DPanel() {
 
   const stateRef = useRef<FixtureState[]>(makeInitialStates())
   const timeRef = useRef<number>(0)
+  const diagDomRef = useRef<HTMLSpanElement | null>(null)
 
   const onPickScene = (id: string) => {
     timeRef.current = 0
@@ -131,7 +142,7 @@ export function LightShow3DPanel() {
           ))}
         </select>
         <span className="ml-auto text-[10px] text-gray-600">
-          {RIG.length} fixtures · MVP (hardcoded rig + scenes)
+          {RIG.length} fixtures · <span ref={diagDomRef}>ticks 0 · t=0.0s</span>
         </span>
       </div>
 
@@ -156,7 +167,12 @@ export function LightShow3DPanel() {
             fadeStrength={1}
             infiniteGrid={false}
           />
-          <SceneRunner activeSceneIdRef={activeSceneIdRef} stateRef={stateRef} timeRef={timeRef} />
+          <SceneRunner
+            activeSceneIdRef={activeSceneIdRef}
+            stateRef={stateRef}
+            timeRef={timeRef}
+            diagDomRef={diagDomRef}
+          />
           {RIG.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />
           ))}
