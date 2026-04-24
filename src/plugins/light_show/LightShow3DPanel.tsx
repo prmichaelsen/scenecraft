@@ -16,14 +16,27 @@
  * panel layout) gets a real SQL + DSL-backed replacement in M17 proper.
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
 
-import { RIG, type FixtureDef, type FixtureState, makeInitialStates } from './fixtures'
+import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
 import { SCENES, getScene } from './scenes'
 import { BeamCone } from './BeamCone'
+import { fetchFixtures, type FixtureRow } from './light-show-client'
+
+const POLL_INTERVAL_MS = 2000
+
+function rowToDef(row: FixtureRow): FixtureDef {
+  return {
+    id: row.id,
+    role: row.role as FixtureRole,
+    label: row.label,
+    position: [row.position_x, row.position_y, row.position_z],
+    rotation: [row.rotation_x, row.rotation_y, row.rotation_z],
+  }
+}
 
 /** One rigged fixture: body geometry + beam cone, driven by its state slot.
  *  Uses refs only — no React state in the per-frame path. */
@@ -109,16 +122,74 @@ function SceneRunner({
   return null
 }
 
-export function LightShow3DPanel() {
+export function LightShow3DPanel({ projectName }: { projectName?: string } = {}) {
   const [activeSceneId, setActiveSceneId] = useState<string>(SCENES[0].id)
   // Ref mirror of activeSceneId so SceneRunner's useFrame picks up changes
   // without needing to re-subscribe (avoids tearing down the tick).
   const activeSceneIdRef = useRef<string>(SCENES[0].id)
   activeSceneIdRef.current = activeSceneId
 
-  const stateRef = useRef<FixtureState[]>(makeInitialStates())
+  // Rig state. Start with the hardcoded RIG as fallback (so something
+  // renders immediately), swap to backend-fetched fixtures once they arrive.
+  // Polled every POLL_INTERVAL_MS so chat-driven MCP tool updates land
+  // visibly in the 3D scene without explicit refresh.
+  const [rig, setRig] = useState<FixtureDef[]>(RIG)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+
+  // Per-frame fixture state (intensity/color/pan/tilt). Refs because useFrame
+  // mutates them hot-path — never goes through React state. Rebuilt when the
+  // rig shape changes so new fixtures have initial state and removed fixtures
+  // are pruned.
+  const stateRef = useRef<FixtureState[]>(
+    RIG.map((f) => ({
+      id: f.id,
+      role: f.role,
+      intensity: 1,
+      color: [1, 1, 1],
+      pan: 0,
+      tilt: 0,
+    })),
+  )
   const timeRef = useRef<number>(0)
   const diagDomRef = useRef<HTMLSpanElement | null>(null)
+
+  // Fetch fixtures from backend + poll. Only active when we have a projectName.
+  useEffect(() => {
+    if (!projectName) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const rows = await fetchFixtures(projectName)
+        if (cancelled) return
+        setFetchError(null)
+        const defs = rows.map(rowToDef)
+        setRig(defs)
+        // Reconcile stateRef: preserve existing state per id, add defaults
+        // for new fixtures, drop removed ones. useFrame reads stateRef by
+        // .find(id), so the order doesn't need to match defs.
+        const byId = new Map(stateRef.current.map((s) => [s.id, s]))
+        stateRef.current = defs.map((d) =>
+          byId.get(d.id) ?? {
+            id: d.id,
+            role: d.role,
+            intensity: 1,
+            color: [1, 1, 1],
+            pan: 0,
+            tilt: 0,
+          },
+        )
+      } catch (e) {
+        if (cancelled) return
+        setFetchError((e as Error).message)
+      }
+    }
+    tick()
+    const h = setInterval(tick, POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(h)
+    }
+  }, [projectName])
 
   const onPickScene = (id: string) => {
     timeRef.current = 0
@@ -142,7 +213,8 @@ export function LightShow3DPanel() {
           ))}
         </select>
         <span className="ml-auto text-[10px] text-gray-600">
-          {RIG.length} fixtures · <span ref={diagDomRef}>ticks 0 · t=0.0s</span>
+          {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'} ·{' '}
+          <span ref={diagDomRef}>ticks 0 · t=0.0s</span>
         </span>
       </div>
 
@@ -173,7 +245,7 @@ export function LightShow3DPanel() {
             timeRef={timeRef}
             diagDomRef={diagDomRef}
           />
-          {RIG.map((def) => (
+          {rig.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />
           ))}
           <OrbitControls target={[0, 1, 0]} enableDamping />
