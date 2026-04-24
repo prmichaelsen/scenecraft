@@ -1337,24 +1337,22 @@ export async function deleteTrackEffect(project: string, effectId: string): Prom
 // ── Master-bus effects ───────────────────────────────────────────────────
 //
 // Master-bus effects are `track_effects` rows where `track_id IS NULL`, sat
-// on the summed mix (masterGain → fx chain → destination). A sibling backend
-// branch adds `list_master_bus_effects(project_dir)` and widens the existing
-// POST/PATCH/DELETE endpoints to accept a null track_id. Until that lands,
-// this frontend returns an empty list so the mixer + render wiring can be
-// exercised end-to-end.
+// on the summed mix (masterGain → fx chain → destination). The backend's
+// `list_master_bus_effects(project_dir)` tool powers the endpoint below;
+// POST/PATCH/DELETE on the same row flow through the widened track-effects
+// endpoints with a null track_id.
 //
-// TODO(master-bus): replace with real API call once backend ships.
-// Expected final shape:
+// Contract: throws on network / non-2xx response. Callers that want a
+// soft-failure (e.g. mixer-init) should wrap in try/catch or `.catch(() => [])`.
+// An empty 2xx body (`{ effects: [] }` or missing `effects`) returns `[]`.
+//
 //   GET /api/projects/:project/master-bus-effects
 //       → { effects: TrackEffectRowJSON[] }  (track_id === null)
 export async function fetchMasterBusEffects(projectName: string): Promise<TrackEffectRowJSON[]> {
-  // TODO(master-bus): once the backend endpoint lands, swap for a real fetch:
-  //   const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(projectName)}/master-bus-effects`)
-  //   if (!res.ok) throw new Error(...)
-  //   const data = await res.json() as { effects?: TrackEffectRowJSON[] }
-  //   return data.effects ?? []
-  void projectName
-  return []
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(projectName)}/master-bus-effects`)
+  if (!res.ok) throw new Error(`failed to fetch master-bus effects: ${res.status}`)
+  const data = await res.json() as { effects?: TrackEffectRowJSON[] }
+  return data.effects ?? []
 }
 
 // ── M13 send-buses ──

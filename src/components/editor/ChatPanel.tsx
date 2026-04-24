@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { ChatWebSocket, fetchChatHistory, handleMixRenderRequest, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
+import { MASTER_BUS_EFFECTS_CHANGED_EVENT } from '@/hooks/useAudioMixer'
 
 type ChatPanelProps = {
   projectName: string
@@ -147,6 +148,16 @@ export function ChatPanel({ projectName, onMutation }: ChatPanelProps) {
         handleMixRenderRequest(msg, { projectName }).catch((err) => {
           console.warn('[ChatPanel] mix_render_request failed:', err)
         })
+        break
+
+      case 'master_bus_effects_changed':
+        // Fan out to the live mixer via a window event. `useAudioMixer`
+        // (mounted in Timeline) listens, refetches the master-bus
+        // effects list, and calls `reevaluateMasterChain`. No UI toast
+        // for v1 — the chat agent narrates the mutation itself.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(MASTER_BUS_EFFECTS_CHANGED_EVENT))
+        }
         break
     }
   }, [projectName])
