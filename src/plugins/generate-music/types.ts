@@ -13,6 +13,10 @@ export type GenerationTrack = {
   pool_segment_id: string
   musicful_task_id: string
   song_title: string | null
+  // Filled from the pool_segments JOIN in get_music_generations_for_entity.
+  // Used by the drag payload so AudioLane's drop handler can create an
+  // audio_clip pointing at the right file.
+  pool_path: string
   duration_seconds: number | null
   cover_url: string | null
 }

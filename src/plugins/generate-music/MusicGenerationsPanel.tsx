@@ -14,9 +14,11 @@
  *     not the current editor selection (spec R29-R30).
  *   - Retry calls the backend directly (no form prefill); backend copies
  *     params and sets reused_from.
- *   - Drag handles on track rows use `application/x-scenecraft-stem`
- *     with stem_type='music'. Task-134 wires the actual drop target;
- *     task-132 just emits the payload.
+ *   - Music is net-new audio (not an extraction), so track-row drags
+ *     ride the pool-audio drop path — `application/x-scenecraft-pool-path`
+ *     with the pool_path string — the same mime the Bin uses. Purple
+ *     clip color comes from pool_segments.variant_kind='music' at render
+ *     time, not from the drop payload (see src/lib/audio-clip-styling.ts).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -425,14 +427,14 @@ function RunCard({
           key={tr.pool_segment_id}
           draggable
           onDragStart={(e) => {
-            // Task-134 payload shape — drop targets read `application/x-scenecraft-stem`.
-            const payload = {
-              stem_type: 'music' as const,
-              pool_segment_id: tr.pool_segment_id,
-              duration_seconds: tr.duration_seconds ?? 0,
-              song_title: tr.song_title ?? '',
-            }
-            e.dataTransfer.setData('application/x-scenecraft-stem', JSON.stringify(payload))
+            // Task-134 — music generations are net-new audio (not
+            // extracted stems), so they ride the pool-audio drop path
+            // the Bin uses, NOT `application/x-scenecraft-stem`.
+            // AudioLane's onDropPoolAudio handler reads just the
+            // pool_path string; the resulting clip's purple color comes
+            // from pool_segments.variant_kind='music' at render time,
+            // not from the drop payload.
+            e.dataTransfer.setData('application/x-scenecraft-pool-path', tr.pool_path)
             e.dataTransfer.effectAllowed = 'copy'
           }}
           className="flex items-center gap-2 text-[11px] px-1 py-0.5 bg-gray-900/60 rounded cursor-grab"
