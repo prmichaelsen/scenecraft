@@ -21,6 +21,8 @@
 
 import type { AudioClip, AudioTrack, CurvePoint } from './audio-client'
 import { dbToLinear, sampleClipDbAtPlayhead, sampleTrackDbAtPlayhead } from './audio-curves'
+import { EFFECT_TYPES, type EffectNode } from './audio-effect-types'
+import type { TrackEffect } from './audio-graph'
 
 // ── Shared constants ──────────────────────────────────────────────────────
 
@@ -166,4 +168,104 @@ export function scheduleCrossfadeOnParams(
   newcomerParam.cancelScheduledValues(paramAnchorTime)
   incumbentParam.setValueCurveAtTime(COS_CURVE, fadeStartCtx, duration)
   newcomerParam.setValueCurveAtTime(SIN_CURVE, fadeStartCtx, duration)
+}
+
+// ── Effect-chain builder (shared by live mixer + offline renderer) ────────
+
+/**
+ * Handle for a serial effect chain (used for the master bus in both live and
+ * offline paths). The chain's `input` is where the upstream signal connects;
+ * the chain's `output` drives the downstream node(s).
+ */
+export interface EffectChainHandle {
+  /** Upstream attach point — always present, even when the chain is empty. */
+  readonly input: AudioNode
+  /** Downstream attach point — always present, even when the chain is empty. */
+  readonly output: AudioNode
+  /** The individual effect nodes in order. Empty for empty chains. */
+  readonly effects: readonly EffectNode[]
+  /** Tear down every internal node (effects + passthrough). Safe to call once. */
+  dispose(): void
+}
+
+/**
+ * Build a serial effect chain for the master bus.
+ *
+ *     input → effect_1 → effect_2 → … → effect_N → output
+ *
+ * When `effects` is empty we return a single passthrough GainNode as both
+ * `input` and `output`, so callers never need to special-case the empty case.
+ *
+ * Effects are sorted by `order_index` before wiring. Unknown `effect_type`s
+ * are skipped with a console warning (matches `buildTrackChain`'s behavior in
+ * audio-graph.ts).
+ *
+ * Disabled effects (`enabled === false`) are currently included in the chain
+ * — the master-bus MVP doesn't expose a bypass toggle. If the agent needs
+ * per-effect enable/disable on the master bus later, route these through the
+ * same `BypassManager` that audio-graph.ts uses.
+ *
+ * Typed on `BaseAudioContext` so the same builder works for live playback
+ * (AudioContext) and offline rendering (OfflineAudioContext). The
+ * `EFFECT_TYPES[type].build()` factories are typed with `AudioContext` but
+ * only call methods that also exist on `BaseAudioContext` (createGain,
+ * createBiquadFilter, createDynamicsCompressor, createOscillator,
+ * createStereoPanner, createChannelSplitter, createChannelMerger,
+ * createWaveShaper, createDelay, currentTime). We cast at the call site to
+ * satisfy the factory signature without a deeper type refactor.
+ */
+export function buildEffectChain(
+  ctx: BaseAudioContext,
+  effects: readonly TrackEffect[],
+): EffectChainHandle {
+  // Always create head/tail passthroughs so `input` and `output` are stable
+  // references the caller can wire once, regardless of chain length or
+  // future mutations.
+  const inputNode = ctx.createGain()
+  inputNode.gain.value = 1
+  const outputNode = ctx.createGain()
+  outputNode.gain.value = 1
+
+  const sorted = [...effects].sort((a, b) => a.order_index - b.order_index)
+  const built: EffectNode[] = []
+  for (const row of sorted) {
+    const spec = EFFECT_TYPES[row.effect_type]
+    if (!spec) {
+      if (typeof console !== 'undefined') {
+        console.warn(`[mix-graph] unknown effect_type=${row.effect_type} in chain`)
+      }
+      continue
+    }
+    // Factories accept AudioContext; all methods they call also live on
+    // BaseAudioContext (see docstring). Cast is safe at runtime.
+    const node = spec.build(ctx as AudioContext, row.static_params)
+    built.push(node)
+  }
+
+  // Wire in series: inputNode → fx[0] → fx[1] → ... → fx[N-1] → outputNode.
+  let cursor: AudioNode = inputNode
+  for (const ef of built) {
+    cursor.connect(ef.input)
+    cursor = ef.output
+  }
+  cursor.connect(outputNode)
+
+  let disposed = false
+
+  return {
+    input: inputNode,
+    output: outputNode,
+    effects: built,
+    dispose() {
+      if (disposed) return
+      disposed = true
+      // Tear down from tail to head so we never sever a live connection
+      // that a downstream disposer still expects to iterate.
+      try { outputNode.disconnect() } catch { /* ignore */ }
+      for (let i = built.length - 1; i >= 0; i--) {
+        try { built[i].dispose() } catch { /* ignore */ }
+      }
+      try { inputNode.disconnect() } catch { /* ignore */ }
+    },
+  }
 }

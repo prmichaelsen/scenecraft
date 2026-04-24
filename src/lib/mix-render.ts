@@ -39,11 +39,13 @@
 import type { AudioClip, AudioTrack } from './audio-client'
 import { scenecraftFileUrl } from './scenecraft-client'
 import {
+  buildEffectChain,
   isTrackEffectivelyMuted,
   scheduleClipCurveOnParam,
   scheduleCrossfadeOnParams,
   scheduleTrackCurveOnParam,
 } from './mix-graph'
+import type { TrackEffect } from './audio-graph'
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -75,6 +77,12 @@ export interface MixRenderOptions {
    * audio that the user has already been listening to.
    */
   bufferCache?: Map<string, AudioBuffer>
+  /**
+   * Master-bus effects. Wired in serial between the summed `masterGain` and
+   * the offline destination — identical topology to the live mixer, so the
+   * fidelity test stays bit-identical. Empty / omitted means no master fx.
+   */
+  masterEffects?: readonly TrackEffect[]
 }
 
 export interface MixRenderResult {
@@ -212,16 +220,21 @@ export async function renderMixToBuffer(
   const fetchBytes = options.fetchBytes ?? DEFAULT_FETCH_BYTES
   const decode = options.decode ?? DEFAULT_DECODE
   const bufferCache = options.bufferCache ?? new Map<string, AudioBuffer>()
+  const masterEffects = options.masterEffects ?? []
 
   const durationS = endTimeS - startTimeS
   const frames = Math.ceil(durationS * sampleRate)
 
   const ctx = offlineCtxFactory({ numberOfChannels: channels, length: frames, sampleRate })
 
-  // Master bus — no analysers needed offline.
+  // Master bus — no analysers needed offline, but the fx chain matches live
+  // topology so the two paths stay bit-identical. Empty masterEffects
+  // produces a passthrough chain (two plain GainNodes at unity).
   const masterGain = ctx.createGain()
   masterGain.gain.value = 1
-  masterGain.connect(ctx.destination)
+  const masterFxChain = buildEffectChain(ctx, masterEffects)
+  masterGain.connect(masterFxChain.input)
+  masterFxChain.output.connect(ctx.destination)
 
   const trackHandles: OfflineTrackHandle[] = []
   const playhead = startTimeS
