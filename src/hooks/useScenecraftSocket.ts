@@ -15,7 +15,18 @@ export type JobMessage =
   | { type: 'error'; message: string }
   | { type: 'timeline_warning'; route: string; warnings: string[] }
   | { type: 'log'; message: string; timestamp: string; level?: string }
-  | { type: 'light_show_changed'; projectName: string; kind: 'fixtures' | 'overrides' | 'all' }
+  // Plugin-scoped events — `{pluginId}__{eventType}` shape matches the
+  // double-underscore namespacing used for plugin-owned DB tables and MCP
+  // tool names. Plugins emit these via plugin_api.broadcast_event; clients
+  // filter with `subscribePluginEvent(pluginId, eventType, cb)` below.
+  // Payload fields beyond projectName are typed as unknown at this layer;
+  // consumers narrow inside their own handlers.
+  | PluginEventMessage
+
+export type PluginEventMessage = {
+  type: `${string}__${string}`
+  projectName?: string
+}
 
 type JobListener = (msg: JobMessage) => void
 
@@ -172,6 +183,30 @@ function subscribeJob(jobId: string, listener: JobListener) {
 function subscribeAll(listener: JobListener) {
   globalListeners.add(listener)
   return () => { globalListeners.delete(listener) }
+}
+
+/**
+ * Subscribe to a plugin-scoped WS event. Matches messages whose ``type``
+ * has the shape ``{pluginId}__{eventType}``. Pass ``'*'`` for eventType
+ * to match any event from that plugin. Returns an unsubscribe function.
+ *
+ * Use instead of raw ``subscribeAll`` when you only care about one
+ * plugin's events — avoids re-filtering on every unrelated message.
+ */
+export function subscribePluginEvent(
+  pluginId: string,
+  eventType: string | '*',
+  listener: (msg: JobMessage & { type: `${string}__${string}` }) => void,
+): () => void {
+  const needle = eventType === '*' ? `${pluginId}__` : `${pluginId}__${eventType}`
+  const match = eventType === '*'
+    ? (t: string) => t.startsWith(needle)
+    : (t: string) => t === needle
+  return subscribeAll((msg) => {
+    if (typeof msg.type === 'string' && match(msg.type)) {
+      listener(msg as JobMessage & { type: `${string}__${string}` })
+    }
+  })
 }
 
 // Framework-agnostic subscribe for plugins / non-React callers. Forwards to
