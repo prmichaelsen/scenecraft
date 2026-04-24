@@ -1405,3 +1405,115 @@ export async function deleteSendBus(project: string, busId: string): Promise<voi
   })
   if (!res.ok) throw new Error(`Failed to delete send-bus: ${res.status} ${await res.text()}`)
 }
+
+// ── Transcribe plugin ──
+
+/** Model alias the backend's WhisperClient recognises. */
+export type TranscribeModel = 'fast' | 'whisperx' | 'whisper' | 'whisper-timestamped'
+
+export type TranscribeWord = {
+  text: string
+  start: number
+  end: number
+  score?: number | null
+}
+
+export type TranscribeSegment = {
+  start: number
+  end: number
+  text: string
+  words: TranscribeWord[]
+}
+
+/** Full run — returned by POST /run and GET /runs/:run_id. */
+export type TranscribeRun = {
+  run_id: string
+  clip_id: string
+  model: TranscribeModel
+  model_slug: string
+  language: string | null
+  word_timestamps: boolean
+  duration_seconds: number | null
+  segment_count?: number
+  text: string
+  segments?: TranscribeSegment[]
+  cached?: boolean
+  created_at: string
+}
+
+/** Summary row returned by GET /runs (list endpoint). */
+export type TranscribeRunSummary = {
+  run_id: string
+  clip_id: string
+  model: TranscribeModel
+  model_slug: string
+  language_requested: string | null
+  detected_language: string | null
+  word_timestamps: boolean
+  duration_seconds: number | null
+  segment_count: number
+  text_preview: string
+  status: string
+  created_at: string
+}
+
+/**
+ * Trigger transcription for an audio_clip (or pool_segment — the server
+ * falls back to the pool table when the id doesn't match a clip). Caches
+ * by (clip_id, model, word_timestamps) on the server, so calling twice
+ * with identical args is free after the first run. Synchronous: waits
+ * for Whisper to finish before returning.
+ */
+export async function postTranscribeClip(
+  project: string,
+  clipId: string,
+  opts: {
+    model?: TranscribeModel
+    language?: string
+    wordTimestamps?: boolean
+    forceRerun?: boolean
+  } = {},
+): Promise<TranscribeRun> {
+  const body: Record<string, unknown> = { clip_id: clipId }
+  if (opts.model) body.model = opts.model
+  if (opts.language) body.language = opts.language
+  if (opts.wordTimestamps !== undefined) body.word_timestamps = opts.wordTimestamps
+  if (opts.forceRerun) body.force_rerun = true
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/plugins/transcribe/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`transcribe/run failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+/**
+ * List completed transcription runs for a project. `clipId` narrows to a
+ * single audio source across all models that have been run on it — useful
+ * for building a per-clip history / "which transcript did I use" picker.
+ */
+export async function fetchTranscribeRuns(
+  project: string,
+  opts: { clipId?: string } = {},
+): Promise<TranscribeRunSummary[]> {
+  const qs = opts.clipId ? `?clip_id=${encodeURIComponent(opts.clipId)}` : ''
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/plugins/transcribe/runs${qs}`)
+  if (!res.ok) throw new Error(`transcribe/runs failed: ${res.status} ${await res.text()}`)
+  const data = await res.json() as { runs?: TranscribeRunSummary[] }
+  return data.runs ?? []
+}
+
+/**
+ * Fetch one run with every segment expanded. Used to render the full
+ * transcript / word-level timeline overlay after the user picks a run
+ * from the list.
+ */
+export async function fetchTranscribeRun(
+  project: string,
+  runId: string,
+): Promise<TranscribeRun> {
+  const res = await fetch(`${SCENECRAFT_API_URL}/api/projects/${encodeURIComponent(project)}/plugins/transcribe/runs/${encodeURIComponent(runId)}`)
+  if (!res.ok) throw new Error(`transcribe/runs/${runId} failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
