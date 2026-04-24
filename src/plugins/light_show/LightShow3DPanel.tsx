@@ -62,13 +62,13 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
           {/* Yoke base — flat plate */}
           <mesh>
             <boxGeometry args={[0.25, 0.1, 0.25]} />
-            <meshStandardMaterial color="#6b6b78" metalness={0.55} roughness={0.45} />
+            <meshStandardMaterial color="#9a9aa5" metalness={0.25} roughness={0.55} />
           </mesh>
           {/* Head + beam — rotates for pan/tilt, ref-driven per frame */}
           <group ref={headRef} position={[0, -0.15, 0]} rotation={def.rotation}>
             <mesh>
               <cylinderGeometry args={[0.1, 0.12, 0.25, 16]} />
-              <meshStandardMaterial color="#8a8a95" metalness={0.6} roughness={0.35} />
+              <meshStandardMaterial color="#b0b0bb" metalness={0.3} roughness={0.5} />
             </mesh>
             <group position={[0, -0.125, 0]}>
               <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
@@ -81,7 +81,7 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
           <group rotation={def.rotation}>
             <mesh>
               <cylinderGeometry args={[0.1, 0.12, 0.2, 16]} />
-              <meshStandardMaterial color="#8a8a95" metalness={0.6} roughness={0.35} />
+              <meshStandardMaterial color="#b0b0bb" metalness={0.3} roughness={0.5} />
             </mesh>
             <group position={[0, -0.1, 0]}>
               <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
