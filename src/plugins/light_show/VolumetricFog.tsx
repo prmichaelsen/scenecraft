@@ -21,6 +21,52 @@
  *  - Contribution is additive (BlendFunction.ADD) so it stacks on the
  *    existing cone beams without replacing them — we get the physical
  *    beam + the volumetric atmosphere together.
+ *
+ * ── Future Phase C enhancements (documented, not implemented) ────────────
+ *
+ *  1. Henyey-Greenstein phase function — real atmospheric scattering has
+ *     an angular dependency: looking "along" a beam (small angle between
+ *     view ray and beam direction) makes it appear brighter than looking
+ *     across it. Current shader treats all scatter directions equally
+ *     (isotropic scattering) so beams read slightly flat. HG is a
+ *     one-parameter model (``g`` in [-1, 1], positive = forward-scatter,
+ *     values around 0.6-0.8 match typical stage haze) that multiplies
+ *     each step's contribution by a phase factor. ~10 lines of shader,
+ *     one extra dot(rayDir, aimDir) per fixture per step.
+ *
+ *  2. 3D noise fog density — currently ``density`` is a constant across
+ *     the whole volume, which reads as uniform haze. Real haze has
+ *     wispy pockets of denser and thinner regions that drift over time;
+ *     sampling a low-frequency 3D noise (Perlin / simplex / curl) at
+ *     each step position produces those wisps and makes beams feel
+ *     alive. Can be procedural in-shader (no texture needed at low
+ *     octaves) or a pre-baked 3D texture for richer noise. Animation
+ *     via a uniform time offset and/or a slow XY wind drift. ~15-25
+ *     lines of shader depending on noise implementation.
+ *
+ *  3. Per-fixture beam profile — currently every fixture shares the
+ *     same ``coneLength`` and ``coneHalfAngle`` scalar uniforms. Real
+ *     fixture types have different beam shapes: a moving-head BEAM
+ *     fixture has a tight ~3° cone for sharp shafts, a wash has ~30°+
+ *     for broad coverage, a laser is effectively cylindrical (zero
+ *     half-angle), etc. Upgrade path: add per-fixture length + halfAngle
+ *     uniform arrays (same shape as the existing position/aim arrays)
+ *     populated from the fixture row; shader reads uFixtureLengths[j]
+ *     and uFixtureHalfAngles[j] instead of the scalar uniforms. Also
+ *     consider per-fixture ``beam_profile`` enum (par / spot / wash /
+ *     beam / laser / strobe / blinder) with different attenuation
+ *     curves along the cone axis — e.g. beam = sharp hotspot,
+ *     wash = soft even falloff.
+ *
+ *  Other candidates worth considering when the time comes:
+ *   - Depth-aware jitter (per-pixel temporal reprojection) for more
+ *     stable noise across frames.
+ *   - Half-res composite + bilinear upsample to reclaim GPU headroom
+ *     for higher step counts on lower-end hardware.
+ *   - In-beam gobo patterns (sample a 2D texture along the beam axis,
+ *     multiply into the contribution) — gives you breakup, logos,
+ *     leaves-on-forest-floor, etc.
+ *   - Emission from screen panels contributing volumetric bounce light.
  */
 
 import { useEffect, useMemo, useRef } from 'react'
