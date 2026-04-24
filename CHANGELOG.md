@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.23.2] - 2026-04-24
+
+### Changed
+- **Refactor (B.1)**: infrastructure for the split-column timeline layout. Adds `useVerticalScrollSync` hook (mirrors `scrollTop` between two refs with re-entry guard) and a `headerless?: boolean` prop on `AudioLane` that skips rendering the inline sticky-left header wrapper. No visible change today — both land inert, ready for the follow-up commit that restructures the outer Timeline shell into a fixed-width headers column + horizontally-scrolling content column (so clips at t=0 no longer sit behind a sticky header).
+
 ## [0.23.1] - 2026-04-24
 
 ### Added

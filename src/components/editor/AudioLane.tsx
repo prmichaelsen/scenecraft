@@ -137,6 +137,14 @@ type AudioLaneProps = {
    *  header pill. Caller owns the analyser wiring — AudioLane just forwards
    *  the ReactNode into `TrackHeaderPill.meter`. */
   headerMeter?: React.ReactNode
+  /**
+   * When true, the inline sticky-left header wrapper (draggable reorder
+   *  zone + rename + M/S/meter pill + context menu) is NOT rendered. The
+   *  lane renders only its clip body + drop zones. Used by the split-column
+   *  timeline layout where the track header lives in a dedicated left
+   *  column instead of floating over the clips.
+   */
+  headerless?: boolean
 }
 
 /** Shape of the `application/x-scenecraft-stem` drag payload. Mirrored by
@@ -153,7 +161,7 @@ export type StemDropPayload = {
  * Single audio track row. Renders each clip as a positioned block on a
  * horizontal timeline scaled by pxPerSec, with a canvas waveform overlay.
  */
-export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio, onDropStem, headerMeter }: AudioLaneProps) {
+export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec, height = 56, selectedIds, onClipClick, onRequestAlignWaveforms, onRequestDeleteClip, onRequestToggleMute, onUpdateTrack, onRequestDeleteTrack, onRequestReorderTracks, onRequestMoveUp, onRequestMoveDown, onClipMouseDown, onClipTrimMouseDown, dragOffsetSeconds = 0, dragTrackDelta = 0, draggingIds, trimPreview, ghosts, highlightedIds, onDropPoolAudio, onDropStem, headerMeter, headerless = false }: AudioLaneProps) {
   const clips = track.clips ?? []
   const dimmed = track.muted
   const { selectedAudioTrackId, setSelectedAudioTrackId } = useEditorState()
@@ -292,6 +300,8 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
         }
       }}
     >
+      {!headerless && (
+      <>
       {/* Track header — sticky so it stays visible during horizontal scroll.
           The wrapper is a drop TARGET (for reorder); the drag SOURCE is a
           narrower handle inside the pill (the `A{n}` prefix) so HTML5 drag
@@ -389,6 +399,8 @@ export const AudioLane = memo(function AudioLane({ projectName, track, pxPerSec,
           meter={headerMeter}
         />
       </div>
+      </>
+      )}
 
       {/* Clips */}
       {clips.map((c) => (
