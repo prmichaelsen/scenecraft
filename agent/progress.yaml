@@ -1205,22 +1205,29 @@ milestones:
 
   - id: milestone_17
     name: Track Contribution Point and Light Show Plugin
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-24
     completed: null
     file: agent/milestones/milestone-17-track-contribution-point-and-light-show-plugin.md
     tasks_total: 7
-    tasks_completed: 0
+    tasks_completed: 1
     estimated_weeks: 4
     tasks:
       - id: task-135
         name: Migration contribution point (Python plugin host)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-24T00:00:00Z
+        completed_date: 2026-04-24T01:00:00Z
         file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-135-migration-contribution-point.md
         estimated_hours: 4
-        actual_hours: null
-        notes: "Adds register_migration to Python PluginHost with versioned up/down migrations (SQL or Python), schema_migrations meta table. Reusable infra; generate_music/isolate_vocals can adopt post-M17."
+        actual_hours: 1.0
+        notes: |
+          Landed on worktree m17/task-135-migration-contrib in scenecraft-engine (commit 0508b51).
+          20 unit tests pass; full plugin_host + plugin_migrations suite green (36 tests).
+          Scope limits: downgrade detection raises RuntimeError on applied > declared (full
+          downgrade requires target_version signal — deferred). SQL is split on ';' and run
+          via cursor.execute (not executescript) to stay inside SAVEPOINT rollback semantics.
+          Worktree NOT merged back to main — user decides when to merge (safemerge posture).
       - id: task-136
         name: Core tracks schema unification + migration
         status: not_started
