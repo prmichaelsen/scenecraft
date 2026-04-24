@@ -31,6 +31,8 @@ import { ImportDialog } from './ImportDialog'
 import { RulesTrack, type RuleSection } from './RulesTrack'
 import { TrackHeaderPill } from './TrackHeaderPill'
 import { LevelMeter } from './LevelMeter'
+import { useTrackChannels } from '@/hooks/useTrackChannels'
+import type { AudioMixer } from '@/lib/audio-mixer'
 import { EffectEditor } from './EffectEditor'
 import { VersionHistoryPanel } from './VersionHistoryPanel'
 import { CheckpointsPanel } from './CheckpointsPanel'
@@ -356,6 +358,33 @@ const MIN_PREVIEW_HEIGHT = 80
 const AUDIO_HEIGHT_KEY = 'scenecraft-audio-track-height'
 const DEFAULT_AUDIO_HEIGHT = 0 // 0 means flex-1 (fill remaining space)
 const MIN_AUDIO_HEIGHT = 60
+
+/** Per-track header LevelMeter that polls the mixer for channel count so
+ *  the bar count collapses to 1 when every clip on the track is mono. */
+function TrackHeaderLevelMeter({
+  mixer,
+  trackId,
+  trackName,
+  active,
+}: {
+  mixer: AudioMixer | null
+  trackId: string
+  trackName: string
+  active: boolean
+}) {
+  const channels = useTrackChannels(mixer, trackId)
+  return (
+    <LevelMeter
+      analysers={mixer?.getTrackAnalysers(trackId) ?? null}
+      active={active}
+      channels={channels}
+      orientation="horizontal"
+      widthPx={56}
+      heightPx={12}
+      label={`${trackName} level`}
+    />
+  )
+}
 
 export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const router = useRouter()
@@ -2740,13 +2769,11 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
                         selectedIds={selectedAudioClipIds}
                         highlightedIds={highlightedAudioClipIds}
                         headerMeter={(
-                          <LevelMeter
-                            analysers={audioMixer?.getTrackAnalysers(t.id) ?? null}
+                          <TrackHeaderLevelMeter
+                            mixer={audioMixer}
+                            trackId={t.id}
+                            trackName={t.name}
                             active={isPlaying}
-                            orientation="horizontal"
-                            widthPx={56}
-                            heightPx={12}
-                            label={`${t.name} level`}
                           />
                         )}
                         onClipClick={handleAudioClipClick}

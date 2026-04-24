@@ -1,16 +1,16 @@
 import { useLevelMeter } from '@/hooks/useLevelMeter'
 
 /**
- * LevelMeter — stereo DAW-style amplitude meter. Renders two bars (L + R)
- * with a green→yellow→red gradient and per-channel peak-hold markers.
- * Mono sources show matching L/R bars because the mixer upmixes mono to
- * stereo at the analyser tap (speaker upmix).
+ * LevelMeter — DAW-style amplitude meter. Renders one bar (mono) or two
+ * bars (L + R stereo) with a green→yellow→red gradient and peak-hold
+ * markers. The mixer upmixes mono to stereo at the analyser tap, so in
+ * mono mode we sample just the left tap — it's bit-identical to right.
  *
  * Two orientations:
- *   - `horizontal` — two stacked horizontal bars (L on top, R on bottom).
- *     Good for the transport bar's master meter and compact in-row meters.
- *   - `vertical` — two side-by-side vertical bars (L on left, R on right).
- *     For per-track meters when stacked in a column.
+ *   - `horizontal` — bars stack vertically (L on top, R on bottom for
+ *     stereo; single row for mono). Used in the transport and track rows.
+ *   - `vertical` — bars sit side-by-side (L on left, R on right). Used
+ *     when the meter lives in a column of stacked controls.
  *
  * Sizing is driven by the caller via `widthPx` / `heightPx`.
  */
@@ -19,6 +19,8 @@ export interface LevelMeterProps {
   /** Disable the rAF loop when the meter is off-screen or audio is paused
    *  with no motion expected — saves a handful of percent CPU per meter. */
   active: boolean
+  /** 1 = single mono bar, 2 = L + R. Defaults to 2. */
+  channels?: 1 | 2
   orientation?: 'horizontal' | 'vertical'
   /** Pixel width of the bar's container. Defaults depend on orientation. */
   widthPx?: number
@@ -38,6 +40,7 @@ const GRADIENT_V = 'linear-gradient(to top, #22c55e 0%, #22c55e 60%, #eab308 70%
 export function LevelMeter({
   analysers,
   active,
+  channels = 2,
   orientation = 'horizontal',
   widthPx,
   heightPx,
@@ -48,6 +51,7 @@ export function LevelMeter({
   const isHorizontal = orientation === 'horizontal'
   const w = widthPx ?? (isHorizontal ? 120 : 10)
   const h = heightPx ?? (isHorizontal ? 12 : 32)
+  const mono = channels === 1
 
   return (
     <div
@@ -56,8 +60,14 @@ export function LevelMeter({
       role="meter"
       aria-label={label ?? 'Audio level'}
     >
-      <Bar level={levelLeft} peak={peakLeft} orientation={orientation} channel="L" />
-      <Bar level={levelRight} peak={peakRight} orientation={orientation} channel="R" />
+      {mono ? (
+        <Bar level={levelLeft} peak={peakLeft} orientation={orientation} channel="M" />
+      ) : (
+        <>
+          <Bar level={levelLeft} peak={peakLeft} orientation={orientation} channel="L" />
+          <Bar level={levelRight} peak={peakRight} orientation={orientation} channel="R" />
+        </>
+      )}
     </div>
   )
 }
@@ -71,7 +81,7 @@ function Bar({
   level: number
   peak: number
   orientation: 'horizontal' | 'vertical'
-  channel: 'L' | 'R'
+  channel: 'L' | 'R' | 'M'
 }) {
   const pct = shape(level) * 100
   const peakPct = shape(peak) * 100
