@@ -1127,7 +1127,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-16-music-generation-plugin.md
     tasks_total: 9
-    tasks_completed: 0
+    tasks_completed: 3
     estimated_weeks: 1
     tasks:
       - id: task-126
@@ -2007,7 +2007,7 @@ tasks:
   milestone_16:
     - id: task-126
       name: Auth layer prerequisites (api_keys table + double-gate middleware)
-      status: not_started
+      status: deferred
       milestone_id: milestone_16
       file: agent/tasks/milestone-16-music-generation-plugin/task-126-auth-prereqs.md
       estimated_hours: 4
@@ -2015,28 +2015,31 @@ tasks:
       started: null
     - id: task-127
       name: Schema + helpers (plugin tables, spend_ledger, pool_segments cols, plugin_api helpers)
-      status: not_started
+      status: completed
       milestone_id: milestone_16
       file: agent/tasks/milestone-16-music-generation-plugin/task-127-schema-and-helpers.md
       estimated_hours: 3
-      actual_hours: null
-      started: null
+      actual_hours: 0.5
+      started: 2026-04-23T00:00:00Z
+      completed_date: 2026-04-23T00:30:00Z
     - id: task-128
       name: plugin-api service-routing shim (call_service, BYO mode, broker stub)
-      status: not_started
+      status: completed
       milestone_id: milestone_16
       file: agent/tasks/milestone-16-music-generation-plugin/task-128-plugin-api-service-shim.md
       estimated_hours: 2
-      actual_hours: null
-      started: null
+      actual_hours: 0.25
+      started: 2026-04-23T00:15:00Z
+      completed_date: 2026-04-23T00:30:00Z
     - id: task-129
       name: Musicful client + backend plugin (generate, polling worker, 429 retry, partial success)
-      status: not_started
+      status: completed
       milestone_id: milestone_16
       file: agent/tasks/milestone-16-music-generation-plugin/task-129-musicful-client-and-worker.md
       estimated_hours: 6
-      actual_hours: null
-      started: null
+      actual_hours: 0.5
+      started: 2026-04-23T00:30:00Z
+      completed_date: 2026-04-23T01:00:00Z
     - id: task-130
       name: Backend REST + WS (run/list/retry/credits + JobManager events)
       status: not_started
@@ -2139,6 +2142,9 @@ progress:
   overall: 75
 
 recent_work:
+  - "Editor: per-track level meter collapses to single bar for mono tracks (Reaper-style — no track-type concept, derives from max clip channel count; master stays stereo). audio-mixer.getTrackChannelCount, useTrackChannels 2Hz polling hook, LevelMeter channels prop"
+  - "M16 Task 129: Musicful client + backend plugin + polling worker — 12/12 integration tests pass with mocked Musicful server; happy path, 429 retry/exhaust, partial success, context-aware candidate routing. Auth-gate tests (R54a-f) deferred per skip-auth directive"
+  - "M16 Task 127+128: spend_ledger + plugin schema + call_service shim — generate_music__{generations,tracks} (project.db), spend_ledger (server.db, '' username/org defaults while auth deferred), pool_segments.variant_kind/derived_from/context_entity_{type,id}. plugin_api.call_service with BYO mode; broker stub raises ServiceConfigError. R9a structural test passes"
   - "M4 Task 18: Elicitation confirmation UI — destructive-tool detection (delete/publish/retract/moderate/restore_checkpoint) pauses on elicitation event; inline card in streaming chat with Confirm/Cancel; decline surfaces as a tool error, accept resumes tool call"
   - "M4 Task 52: OAuth 2.0 + PKCE client, Remember MCP bridge — agentbase.me client registration, ~/.scenecraft/oauth-tokens.db, /oauth/callback, MCPBridge merging remember_* tools into Claude's tool list"
   - "M4 Task 17: Chat tool calling — sql_query read-only tool, streamed tool_call/tool_result events, multi-turn tool loop"
@@ -2162,7 +2168,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
-  - "M16: Music Generation Plugin (BYO mode) — Musicful-backed AI-composed audio with context-aware candidate routing, drag-to-timeline, elicitation-gated chat tool. Introduces core spend_ledger + api_keys + double-gate auth middleware (9 tasks, ~32h, 1 week)"
+  - "M16 continuation: task-130 (Backend REST + WS endpoints + JobManager events), task-131 (Frontend plugin module), task-132 (MusicGenerationsPanel), task-133 (Chat tools + elicitation), task-134 (Drag-to-timeline + purple styling). 5 tasks remaining (~17h). Engine-side Musicful worker already shipped via task-129; auth tasks (126) deferred until auth milestone begins"
   - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
   - "M15: Audio Clip Editing + Track Management — delete/move/trim clips, track add/rename/reorder, unlinked drop, cross-highlight, extraction ghost (7 tasks, ~20h, 2-2.5 weeks)"
   - "M13: Audio Sync Tab — lipsync via candidate variants (sync.so + ElevenLabs TTS/S2S); 9 tasks, ~30 hours, 2-3 weeks"
