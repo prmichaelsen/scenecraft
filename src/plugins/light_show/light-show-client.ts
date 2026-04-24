@@ -71,3 +71,65 @@ export async function resetRig(projectName: string): Promise<FixtureRow[]> {
   if (body.error) throw new Error(body.error)
   return body.fixtures ?? []
 }
+
+// ── Overrides ─────────────────────────────────────────────────────────────
+
+/** Per-fixture channel overrides. Keys appear only when the channel is
+ *  currently overridden (NULL = scene-driven). */
+export type Override = {
+  fixture_id: string
+  intensity?: number
+  color?: [number, number, number]
+  pan?: number
+  tilt?: number
+}
+
+function overridesPath(projectName: string) {
+  return `${API_URL}/api/projects/${encodeURIComponent(projectName)}/plugins/light_show/overrides`
+}
+
+export async function fetchOverrides(projectName: string): Promise<Override[]> {
+  const res = await fetch(overridesPath(projectName))
+  if (!res.ok) throw new Error(`fetchOverrides ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { overrides?: Override[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.overrides ?? []
+}
+
+export type OverrideSet = {
+  id: string
+  intensity?: number
+  color?: [number, number, number]
+  pan?: number
+  tilt?: number
+}
+
+export async function setOverrides(
+  projectName: string,
+  overrides: OverrideSet[],
+): Promise<Override[]> {
+  const res = await fetch(overridesPath(projectName), {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ overrides }),
+  })
+  if (!res.ok) throw new Error(`setOverrides ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { overrides?: Override[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.overrides ?? []
+}
+
+export async function clearOverrides(
+  projectName: string,
+  ids?: string[],
+): Promise<Override[]> {
+  const res = await fetch(`${overridesPath(projectName)}/clear`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ids: ids ?? [] }),
+  })
+  if (!res.ok) throw new Error(`clearOverrides ${res.status}: ${await res.text()}`)
+  const body = (await res.json()) as { overrides?: Override[]; error?: string }
+  if (body.error) throw new Error(body.error)
+  return body.overrides ?? []
+}

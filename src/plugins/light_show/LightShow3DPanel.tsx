@@ -24,7 +24,12 @@ import { OrbitControls, Grid } from '@react-three/drei'
 import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
 import { SCENES, getScene } from './scenes'
 import { BeamCone } from './BeamCone'
-import { fetchFixtures, type FixtureRow } from './light-show-client'
+import {
+  fetchFixtures,
+  fetchOverrides,
+  type FixtureRow,
+  type Override,
+} from './light-show-client'
 
 const POLL_INTERVAL_MS = 2000
 
@@ -94,30 +99,47 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
 }
 
 /** Ticks the active scene every frame, writing into the shared state array.
- *  Also bumps ``diagDomRef`` every 15 frames as a visible liveness probe —
- *  if the header doesn't show an incrementing tick count, useFrame isn't
- *  firing and that's the bug to chase. */
+ *  After the scene runs, overrides win per-channel (intensity / color /
+ *  pan / tilt) — chat-driven pins beat scene output until cleared. Also
+ *  bumps ``diagDomRef`` every 15 frames as a visible liveness probe. */
 function SceneRunner({
   activeSceneIdRef,
   stateRef,
   timeRef,
   diagDomRef,
+  overridesRef,
 }: {
   activeSceneIdRef: React.MutableRefObject<string>
   stateRef: React.MutableRefObject<FixtureState[]>
   timeRef: React.MutableRefObject<number>
   diagDomRef: React.MutableRefObject<HTMLSpanElement | null>
+  overridesRef: React.MutableRefObject<Map<string, Override>>
 }) {
   const tickRef = useRef(0)
   useFrame((_, delta) => {
     tickRef.current++
     if (tickRef.current % 15 === 0 && diagDomRef.current) {
-      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s`
+      const overrideCount = overridesRef.current.size
+      const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
+      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${overrideLabel}`
     }
     const scene = getScene(activeSceneIdRef.current)
-    if (!scene) return
-    timeRef.current += delta
-    scene.apply(timeRef.current, stateRef.current)
+    if (scene) {
+      timeRef.current += delta
+      scene.apply(timeRef.current, stateRef.current)
+    }
+    // Apply overrides after scene — they win per-channel until cleared.
+    const overrides = overridesRef.current
+    if (overrides.size > 0) {
+      for (const s of stateRef.current) {
+        const o = overrides.get(s.id)
+        if (!o) continue
+        if (o.intensity !== undefined) s.intensity = o.intensity
+        if (o.color !== undefined) s.color = [o.color[0], o.color[1], o.color[2]]
+        if (o.pan !== undefined) s.pan = o.pan
+        if (o.tilt !== undefined) s.tilt = o.tilt
+      }
+    }
   })
   return null
 }
@@ -152,21 +174,28 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   )
   const timeRef = useRef<number>(0)
   const diagDomRef = useRef<HTMLSpanElement | null>(null)
+  // Overrides keyed by fixture id for O(1) lookup per frame. Populated by
+  // the polling loop; consumed by SceneRunner after scene.apply() runs.
+  const overridesRef = useRef<Map<string, Override>>(new Map())
+  const [overrideCount, setOverrideCount] = useState(0)
 
-  // Fetch fixtures from backend + poll. Only active when we have a projectName.
+  // Fetch fixtures + overrides from backend + poll. Only active when we
+  // have a projectName.
   useEffect(() => {
     if (!projectName) return
     let cancelled = false
     const tick = async () => {
       try {
-        const rows = await fetchFixtures(projectName)
+        const [rows, overrides] = await Promise.all([
+          fetchFixtures(projectName),
+          fetchOverrides(projectName),
+        ])
         if (cancelled) return
         setFetchError(null)
+
+        // Fixtures — replace state if rig shape changed.
         const defs = rows.map(rowToDef)
         setRig(defs)
-        // Reconcile stateRef: preserve existing state per id, add defaults
-        // for new fixtures, drop removed ones. useFrame reads stateRef by
-        // .find(id), so the order doesn't need to match defs.
         const byId = new Map(stateRef.current.map((s) => [s.id, s]))
         stateRef.current = defs.map((d) =>
           byId.get(d.id) ?? {
@@ -178,6 +207,12 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             tilt: 0,
           },
         )
+
+        // Overrides — rebuild the lookup map. Cheap, small N.
+        const next = new Map<string, Override>()
+        for (const o of overrides) next.set(o.fixture_id, o)
+        overridesRef.current = next
+        setOverrideCount(next.size)
       } catch (e) {
         if (cancelled) return
         setFetchError((e as Error).message)
@@ -213,7 +248,8 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
           ))}
         </select>
         <span className="ml-auto text-[10px] text-gray-600">
-          {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'} ·{' '}
+          {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'}
+          {overrideCount > 0 ? ` · ${overrideCount} pinned` : ''} ·{' '}
           <span ref={diagDomRef}>ticks 0 · t=0.0s</span>
         </span>
       </div>
@@ -251,6 +287,7 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             stateRef={stateRef}
             timeRef={timeRef}
             diagDomRef={diagDomRef}
+            overridesRef={overridesRef}
           />
           {rig.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />
