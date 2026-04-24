@@ -52,10 +52,13 @@ export interface FixtureState {
 }
 
 export function makeInitialStates(): FixtureState[] {
+  // MVP reduction: initial state is full-on white. If the scene/useFrame
+  // pipeline fails for any reason, beams remain visible (intensity=1, white)
+  // — lets us isolate rendering bugs from animation bugs.
   return RIG.map((f) => ({
     id: f.id,
     role: f.role,
-    intensity: 0,
+    intensity: 1,
     color: [1, 1, 1],
     pan: 0,
     tilt: 0,

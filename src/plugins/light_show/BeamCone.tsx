@@ -73,8 +73,11 @@ export function BeamCone({
 
   const uniforms = useMemo(
     () => ({
+      // MVP reduction: bake full-on white into initial uniform values so
+      // beams are visible even if the per-frame useFrame callback fails
+      // to fire for any reason (canvas paused, demand frameloop, etc).
       uColor: { value: new THREE.Vector3(1, 1, 1) },
-      uIntensity: { value: 0 },
+      uIntensity: { value: 1 },
     }),
     [],
   )

@@ -101,7 +101,25 @@ const panSweep: SceneDef = {
   },
 }
 
-export const SCENES: SceneDef[] = [fullWash, rainbowChase, panSweep]
+/**
+ * MVP reduction scene: force everything to full-on white regardless of time.
+ * Useful as a pure visibility test — if this scene is active and beams
+ * aren't visible, the issue is in geometry/shader/canvas, not in scene logic.
+ */
+const allWhite: SceneDef = {
+  id: 'all_white',
+  label: 'All White (debug)',
+  apply: (_t, states) => {
+    for (const s of states) {
+      s.intensity = 1
+      s.color = [1, 1, 1]
+      s.pan = 0
+      s.tilt = 0
+    }
+  },
+}
+
+export const SCENES: SceneDef[] = [allWhite, fullWash, rainbowChase, panSweep]
 
 export function getScene(id: string): SceneDef | undefined {
   return SCENES.find((s) => s.id === id)
