@@ -60,3 +60,20 @@ local:
         or the light_show plugin. Pins the sidecar pattern and documents the
         scope boundaries for M17 vs. post-M17 follow-ups.
       applies: acp.proceed, acp.plan, acp.task-create, acp.design-create
+
+    - path: agent/design/local.source-monitor-panel.md
+      weight: 0.7
+      kind: design
+      description: |
+        General-purpose preview surface for pool_segments (audio + video).
+        Tab in the preview panel group; auto-activates on single-click load.
+        Independent playhead, in/out markers, subclip drag to timeline
+        (audio → audio_clips row; video → kf+tr pair with reconciliation).
+        Open setSource contract + optional plugin.yaml contribution point.
+      rationale: |
+        Load-bearing for finalize-range (its "Preview" row action depends
+        on this), music gen / Bin / isolate vocals preview unification,
+        and any future plugin that generates previewable media. Read
+        before touching preview surfaces, plugin.yaml contribution points,
+        or subclip drag-to-timeline behavior.
+      applies: acp.proceed, acp.plan, acp.task-create, acp.design-create
