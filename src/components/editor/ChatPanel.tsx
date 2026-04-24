@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { ChatWebSocket, fetchChatHistory, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
+import { ChatWebSocket, fetchChatHistory, handleMixRenderRequest, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
 
 type ChatPanelProps = {
   projectName: string
@@ -138,8 +138,18 @@ export function ChatPanel({ projectName, onMutation }: ChatPanelProps) {
       case 'status':
         // Could show in a status bar, for now just log
         break
+
+      case 'mix_render_request':
+        // Fire-and-forget — the handler swallows its own errors and the
+        // backend times out cleanly if we don't respond within 60s. No
+        // state change needed in the chat UI; the analyze_master_bus
+        // tool_result will arrive on the normal tool_result channel.
+        handleMixRenderRequest(msg, { projectName }).catch((err) => {
+          console.warn('[ChatPanel] mix_render_request failed:', err)
+        })
+        break
     }
-  }, [])
+  }, [projectName])
 
   // Connect WebSocket and load history
   useEffect(() => {
