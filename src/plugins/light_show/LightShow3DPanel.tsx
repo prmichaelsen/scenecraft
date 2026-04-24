@@ -6,6 +6,11 @@
  * state; the renderer reads that state to drive fixture rotation (pan/tilt
  * for moving heads) and beam shader uniforms (color + intensity).
  *
+ * Per-frame mutation is done via refs, not React state, so we don't
+ * re-render the React tree 60x/sec. Canvas is pinned to
+ * ``frameloop="always"`` so the scene runs independent of any external
+ * playback state (the MVP's scene-time has its own clock).
+ *
  * Deliberately hardcoded to validate the pipeline end-to-end without
  * backend, DB, or timeline coupling. Each piece (rig, scenes, evaluator,
  * panel layout) gets a real SQL + DSL-backed replacement in M17 proper.
@@ -20,24 +25,17 @@ import { RIG, type FixtureDef, type FixtureState, makeInitialStates } from './fi
 import { SCENES, getScene } from './scenes'
 import { BeamCone } from './BeamCone'
 
-/** One rigged fixture: body geometry + beam cone, driven by its state slot. */
+/** One rigged fixture: body geometry + beam cone, driven by its state slot.
+ *  Uses refs only — no React state in the per-frame path. */
 function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRefObject<FixtureState[]> }) {
-  const pivotRef = useRef<THREE.Group>(null!)
   const headRef = useRef<THREE.Group>(null!)
-  const [color, setColor] = useState<[number, number, number]>([1, 1, 1])
-  const [intensity, setIntensity] = useState(0)
 
   useFrame(() => {
+    if (def.role !== 'moving_head' || !headRef.current) return
     const state = stateRef.current.find((s) => s.id === def.id)
     if (!state) return
-    setColor([...state.color] as [number, number, number])
-    setIntensity(state.intensity)
-    if (def.role === 'moving_head' && headRef.current) {
-      // Moving heads: yoke rotates for pan, head tilts for tilt.
-      // Pan applied to the group wrapping the head, tilt on the head itself.
-      headRef.current.rotation.x = def.rotation[0] + state.tilt
-      headRef.current.rotation.y = state.pan
-    }
+    headRef.current.rotation.x = def.rotation[0] + state.tilt
+    headRef.current.rotation.y = state.pan
   })
 
   const isMover = def.role === 'moving_head'
@@ -45,22 +43,22 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
   const beamHalfAngle = isMover ? Math.PI / 24 : Math.PI / 12
 
   return (
-    <group ref={pivotRef} position={def.position}>
+    <group position={def.position}>
       {isMover ? (
         <>
           {/* Yoke base — flat plate */}
-          <mesh position={[0, 0, 0]}>
+          <mesh>
             <boxGeometry args={[0.25, 0.1, 0.25]} />
             <meshStandardMaterial color="#222" />
           </mesh>
-          {/* Head + beam — rotates for pan/tilt */}
+          {/* Head + beam — rotates for pan/tilt, ref-driven per frame */}
           <group ref={headRef} position={[0, -0.15, 0]} rotation={def.rotation}>
             <mesh>
               <cylinderGeometry args={[0.1, 0.12, 0.25, 16]} />
               <meshStandardMaterial color="#333" />
             </mesh>
             <group position={[0, -0.125, 0]}>
-              <BeamCone color={color} intensity={intensity} length={beamLength} halfAngle={beamHalfAngle} />
+              <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
             </group>
           </group>
         </>
@@ -73,7 +71,7 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
               <meshStandardMaterial color="#333" />
             </mesh>
             <group position={[0, -0.1, 0]}>
-              <BeamCone color={color} intensity={intensity} length={beamLength} halfAngle={beamHalfAngle} />
+              <BeamCone fixtureId={def.id} stateRef={stateRef} length={beamLength} halfAngle={beamHalfAngle} />
             </group>
           </group>
         </>
@@ -84,19 +82,17 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
 
 /** Ticks the active scene every frame, writing into the shared state array. */
 function SceneRunner({
-  activeSceneId,
+  activeSceneIdRef,
   stateRef,
   timeRef,
 }: {
-  activeSceneId: string
+  activeSceneIdRef: React.MutableRefObject<string>
   stateRef: React.MutableRefObject<FixtureState[]>
   timeRef: React.MutableRefObject<number>
 }) {
   useFrame((_, delta) => {
-    const scene = getScene(activeSceneId)
+    const scene = getScene(activeSceneIdRef.current)
     if (!scene) return
-    // Accumulate scene-relative time independently of playhead for MVP.
-    // Real playhead integration is a later task.
     timeRef.current += delta
     scene.apply(timeRef.current, stateRef.current)
   })
@@ -105,10 +101,14 @@ function SceneRunner({
 
 export function LightShow3DPanel() {
   const [activeSceneId, setActiveSceneId] = useState<string>(SCENES[0].id)
+  // Ref mirror of activeSceneId so SceneRunner's useFrame picks up changes
+  // without needing to re-subscribe (avoids tearing down the tick).
+  const activeSceneIdRef = useRef<string>(SCENES[0].id)
+  activeSceneIdRef.current = activeSceneId
+
   const stateRef = useRef<FixtureState[]>(makeInitialStates())
   const timeRef = useRef<number>(0)
 
-  // When the user picks a different scene, reset scene-time so it starts from 0.
   const onPickScene = (id: string) => {
     timeRef.current = 0
     setActiveSceneId(id)
@@ -135,9 +135,14 @@ export function LightShow3DPanel() {
         </span>
       </div>
 
-      {/* 3D scene */}
+      {/* 3D scene — frameloop="always" so animation runs independent of any
+          external playback state (the editor's timeline, audio playback, etc). */}
       <div className="flex-1 min-h-0">
-        <Canvas camera={{ position: [0, 3, -8], fov: 50 }} shadows={false}>
+        <Canvas
+          frameloop="always"
+          camera={{ position: [0, 3, -8], fov: 50 }}
+          shadows={false}
+        >
           <color attach="background" args={['#050510']} />
           <ambientLight intensity={0.08} />
           <Grid
@@ -151,7 +156,7 @@ export function LightShow3DPanel() {
             fadeStrength={1}
             infiniteGrid={false}
           />
-          <SceneRunner activeSceneId={activeSceneId} stateRef={stateRef} timeRef={timeRef} />
+          <SceneRunner activeSceneIdRef={activeSceneIdRef} stateRef={stateRef} timeRef={timeRef} />
           {RIG.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />
           ))}
