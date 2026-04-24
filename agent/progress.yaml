@@ -1277,6 +1277,81 @@ milestones:
         actual_hours: null
         notes: "Scene List panel with hover-preview; transition candidate MCP tools (add/select/generate); end-to-end MCP authoring flow verification."
 
+  - id: milestone_18
+    name: Foley Generation Plugin (Replicate BYO mode)
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-18-foley-generation-plugin.md
+    tasks_total: 8
+    tasks_completed: 0
+    estimated_weeks: 3
+    tasks:
+      - id: task-142
+        name: Replicate provider core (plugin_api.providers.replicate)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-142-replicate-provider.md
+        estimated_hours: 6
+        actual_hours: null
+        notes: "Typed provider: run_prediction, attach_polling, get_balance. Owns auth, HTTP, polling, 429 backoff, spend_ledger, disconnect-survival, download retry. Supersedes M16 call_service shim for Replicate-backed plugins."
+      - id: task-143
+        name: Foley schema + migrations (generate_foley__generations + __tracks)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-143-schema-and-migrations.md
+        estimated_hours: 2
+        actual_hours: null
+        notes: "Mirrors generate_music__generations + __tracks exactly. variant_count column for forward-looking multi-variant (MVP enforces 1)."
+      - id: task-144
+        name: Backend plugin module (run handler, pre-trim, pool insert, startup hook)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-144-backend-plugin-module.md
+        estimated_hours: 6
+        actual_hours: null
+        notes: "plugins/generate_foley/: run handler dispatches via providers.replicate. pretrim.py uses ffmpeg -ss/-to/-c copy with re-encode fallback. Status lifecycle + disconnect-survival hook."
+      - id: task-145
+        name: Backend REST + WS (run, list, retry, /ws/jobs events)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-145-backend-rest-and-ws.md
+        estimated_hours: 3
+        actual_hours: null
+        notes: "Three endpoints + four WS event types (job_started/progress/completed/failed). count=1 enforcement at the API boundary. Inherits M16 auth middleware."
+      - id: task-146
+        name: Frontend plugin module (plugin.yaml, client.ts, index.ts)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-146-frontend-plugin-module.md
+        estimated_hours: 3
+        actual_hours: null
+        notes: "Scaffold only; panel component in task-147. Registers with PanelRegistry. Manifest declares license.upstream_models (MMAudio CC-BY-NC 4.0)."
+      - id: task-147
+        name: FoleyGenerationsPanel (selection-driven mode, Set-in/Set-out, run cards)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-147-foley-generations-panel.md
+        estimated_hours: 8
+        actual_hours: null
+        notes: "Largest UI task. Mode from selection state. In/out state machine with most-recent-click-wins invalidation. Duration presets + slider (t2fx only). Run cards with drag handles."
+      - id: task-148
+        name: generate_foley chat tool with elicitation gate
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-148-chat-tool.md
+        estimated_hours: 2
+        actual_hours: null
+        notes: "Single unified tool. t2fx vs. v2fx inferred from source_candidate_id presence. count=1 enforced. Registered in _DESTRUCTIVE_TOOL_PATTERNS."
+      - id: task-149
+        name: Orange clip styling (variant_kind='foley')
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-18-foley-generation-plugin/task-149-orange-clip-styling.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "Add 'foley' → orange to VARIANT_KIND_COLORS map. Applies to Timeline, pool view, run cards, drag ghosts."
+
 tasks:
   milestone_1:
     - id: task-1
@@ -2219,6 +2294,7 @@ progress:
   overall: 75
 
 recent_work:
+  - "M18 Planned: Foley Generation Plugin — clarification-12, design (local.foley-generation-plugin.md), milestone doc, 8 task docs (task-142 through task-149). MMAudio via Replicate (zsxkib/mmaudio), t2fx + v2fx modes, selection-driven mode dispatch, Set-in/Set-out playhead UX, pre-trim workaround for cog duration override. Introduces typed plugin_api.providers.replicate namespace as successor to M16's call_service shim. ~31h estimated."
   - "M16 Task 130: Musicful REST endpoints (POST /run, GET /generations, POST /generations/:id/retry, GET /credits) + plugin-host method routing. _rest_routes split into per-method buckets; register_rest_endpoint gains method kwarg (POST default); dispatch_rest(method, path, ...). api_server do_GET gains plugin-fallback. WS free via existing JobManager /ws/jobs seam. 51 tests pass"
   - "Editor: per-track level meter collapses to single bar for mono tracks (Reaper-style — no track-type concept, derives from max clip channel count; master stays stereo). audio-mixer.getTrackChannelCount, useTrackChannels 2Hz polling hook, LevelMeter channels prop"
   - "M16 Task 129: Musicful client + backend plugin + polling worker — 12/12 integration tests pass with mocked Musicful server; happy path, 429 retry/exhaust, partial success, context-aware candidate routing. Auth-gate tests (R54a-f) deferred per skip-auth directive"
@@ -2246,6 +2322,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M18 Foley Generation Plugin: ready to start. Task-142 (Replicate provider core, 6h) is the foundational prerequisite — typed plugin_api.providers.replicate namespace. Then 7 plugin-specific tasks (~25h). Full design in agent/design/local.foley-generation-plugin.md, decision log in agent/clarifications/clarification-12-foley-generation-plugin.md"
   - "M16 continuation: task-131 (Frontend plugin module), task-132 (MusicGenerationsPanel), task-133 (Chat tools + elicitation), task-134 (Drag-to-timeline + purple styling). 4 tasks remaining (~14h), all frontend. Engine-side fully shipped (tasks 127/128/129/130); auth (126) deferred until auth milestone begins"
   - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
   - "M15: Audio Clip Editing + Track Management — delete/move/trim clips, track add/rename/reorder, unlinked drop, cross-highlight, extraction ghost (7 tasks, ~20h, 2-2.5 weeks)"
