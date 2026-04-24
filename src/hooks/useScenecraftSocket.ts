@@ -15,6 +15,7 @@ export type JobMessage =
   | { type: 'error'; message: string }
   | { type: 'timeline_warning'; route: string; warnings: string[] }
   | { type: 'log'; message: string; timestamp: string; level?: string }
+  | { type: 'light_show_changed'; projectName: string; kind: 'fixtures' | 'overrides' | 'all' }
 
 type JobListener = (msg: JobMessage) => void
 

@@ -23,6 +23,7 @@ import { OrbitControls, Grid } from '@react-three/drei'
 
 import { useCurrentTime, usePlaybackState } from '@/components/editor/CurrentTimeContext'
 import { useEditorData } from '@/components/editor/EditorDataContext'
+import { useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 
 import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
 import { SCENES, getScene } from './scenes'
@@ -256,8 +257,12 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
     beatsRef.current = (editorData.beats ?? []) as Beat[]
   }, [editorData.beats])
 
-  // Fetch fixtures + overrides from backend + poll. Only active when we
-  // have a projectName.
+  // WS subscription for instant push on chat-driven changes.
+  const { subscribeAll } = useScenecraftSocket()
+
+  // Fetch fixtures + overrides from backend. Runs on mount, on WS
+  // 'light_show_changed' events, and on a 2s fallback poll (WS-less
+  // deployments / reconnect windows).
   useEffect(() => {
     if (!projectName) return
     let cancelled = false
@@ -297,11 +302,17 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
     }
     tick()
     const h = setInterval(tick, POLL_INTERVAL_MS)
+    const unsub = subscribeAll((msg) => {
+      if (msg.type === 'light_show_changed' && msg.projectName === projectName) {
+        tick()
+      }
+    })
     return () => {
       cancelled = true
       clearInterval(h)
+      unsub()
     }
-  }, [projectName])
+  }, [projectName, subscribeAll])
 
   const onPickScene = (id: string) => {
     timeRef.current = 0
