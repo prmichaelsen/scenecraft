@@ -338,7 +338,7 @@ const defaultLayout: LayoutNode = {
           ratio: 0.5,
           children: [
             { type: 'group', id: 'properties-group', tabs: ['properties', 'macro-panel'], activeTab: 'properties' },
-            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'audio_isolations', 'light_show', 'settings', 'extensions'], activeTab: 'bin' },
+            { type: 'group', id: 'utilities-group', tabs: ['bin', 'logs', 'checkpoints', 'audio_isolations', 'light_show', 'music_generations', 'settings', 'extensions'], activeTab: 'bin' },
           ],
         },
         {
@@ -373,7 +373,11 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
   const resolvedInitial = useRef<LayoutNode | null>(null)
   if (resolvedInitial.current === null) {
     const saved = data.savedLayout as unknown
-    const validated = saved ? validateLayout(saved, panels) : null
+    // Validate against the merged registry (built-ins + plugin-contributed
+    // panels) so saved layouts that reference plugin panels survive reload.
+    // Plugins register at module import time (see editor.tsx), so by the
+    // time this runs `PluginHost.listPanels()` is already populated.
+    const validated = saved ? validateLayout(saved, buildPanelRegistry()) : null
     if (saved && !validated) {
       console.warn('[EditorPanelLayout] saved _autosave_v3 failed validation, resetting to default')
       saveWorkspaceView(data.projectName, '_autosave_v3', defaultLayout).catch(() => {})
