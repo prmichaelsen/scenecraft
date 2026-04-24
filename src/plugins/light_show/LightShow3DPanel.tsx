@@ -396,7 +396,9 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
               intersection. Stacks on top of the existing additive cones
               for the "physical beam body + atmospheric shaft" look. */}
           <EffectComposer>
-            <VolumetricFog rigRef={rigRef} stateRef={stateRef} />
+            {/* Phase C default tuning. Bump fogDensity up for smokier
+                look, stepCount up for less banding at the cost of GPU. */}
+            <VolumetricFog rigRef={rigRef} stateRef={stateRef} fogDensity={0.25} />
           </EffectComposer>
         </Canvas>
       </div>

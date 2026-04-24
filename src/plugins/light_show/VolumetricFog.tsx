@@ -107,7 +107,11 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
       float lenFade = 1.0 - (along / uFixtureLengths[j]);
       lenFade *= lenFade;                  // quadratic falloff reads nicer
 
-      float contrib = intensity * cone * lenFade * uFogDensity * dt;
+      // Scattering gain — real-world beams are bright because every
+      // photon lights up every dust particle along the ray. We lean
+      // into the punch here (16x boost over naive linear integration)
+      // so the effect reads on a conventional monitor. Tunable later.
+      float contrib = intensity * cone * lenFade * uFogDensity * dt * 16.0;
       accum += uFixtureColors[j] * contrib;
     }
   }
@@ -258,7 +262,7 @@ export function VolumetricFog({
   stateRef,
   coneLength = 6,
   coneHalfAngle = Math.PI / 14,
-  fogDensity = 0.05,
+  fogDensity = 0.25,
   maxDistance = 40,
   stepCount = 48,
 }: VolumetricFogProps) {
