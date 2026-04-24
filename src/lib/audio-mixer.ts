@@ -60,6 +60,13 @@ export type AudioMixer = {
   /** Master-bus stereo analyser taps. */
   getMasterAnalysers(): { left: AnalyserNode; right: AnalyserNode } | null
   /**
+   * Max channel count across decoded clip buffers on a track. Drives the
+   * per-track meter's bar count (1 for all-mono tracks, 2 otherwise).
+   * Returns 2 when no buffers have decoded yet so the meter doesn't
+   * flash mono during initial load.
+   */
+  getTrackChannelCount(trackId: string): 1 | 2
+  /**
    * Replace the master-bus effect chain. Disposes existing chain nodes and
    * wires fresh ones between `masterGain` and `masterAnalyser`. Used when the
    * embedded chat agent adds / removes / reorders a master-bus effect.
@@ -651,6 +658,17 @@ export function createAudioMixer(
     getMasterAnalysers() {
       if (!masterAnalyserL || !masterAnalyserR) return null
       return { left: masterAnalyserL, right: masterAnalyserR }
+    },
+
+    getTrackChannelCount(trackId: string): 1 | 2 {
+      const tn = trackMap.get(trackId)
+      if (!tn) return 2
+      let maxCh = 0
+      for (const cn of tn.clips.values()) {
+        const ch = cn.buffer?.numberOfChannels ?? 0
+        if (ch > maxCh) maxCh = ch
+      }
+      return maxCh === 1 ? 1 : 2
     },
 
     reevaluateMasterChain(nextEffects: readonly TrackEffect[]) {
