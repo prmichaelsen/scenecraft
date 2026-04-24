@@ -14,7 +14,10 @@ import {
   runGeneration,
 } from '../generate-music-client'
 
-const API_URL = 'http://localhost:8890'
+// Match how generate-music-client.ts resolves the base URL (env override
+// or localhost fallback). Keeps these tests portable across dev machines
+// where VITE_SCENECRAFT_API_URL points at a remote box.
+const API_URL = import.meta.env.VITE_SCENECRAFT_API_URL || 'http://localhost:8890'
 
 function mockFetch(json: unknown, { ok = true, status = 200 }: { ok?: boolean; status?: number } = {}) {
   return vi.fn().mockResolvedValue({
