@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { ChatWebSocket, fetchChatHistory, handleMixRenderRequest, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
+import { ChatWebSocket, fetchChatHistory, handleMixRenderRequest, handleBounceAudioRequest, type ServerMessage, type PersistedMessage, type StreamingBlock, type ContentBlock, type ElicitationRequest, type ToolCallRecord } from '@/lib/chat-client'
 import { MASTER_BUS_EFFECTS_CHANGED_EVENT } from '@/hooks/useAudioMixer'
 
 type ChatPanelProps = {
@@ -147,6 +147,18 @@ export function ChatPanel({ projectName, onMutation }: ChatPanelProps) {
         // tool_result will arrive on the normal tool_result channel.
         handleMixRenderRequest(msg, { projectName }).catch((err) => {
           console.warn('[ChatPanel] mix_render_request failed:', err)
+        })
+        break
+
+      case 'bounce_audio_request':
+        // Fire-and-forget; parallel to mix_render_request. The handler
+        // fetches fresh tracks (same way mix_render_request does), applies
+        // the selection filter, renders + encodes at the requested bit
+        // depth, and POSTs to /bounce-upload. Backend releases the waiting
+        // `bounce_audio` tool on successful upload; a tool_result event
+        // arrives on the normal channel.
+        handleBounceAudioRequest({ msg, projectName }).catch((err) => {
+          console.warn('[ChatPanel] bounce_audio_request failed:', err)
         })
         break
 

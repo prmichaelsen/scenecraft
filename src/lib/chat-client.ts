@@ -51,6 +51,37 @@ export type MixRenderRequest = {
 }
 
 /**
+ * Bounce-audio round-trip (M-bounce-audio).
+ *
+ * Same shape as mix-render but with a richer selection model — the chat tool
+ * asks the frontend to render only a subset of tracks / clips, and at a
+ * specific bit depth. The frontend POSTs a WAV to `/bounce-upload`, which the
+ * backend stores and links to the waiting chat tool via `composite_hash` +
+ * `request_id`.
+ *
+ *   mode=full   — include every track (mixer mute/solo still applies)
+ *   mode=tracks — include only tracks whose id is in `track_ids`
+ *   mode=clips  — include only clips whose id is in `clip_ids`; any track
+ *                 that ends up with zero matching clips is dropped.
+ *
+ * `bit_depth` picks the WAV encoding: 16/24 int PCM or 32-bit float.
+ */
+export type BounceAudioRequest = {
+  type: 'bounce_audio_request'
+  request_id: string
+  bounce_id: string
+  composite_hash: string
+  start_time_s: number
+  end_time_s: number
+  mode: 'full' | 'tracks' | 'clips'
+  track_ids?: string[]
+  clip_ids?: string[]
+  sample_rate: number
+  bit_depth: 16 | 24 | 32
+  channels: number
+}
+
+/**
  * Fired by the backend after any mutation to master-bus effects
  * (create / update / delete / reorder). The frontend reacts by refetching
  * the current master-bus effects list and rebuilding the live mixer's
@@ -74,6 +105,7 @@ export type ServerMessage =
   | { type: 'complete' }
   | { type: 'error'; error: string }
   | MixRenderRequest
+  | BounceAudioRequest
   | MasterBusEffectsChanged
 
 export type ClientMessage =
@@ -317,6 +349,146 @@ export async function handleMixRenderRequest(
   } finally {
     if (wasPlaying && opts.mixer) {
       try { opts.mixer.play() } catch (e) { console.warn('[mix-render] play() failed:', e) }
+    }
+  }
+}
+
+// --- Bounce-audio round-trip handler (M-bounce-audio) ---
+
+import type { AudioClip } from './audio-client'
+
+export type HandleBounceAudioRequestOptions = {
+  /** Incoming WS message. */
+  msg: BounceAudioRequest
+  /** Full project tracks (same source of truth as `mix_render_request`).
+   *  When absent, the handler fetches fresh tracks from `/audio-tracks` —
+   *  matches the mix-render handler's behavior. */
+  tracks?: readonly AudioTrack[]
+  /** Project name; URL-encoded into the upload endpoint. */
+  projectName: string
+  /** Active mixer. When playing, it will be paused for the duration of the
+   *  offline render and resumed afterward. Absent: no pause/resume is done. */
+  mixer?: PausableMixer | null
+  /** True if the mixer is currently playing — used to decide whether to
+   *  resume after the upload. */
+  isPlaying?: boolean
+
+  // ── Test injection hooks ─────────────────────────────────────────────────
+  /** Override fetch for the multipart POST (tests mock this). */
+  fetchImpl?: typeof fetch
+  /** Override renderer (tests mock this). */
+  renderImpl?: typeof renderMixToBuffer
+  /** Override WAV encoder (tests mock this). */
+  encodeImpl?: typeof encodePCMToWav
+  /** Override audio-tracks fetcher (tests mock this). */
+  fetchTracksImpl?: typeof fetchAudioTracks
+  /** Override the apiBase URL — defaults to the module-level constant. */
+  apiBase?: string
+  /** Extra options forwarded to ``renderMixToBuffer`` (e.g. buffer cache). */
+  renderExtras?: Pick<MixRenderOptions, 'bufferCache' | 'offlineCtxFactory' | 'sourceUrlFactory' | 'fetchBytes' | 'decode'>
+}
+
+/**
+ * Apply the `BounceAudioRequest.mode` filter to the project tracks.
+ *
+ *   full   → return tracks unchanged (mixer semantics handle mute/solo)
+ *   tracks → keep only tracks whose id is listed in `track_ids`
+ *   clips  → keep only the clips listed in `clip_ids`, drop now-empty tracks
+ *
+ * Exported for test coverage — the filter semantics are the bounce tool's
+ * contract with the chat agent, not an internal helper.
+ */
+export function filterTracksForBounce(
+  tracks: readonly AudioTrack[],
+  msg: BounceAudioRequest,
+): AudioTrack[] {
+  if (msg.mode === 'full') {
+    return tracks.slice()
+  }
+  if (msg.mode === 'tracks') {
+    const ids = new Set(msg.track_ids ?? [])
+    return tracks.filter((t) => ids.has(t.id))
+  }
+  // clips
+  const ids = new Set(msg.clip_ids ?? [])
+  const out: AudioTrack[] = []
+  for (const track of tracks) {
+    const keep = (track.clips ?? []).filter((c: AudioClip) => ids.has(c.id))
+    if (keep.length === 0) continue
+    out.push({ ...track, clips: keep })
+  }
+  return out
+}
+
+/**
+ * Handle a server-initiated ``bounce_audio_request``. Mirrors the
+ * mix-render handler: renders via `OfflineAudioContext`, encodes a WAV at
+ * the requested bit depth (16 / 24 / 32-float), and POSTs the bytes to
+ * `/bounce-upload`, echoing `request_id` so the backend can release the
+ * waiting chat tool.
+ *
+ * Errors are swallowed and logged — the backend times out on its own, and
+ * the fire-and-forget shape keeps the WS handler responsive to new messages.
+ *
+ * Like the mix-render path, pauses live playback while the offline render
+ * runs so neither pipeline contends for the same decoded buffers, and
+ * resumes only if playback was active beforehand.
+ */
+export async function handleBounceAudioRequest(
+  opts: HandleBounceAudioRequestOptions,
+): Promise<void> {
+  const fetchImpl = opts.fetchImpl ?? fetch
+  const renderImpl = opts.renderImpl ?? renderMixToBuffer
+  const encodeImpl = opts.encodeImpl ?? encodePCMToWav
+  const fetchTracksImpl = opts.fetchTracksImpl ?? fetchAudioTracks
+  const apiBase = opts.apiBase ?? SCENECRAFT_API_URL
+  const { msg } = opts
+
+  const wasPlaying = Boolean(opts.isPlaying)
+  if (wasPlaying && opts.mixer) {
+    try { opts.mixer.pause() } catch (e) { console.warn('[bounce-audio] pause() failed:', e) }
+  }
+
+  try {
+    const sourceTracks = opts.tracks ?? (await fetchTracksImpl(opts.projectName))
+    const filteredTracks = filterTracksForBounce(sourceTracks, msg)
+
+    const result = await renderImpl(filteredTracks, {
+      projectName: opts.projectName,
+      startTimeS: msg.start_time_s,
+      endTimeS: msg.end_time_s,
+      sampleRate: msg.sample_rate,
+      channels: msg.channels === 1 ? 1 : 2,
+      ...(opts.renderExtras ?? {}),
+    })
+
+    const wav = encodeImpl(result.pcm, result.sampleRate, result.channels, msg.bit_depth)
+
+    const form = new FormData()
+    form.append('audio', new Blob([wav], { type: 'audio/wav' }), 'bounce.wav')
+    form.append('composite_hash', msg.composite_hash)
+    form.append('start_time_s', String(msg.start_time_s))
+    form.append('end_time_s', String(msg.end_time_s))
+    form.append('sample_rate', String(result.sampleRate))
+    form.append('bit_depth', String(msg.bit_depth))
+    form.append('channels', String(result.channels))
+    form.append('request_id', msg.request_id)
+
+    const res = await fetchImpl(
+      `${apiBase}/api/projects/${encodeURIComponent(opts.projectName)}/bounce-upload`,
+      { method: 'POST', body: form },
+    )
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      console.warn(`[bounce-audio] upload failed: ${res.status} ${txt}`)
+      return
+    }
+    console.log(`[bounce-audio] uploaded bounce ${msg.bounce_id} (${result.pcm.length} samples, ${msg.bit_depth}-bit)`)
+  } catch (err) {
+    console.warn('[bounce-audio] handler failed:', err)
+  } finally {
+    if (wasPlaying && opts.mixer) {
+      try { opts.mixer.play() } catch (e) { console.warn('[bounce-audio] play() failed:', e) }
     }
   }
 }

@@ -388,36 +388,65 @@ export async function renderMixToBuffer(
 // ── WAV encoder ───────────────────────────────────────────────────────────
 
 /**
- * Encode interleaved float PCM as a 16-bit PCM WAV file (RIFF / WAVE).
- * Produces a standard WAV with a 44-byte header followed by LE int16 samples.
- * Compatible with Python's `wave` stdlib module (which the backend uses to
- * validate uploads).
+ * Supported WAV output bit depths.
+ *
+ *   16  — int16 PCM        (wFormatTag 0x0001)
+ *   24  — int24 PCM        (wFormatTag 0x0001, 3 bytes/sample LE)
+ *   32  — IEEE-754 float   (wFormatTag 0x0003, no quantization)
+ *
+ * 16-bit is the default so the existing `mix_render_request` path — which
+ * calls `encodePCMToWav(pcm, sr, ch)` without the bit-depth arg — keeps its
+ * byte-for-byte output. The 24/32 paths are used by the M-bounce-audio
+ * `handleBounceAudioRequest` handler, where the chat agent picks the target
+ * format.
+ *
+ * TODO (follow-up): when bouncing 24→16 from a chat prompt, dithering would
+ * reduce quantization noise below the LSB. For now we quantize with plain
+ * round-to-nearest; the artifact is inaudible on music content at -60 dBFS+.
+ */
+export type WavBitDepth = 16 | 24 | 32
+
+/**
+ * Encode interleaved float PCM as a WAV file (RIFF / WAVE) at the requested
+ * bit depth. 16-bit is the default — matches the original signature used by
+ * the mix-render round-trip.
+ *
+ * All three formats share the canonical 44-byte header layout:
  *
  *     Offset  Len  Description
  *        0     4   'RIFF'
  *        4     4   chunk size (fileSize - 8)
  *        8     4   'WAVE'
  *       12     4   'fmt '
- *       16     4   16 (sub-chunk size, for PCM)
- *       20     2   1  (audio format, PCM)
+ *       16     4   16 (sub-chunk size; we never emit extension chunks)
+ *       20     2   wFormatTag — 0x0001 PCM or 0x0003 IEEE-float
  *       22     2   channels
  *       24     4   sample rate
- *       28     4   byte rate = sampleRate * channels * 2
- *       32     2   block align = channels * 2
- *       34     2   bits per sample = 16
+ *       28     4   byte rate = sampleRate * channels * (bitDepth/8)
+ *       32     2   block align = channels * (bitDepth/8)
+ *       34     2   bits per sample = 16 | 24 | 32
  *       36     4   'data'
- *       40     4   data size = numSamples * 2
- *       44     N   int16 samples, LE, interleaved
+ *       40     4   data size = numSamples * (bitDepth/8)
+ *       44     N   samples, LE, interleaved
+ *
+ * Compatible with Python's `wave` stdlib (16/24 PCM) and `soundfile`
+ * (all three). The 24-bit path writes 3 bytes/sample packed little-endian
+ * as required by the WAVE spec; 32-float writes raw IEEE-754 LE floats.
  */
 export function encodePCMToWav(
   pcm: Float32Array,
   sampleRate: number,
   channels: number,
+  bitDepth: WavBitDepth = 16,
 ): ArrayBuffer {
   if (channels !== 1 && channels !== 2) {
     throw new Error(`encodePCMToWav: channels must be 1 or 2, got ${channels}`)
   }
-  const bytesPerSample = 2
+  if (bitDepth !== 16 && bitDepth !== 24 && bitDepth !== 32) {
+    throw new Error(`encodePCMToWav: bitDepth must be 16, 24, or 32, got ${bitDepth}`)
+  }
+  const bytesPerSample = bitDepth / 8
+  const formatTag = bitDepth === 32 ? 0x0003 : 0x0001 // 0x0003 = IEEE_FLOAT
   const numSamples = pcm.length // already interleaved
   const dataSize = numSamples * bytesPerSample
   const headerSize = 44
@@ -440,27 +469,51 @@ export function encodePCMToWav(
 
   // fmt subchunk
   writeString('fmt ')
-  writeUint32(16) // PCM fmt chunk size
-  writeUint16(1) // PCM
+  writeUint32(16) // fmt chunk size
+  writeUint16(formatTag)
   writeUint16(channels)
   writeUint32(sampleRate)
   writeUint32(sampleRate * channels * bytesPerSample) // byte rate
   writeUint16(channels * bytesPerSample) // block align
-  writeUint16(16) // bits per sample
+  writeUint16(bitDepth)
 
   // data subchunk
   writeString('data')
   writeUint32(dataSize)
 
-  // Samples — clip to [-1, 1], quantize to int16, LE.
-  for (let i = 0; i < numSamples; i++) {
-    const s = Math.max(-1, Math.min(1, pcm[i]))
-    // Round-to-nearest, symmetric range uses 32767 — avoids clipping at
-    // the positive edge on purely positive inputs. Python's `wave` reader
-    // accepts this without complaint.
-    const q = Math.round(s * 32767)
-    view.setInt16(p, q, /* LE */ true)
-    p += 2
+  // Sample data.
+  if (bitDepth === 16) {
+    // int16 PCM, clip → quantize → LE.
+    for (let i = 0; i < numSamples; i++) {
+      const s = Math.max(-1, Math.min(1, pcm[i]))
+      // Symmetric range uses 32767; Python's `wave` reader accepts it.
+      const q = Math.round(s * 32767)
+      view.setInt16(p, q, /* LE */ true)
+      p += 2
+    }
+  } else if (bitDepth === 24) {
+    // int24 PCM, packed 3 bytes LE (lowest byte first). DataView has no
+    // setInt24, so we hand-pack each sample after clamping.
+    const MAX_INT24 = 8388607 // 2^23 - 1
+    const MIN_INT24 = -8388608 // -2^23
+    for (let i = 0; i < numSamples; i++) {
+      const s = Math.max(-1, Math.min(1, pcm[i]))
+      let q = Math.round(s * MAX_INT24)
+      if (q > MAX_INT24) q = MAX_INT24
+      else if (q < MIN_INT24) q = MIN_INT24
+      // Two's-complement 24-bit: negative values wrap into 0x800000..0xFFFFFF.
+      const u = q < 0 ? q + 0x1000000 : q
+      view.setUint8(p, u & 0xff)
+      view.setUint8(p + 1, (u >> 8) & 0xff)
+      view.setUint8(p + 2, (u >> 16) & 0xff)
+      p += 3
+    }
+  } else {
+    // 32-bit IEEE-754 float, raw (no quantization, no clipping).
+    for (let i = 0; i < numSamples; i++) {
+      view.setFloat32(p, pcm[i], /* LE */ true)
+      p += 4
+    }
   }
 
   return buf
