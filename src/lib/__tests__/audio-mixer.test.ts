@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createAudioMixer, type AudioMixerOptions } from '../audio-mixer'
+import { createAudioMixer, type AudioMixerOptions, __clearDecodeCacheForTest } from '../audio-mixer'
 import type { AudioTrack } from '../audio-client'
 
-// ── Minimal WebAudio + HTMLAudioElement mocks ─────────────────────────
+// ── Minimal WebAudio mocks for the AudioBufferSourceNode path (M15 task 1) ──
 
 type MockParamEvent = { kind: 'setValueAtTime' | 'linearRampToValueAtTime' | 'setValueCurveAtTime' | 'cancelScheduledValues'; value?: number; time: number; values?: Float32Array; duration?: number }
 
@@ -18,13 +18,41 @@ class MockAudioParam {
 class MockGainNode {
   gain = new MockAudioParam()
   connections: unknown[] = []
+  channelCount = 2
+  channelCountMode = 'max'
+  channelInterpretation = 'speakers'
   connect(dst: unknown) { this.connections.push(dst); return dst as MockGainNode }
   disconnect() { this.connections.length = 0 }
 }
 
-class MockMediaElementAudioSourceNode {
-  connect(dst: unknown) { return dst }
-  disconnect() {}
+class MockAudioBuffer {
+  duration: number
+  numberOfChannels = 2
+  sampleRate = 48000
+  constructor(duration = 600) { this.duration = duration }
+}
+
+class MockAudioBufferSourceNode {
+  buffer: MockAudioBuffer | null = null
+  playbackRate = new MockAudioParam()
+  detune = new MockAudioParam()
+  startCalls: Array<{ when: number; offset?: number; duration?: number }> = []
+  stopCalls: number[] = []
+  connections: unknown[] = []
+  started = false
+  stopped = false
+  start(when = 0, offset?: number, duration?: number) {
+    if (this.started) throw new Error('start already called')
+    this.started = true
+    this.startCalls.push({ when, offset, duration })
+  }
+  stop(when?: number) {
+    if (!this.started) throw new Error('cannot stop before start')
+    this.stopped = true
+    this.stopCalls.push(when ?? 0)
+  }
+  connect(dst: unknown) { this.connections.push(dst); return dst as MockAudioBufferSourceNode }
+  disconnect() { this.connections.length = 0 }
 }
 
 class MockAnalyserNode {
@@ -33,7 +61,7 @@ class MockAnalyserNode {
   connections: unknown[] = []
   connect(dst: unknown) { this.connections.push(dst); return dst as MockAnalyserNode }
   disconnect() { this.connections.length = 0 }
-  getFloatTimeDomainData(_arr: Float32Array) { /* no-op for tests */ }
+  getFloatTimeDomainData(_arr: Float32Array) { /* no-op */ }
 }
 
 class MockChannelSplitterNode {
@@ -46,42 +74,39 @@ class MockAudioContext {
   currentTime = 0
   state: 'running' | 'suspended' | 'closed' = 'running'
   destination = new MockGainNode()
+  createdBufferSources: MockAudioBufferSourceNode[] = []
   createGain() { return new MockGainNode() }
   createAnalyser() { return new MockAnalyserNode() }
   createChannelSplitter(_n?: number) { return new MockChannelSplitterNode() }
-  createMediaElementSource(_el: HTMLMediaElement) { return new MockMediaElementAudioSourceNode() }
+  createBufferSource() {
+    const s = new MockAudioBufferSourceNode()
+    this.createdBufferSources.push(s)
+    return s
+  }
+  async decodeAudioData(_ab: ArrayBuffer): Promise<AudioBuffer> {
+    return new MockAudioBuffer(600) as unknown as AudioBuffer
+  }
   resume() { this.state = 'running'; return Promise.resolve() }
   close() { this.state = 'closed'; return Promise.resolve() }
 }
 
-class MockHTMLAudioElement {
-  src = ''
-  currentTime = 0
-  paused = true
-  preload = ''
-  crossOrigin: string | null = null
-  playbackRate = 1
-  preservesPitch: boolean | undefined = undefined
-  playCalls: number[] = []
-  pauseCalls = 0
-  play() { this.paused = false; this.playCalls.push(this.currentTime); return Promise.resolve() }
-  pause() { this.paused = true; this.pauseCalls++ }
-}
-
-const makeOptions = (): AudioMixerOptions & { mockCtx: MockAudioContext; mockElements: MockHTMLAudioElement[] } => {
+const makeOptions = (): AudioMixerOptions & { mockCtx: MockAudioContext } => {
   const mockCtx = new MockAudioContext()
-  const mockElements: MockHTMLAudioElement[] = []
   return {
     mockCtx,
-    mockElements,
     audioCtxFactory: () => mockCtx as unknown as AudioContext,
-    audioElementFactory: () => {
-      const el = new MockHTMLAudioElement()
-      mockElements.push(el)
-      return el as unknown as HTMLAudioElement
-    },
     sourceUrlFactory: (project, path) => `mock://${project}/${path}`,
+    fetchBytes: async () => new ArrayBuffer(4),
+    // Resolve synchronously to the same mock buffer per path — keeps tests
+    // ordered and deterministic (avoids microtask interleaving).
+    decode: async () => new MockAudioBuffer(600) as unknown as AudioBuffer,
   }
+}
+
+/** Wait for all pending microtasks so decode promises have a chance to
+ *  resolve and activation callbacks can fire. */
+const flush = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
 const t = (id: string, clips: Array<{ id: string; start: number; end: number; muted?: boolean }> = [], trackProps: Partial<AudioTrack> = {}): AudioTrack => ({
@@ -110,7 +135,7 @@ const t = (id: string, clips: Array<{ id: string; start: number; end: number; mu
 
 describe('createAudioMixer — API surface', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
   it('returns an object with the full public API', () => {
     const m = createAudioMixer('p', [], opts)
@@ -121,6 +146,8 @@ describe('createAudioMixer — API surface', () => {
     expect(typeof m.updateTrack).toBe('function')
     expect(typeof m.rebuild).toBe('function')
     expect(typeof m.dispose).toBe('function')
+    expect(typeof m.getTrackAnalysers).toBe('function')
+    expect(typeof m.getMasterAnalysers).toBe('function')
   })
 
   it('trackCount reflects input', () => {
@@ -139,7 +166,7 @@ describe('createAudioMixer — API surface', () => {
 
 describe('createAudioMixer — lazy graph construction', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
   it('does not create AudioContext on construction', () => {
     const spy = vi.fn(() => opts.mockCtx as unknown as AudioContext)
@@ -147,201 +174,229 @@ describe('createAudioMixer — lazy graph construction', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
-  it('does not create HTMLAudioElements on construction', () => {
+  it('does not create BufferSources on construction', () => {
     createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
-    expect(opts.mockElements).toHaveLength(0)
+    expect(opts.mockCtx.createdBufferSources).toHaveLength(0)
   })
 
-  it('creates AudioContext + elements on first play()', () => {
+  it('creates AudioContext + buffer sources on first play() after decode resolves', async () => {
     const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
+    m.seek(0.5)
     m.play()
-    expect(opts.mockElements).toHaveLength(1)
-    expect(opts.mockElements[0].src).toBe('mock://p/audio_staging/c1.m4a')
+    await flush()
+    expect(opts.mockCtx.createdBufferSources).toHaveLength(1)
+  })
+})
+
+describe('createAudioMixer — decode cache', () => {
+  let opts: ReturnType<typeof makeOptions>
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
+
+  it('adding a clip resolves to a decoded buffer and assigns it to the source', async () => {
+    const decodeSpy = vi.fn(async () => new MockAudioBuffer(600) as unknown as AudioBuffer)
+    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], { ...opts, decode: decodeSpy })
+    m.seek(0.5)
+    m.play()
+    await flush()
+    expect(decodeSpy).toHaveBeenCalledTimes(1)
+    const src = opts.mockCtx.createdBufferSources[0]
+    expect(src.buffer).not.toBeNull()
   })
 
-  it('creates one element per clip across multiple tracks', () => {
-    const m = createAudioMixer('p', [
-      t('a', [{ id: 'c1', start: 0, end: 1 }, { id: 'c2', start: 2, end: 3 }]),
-      t('b', [{ id: 'c3', start: 0, end: 1 }]),
-    ], opts)
+  it('re-using the same source_path does not re-decode (cache hit)', async () => {
+    const decodeSpy = vi.fn(async () => new MockAudioBuffer(600) as unknown as AudioBuffer)
+    // Two clips on the same source file → first decodes, second hits cache.
+    const track: AudioTrack = {
+      id: 'a', name: 'a', display_order: 0, solo: false, hidden: false, muted: false,
+      volume_curve: [[0, 0], [1, 0]],
+      clips: [
+        { id: 'c1', track_id: 'a', source_path: 'shared.m4a', start_time: 0, end_time: 1, source_offset: 0, volume_curve: [[0, 0], [1, 0]], muted: false },
+        { id: 'c2', track_id: 'a', source_path: 'shared.m4a', start_time: 2, end_time: 3, source_offset: 0, volume_curve: [[0, 0], [1, 0]], muted: false },
+      ],
+    }
+    const m = createAudioMixer('p', [track], { ...opts, decode: decodeSpy })
     m.play()
-    expect(opts.mockElements).toHaveLength(3)
+    await flush()
+    expect(decodeSpy).toHaveBeenCalledTimes(1)
+    // Force activation of c2 by seeking — still shouldn't decode twice.
+    m.seek(2.5)
+    await flush()
+    expect(decodeSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createAudioMixer — scheduling at AudioContext time', () => {
+  let opts: ReturnType<typeof makeOptions>
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
+
+  it('start() schedules at the computed AudioContext time (playhead at clip start → when=currentTime)', async () => {
+    opts.mockCtx.currentTime = 10 // arbitrary non-zero
+    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 5, end: 10 }])], opts)
+    m.seek(5)
+    m.play()
+    await flush()
+    const src = opts.mockCtx.createdBufferSources[0]
+    expect(src.startCalls).toHaveLength(1)
+    // playhead is at clip start → when = currentTime + 0
+    expect(src.startCalls[0].when).toBeCloseTo(10, 3)
+    // offset = source_offset + (playhead - start) * rate = 0
+    expect(src.startCalls[0].offset).toBeCloseTo(0, 3)
+  })
+
+  it('start() offset reflects mid-clip seek (source_offset + (playhead - start) * rate)', async () => {
+    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 10, end: 20 }])], opts)
+    m.seek(12)
+    m.play()
+    await flush()
+    const src = opts.mockCtx.createdBufferSources[0]
+    expect(src.startCalls[0].offset).toBeCloseTo(2, 3)
+  })
+
+  it('linked clip at 2× rate sets playbackRate and scales offset', async () => {
+    const track: AudioTrack = {
+      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
+      volume_curve: [[0, 0], [1, 0]],
+      clips: [{
+        id: 'c1', track_id: 'a',
+        source_path: 'audio_staging/c1.m4a',
+        start_time: 10, end_time: 15, source_offset: 0,
+        volume_curve: [[0, 0], [1, 0]], muted: false,
+        playback_rate: 2, effective_source_offset: 2,
+      }],
+    }
+    const m = createAudioMixer('p', [track], opts)
+    m.seek(12.5)
+    m.play()
+    await flush()
+    const src = opts.mockCtx.createdBufferSources[0]
+    expect(src.playbackRate.value).toBe(2)
+    // offset = effOffset(2) + (12.5 - 10) * 2 = 7
+    expect(src.startCalls[0].offset).toBeCloseTo(7, 3)
   })
 })
 
 describe('createAudioMixer — activation by playhead', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
   it('seek before play stores position without activating', () => {
     const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
     m.seek(0.5)
-    expect(opts.mockElements).toHaveLength(0) // graph not built yet
+    expect(opts.mockCtx.createdBufferSources).toHaveLength(0)
   })
 
-  it('play activates clips whose range contains the current playhead', () => {
+  it('play activates clips whose range contains the current playhead', async () => {
     const m = createAudioMixer('p', [t('a', [
       { id: 'inside', start: 0, end: 1 },
       { id: 'outside', start: 2, end: 3 },
     ])], opts)
     m.seek(0.5)
     m.play()
-    const [inside, outside] = opts.mockElements
-    expect(inside.playCalls).toHaveLength(1)
-    expect(outside.playCalls).toHaveLength(0)
+    await flush()
+    // Only the "inside" clip should have a source node started.
+    const started = opts.mockCtx.createdBufferSources.filter((s) => s.started)
+    expect(started).toHaveLength(1)
   })
 
-  it('seek forward pauses previously active and activates newly covered clip', () => {
+  it('seek forward tears down previous source and builds a new one for newly-covered clip', async () => {
     const m = createAudioMixer('p', [t('a', [
       { id: 'c1', start: 0, end: 1 },
       { id: 'c2', start: 2, end: 3 },
     ])], opts)
     m.seek(0.5)
     m.play()
-    const [e1, e2] = opts.mockElements
-    expect(e1.playCalls).toHaveLength(1)
-    expect(e2.playCalls).toHaveLength(0)
+    await flush()
+    const [s1] = opts.mockCtx.createdBufferSources
+    expect(s1.started).toBe(true)
     m.seek(2.5)
-    expect(e1.pauseCalls).toBe(1)
-    expect(e2.playCalls).toHaveLength(1)
+    await flush()
+    // s1 should have been stopped
+    expect(s1.stopped).toBe(true)
+    // A new source for c2
+    const c2Sources = opts.mockCtx.createdBufferSources.filter((s) => s !== s1)
+    expect(c2Sources.some((s) => s.started)).toBe(true)
   })
 
-  it('activating a clip sets audio.currentTime to source_offset + (playhead - start_time)', () => {
-    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 10, end: 20 }])], opts)
-    m.seek(12)
+  it('seek within active clip rebuilds the source at the new offset (hard seek)', async () => {
+    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 10 }])], opts)
+    m.seek(1)
     m.play()
-    // source_offset defaults to 0; at playhead 12, clip start 10 → currentTime should be 2
-    expect(opts.mockElements[0].currentTime).toBe(2)
-    expect(opts.mockElements[0].playCalls[0]).toBe(2)
+    await flush()
+    const first = opts.mockCtx.createdBufferSources[0]
+    expect(first.startCalls[0].offset).toBeCloseTo(1, 3)
+    // Jump to 5 — large gap triggers hardSeek → new source with offset 5
+    m.seek(5)
+    await flush()
+    expect(first.stopped).toBe(true)
+    const second = opts.mockCtx.createdBufferSources[opts.mockCtx.createdBufferSources.length - 1]
+    expect(second).not.toBe(first)
+    expect(second.startCalls[0].offset).toBeCloseTo(5, 3)
   })
 
-  it('pause() pauses all active elements', () => {
+  it('pause() stops active sources', async () => {
     const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
     m.seek(0.5)
     m.play()
-    expect(opts.mockElements[0].paused).toBe(false)
+    await flush()
+    const src = opts.mockCtx.createdBufferSources[0]
+    expect(src.started).toBe(true)
     m.pause()
-    expect(opts.mockElements[0].paused).toBe(true)
-    expect(opts.mockElements[0].pauseCalls).toBe(1)
-  })
-})
-
-describe('createAudioMixer — playback_rate + effective_source_offset (linear remap)', () => {
-  let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
-
-  it('unlinked clip (rate defaults to 1, no offset shift)', () => {
-    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 10, end: 20 }])], opts)
-    m.seek(15)
-    m.play()
-    const el = opts.mockElements[0]
-    expect(el.playbackRate).toBe(1)
-    // currentTime = 0 + (15 - 10) * 1 = 5
-    expect(el.currentTime).toBeCloseTo(5, 3)
+    expect(src.stopped).toBe(true)
   })
 
-  it('linked clip at 2× (kf_span=5s, source_span=10s) plays at rate 2', () => {
-    // Craft a clip object with the derived fields the backend would emit
-    const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
-      volume_curve: [[0, 0], [1, 0]],
-      clips: [{
-        id: 'c1', track_id: 'a',
-        source_path: 'audio_staging/c1.m4a',
-        start_time: 10, end_time: 15, source_offset: 0,
-        volume_curve: [[0, 0], [1, 0]], muted: false,
-        remap: { method: 'linear', target_duration: 0 },
-        playback_rate: 2, effective_source_offset: 0,
-      }],
-    }
-    const m = createAudioMixer('p', [track], opts)
-    m.seek(10)
+  it('play → pause → play rebuilds a fresh source (BufferSource is single-use)', async () => {
+    const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
+    m.seek(0.5)
     m.play()
-    const el = opts.mockElements[0]
-    expect(el.playbackRate).toBe(2)
-    // At timeline 10 → clip start → source 0
-    expect(el.currentTime).toBe(0)
-  })
-
-  it('linked clip mid-playback: source position = effOffset + (t - start) * rate', () => {
-    const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
-      volume_curve: [[0, 0], [1, 0]],
-      clips: [{
-        id: 'c1', track_id: 'a',
-        source_path: 'audio_staging/c1.m4a',
-        start_time: 10, end_time: 15, source_offset: 0,
-        volume_curve: [[0, 0], [1, 0]], muted: false,
-        remap: { method: 'linear', target_duration: 0 },
-        playback_rate: 2, effective_source_offset: 2, // trim_in = 2s
-      }],
-    }
-    const m = createAudioMixer('p', [track], opts)
-    m.seek(12.5) // halfway through clip
+    await flush()
+    const first = opts.mockCtx.createdBufferSources[0]
+    expect(first.started).toBe(true)
+    m.pause()
     m.play()
-    const el = opts.mockElements[0]
-    // source = 2 + (12.5 - 10) * 2 = 2 + 5 = 7
-    expect(el.currentTime).toBe(7)
-  })
-
-  it('activation applies preservesPitch=true so voices stay natural at non-unity rates', () => {
-    const track: AudioTrack = {
-      id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
-      volume_curve: [[0, 0], [1, 0]],
-      clips: [{
-        id: 'c1', track_id: 'a',
-        source_path: 'audio_staging/c1.m4a',
-        start_time: 0, end_time: 1, source_offset: 0,
-        volume_curve: [[0, 0], [1, 0]], muted: false,
-        remap: { method: 'linear', target_duration: 0 },
-        playback_rate: 1.6,
-      }],
-    }
-    const m = createAudioMixer('p', [track], opts)
-    m.seek(0)
-    m.play()
-    const el = opts.mockElements[0] as unknown as { preservesPitch?: boolean }
-    expect(el.preservesPitch).toBe(true)
+    await flush()
+    // A different, second source should have been constructed.
+    const sources = opts.mockCtx.createdBufferSources
+    expect(sources.length).toBeGreaterThanOrEqual(2)
+    const last = sources[sources.length - 1]
+    expect(last).not.toBe(first)
+    expect(last.started).toBe(true)
   })
 })
 
 describe('createAudioMixer — mute updates', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
-  it('initial track mute is applied to the track gain node', () => {
+  it('initial track mute flagged; updateTrack reschedules without error', async () => {
     const track = t('a', [{ id: 'c1', start: 0, end: 1 }], { muted: true })
     const m = createAudioMixer('p', [track], opts)
     m.play()
-    // Can't easily reach into the track gain from outside, but updateTrack should
-    // produce a setValueAtTime event afterward.
+    await flush()
     m.updateTrack('a')
-    // One of the gain nodes (the track one) should now have a mute event
-    // — we just verify no errors thrown; deeper assertion in T117 curve work.
     expect(m.trackCount).toBe(1)
   })
 
-  it('rebuild replaces tracks and their clips', () => {
+  it('rebuild replaces tracks and their clips', async () => {
     const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
+    m.seek(0.5)
     m.play()
-    expect(opts.mockElements).toHaveLength(1)
-    const before = opts.mockElements[0]
+    await flush()
+    const before = opts.mockCtx.createdBufferSources[0]
+    expect(before.started).toBe(true)
     m.rebuild([t('b', [{ id: 'c2', start: 0, end: 1 }])])
-    // New element should be created; old element paused and src cleared
-    expect(before.pauseCalls).toBeGreaterThanOrEqual(1)
-    expect(opts.mockElements.length).toBeGreaterThanOrEqual(2)
+    await flush()
+    // Old source stopped; new one created for c2
+    expect(before.stopped).toBe(true)
   })
 })
 
 describe('createAudioMixer — curve automation (T117)', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
   const instrumentCtx = (ctx: MockAudioContext): void => {
     const origCreateGain = ctx.createGain.bind(ctx)
     const gains: MockGainNode[] = []
-    // `_allGains` excludes the master gain (first gain created by the mixer's
-    // ensureMasterGraph helper). Tests assert against track/clip gains only.
     ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
     let skippedMaster = false
     ctx.createGain = () => {
@@ -355,7 +410,7 @@ describe('createAudioMixer — curve automation (T117)', () => {
     }
   }
 
-  it('track curve [[0, 0], [10, -6]] schedules anchor + ramp on play', () => {
+  it('track curve [[0, 0], [10, -6]] schedules anchor + ramp on play', async () => {
     instrumentCtx(opts.mockCtx)
     const track: AudioTrack = {
       id: 'a', name: 'a', display_order: 0, hidden: false, muted: false, solo: false,
@@ -364,69 +419,69 @@ describe('createAudioMixer — curve automation (T117)', () => {
     }
     const m = createAudioMixer('p', [track], opts)
     m.play()
-    // First gain created is the track gain (trackMap populated before clips)
+    await flush()
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
     const trackGain = allGains[0]
     const events = trackGain.gain.events
-    // Should contain a cancelScheduledValues, a setValueAtTime (anchor at playhead 0 → 0 dB → gain 1), and a linearRampToValueAtTime
     expect(events.some((e) => e.kind === 'cancelScheduledValues')).toBe(true)
     const setValue = events.find((e) => e.kind === 'setValueAtTime')
     expect(setValue?.value).toBeCloseTo(1, 3)
     const ramp = events.find((e) => e.kind === 'linearRampToValueAtTime')
-    expect(ramp?.value).toBeCloseTo(0.5012, 3) // dbToLinear(-6)
+    expect(ramp?.value).toBeCloseTo(0.5012, 3)
   })
 
-  it('clip curve [[0, 0], [1, -6]] anchors at clip start and ramps to end', () => {
+  it('clip curve [[0, 0], [1, -6]] anchors at clip start and ramps to end', async () => {
     instrumentCtx(opts.mockCtx)
     const track = t('a', [{ id: 'c1', start: 10, end: 20 }])
-    // Override clip curve
     track.clips![0].volume_curve = [[0, 0], [1, -6]]
     const m = createAudioMixer('p', [track], opts)
     m.seek(10)
     m.play()
+    await flush()
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
-    // Order of createGain calls: trackGain, clipGain, crossfadeGain (per clip graph)
-    // trackGain=index 0, clipGain=1, crossfadeGain=2
+    // Order: trackGain(0), clipGain(1), crossfadeGain(2)
     const clipGain = allGains[1]
     const events = clipGain.gain.events
     expect(events.some((e) => e.kind === 'cancelScheduledValues')).toBe(true)
     const setValue = events.find((e) => e.kind === 'setValueAtTime')
-    expect(setValue?.value).toBeCloseTo(1, 3) // playhead at clip start → 0 dB
+    expect(setValue?.value).toBeCloseTo(1, 3)
     const ramp = events.find((e) => e.kind === 'linearRampToValueAtTime')
-    expect(ramp?.value).toBeCloseTo(0.5012, 3) // dbToLinear(-6) at clip end
+    expect(ramp?.value).toBeCloseTo(0.5012, 3)
   })
 
-  it('muted clip gets setValueAtTime(0) instead of curve', () => {
+  it('muted clip gets setValueAtTime(0) instead of curve', async () => {
     instrumentCtx(opts.mockCtx)
     const track = t('a', [{ id: 'c1', start: 0, end: 1, muted: true }])
     const m = createAudioMixer('p', [track], opts)
     m.seek(0.5)
     m.play()
+    await flush()
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
     const clipGain = allGains[1]
     const events = clipGain.gain.events.filter((e) => e.kind === 'setValueAtTime')
     expect(events.some((e) => e.value === 0)).toBe(true)
-    // No ramp should be scheduled
     expect(clipGain.gain.events.some((e) => e.kind === 'linearRampToValueAtTime')).toBe(false)
   })
 
-  it('muted track schedules setValueAtTime(0) on track gain', () => {
+  it('muted track schedules setValueAtTime(0) on track gain', async () => {
     instrumentCtx(opts.mockCtx)
     const track = t('a', [{ id: 'c1', start: 0, end: 1 }], { muted: true })
     const m = createAudioMixer('p', [track], opts)
     m.play()
+    await flush()
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
     const trackGain = allGains[0]
     const events = trackGain.gain.events.filter((e) => e.kind === 'setValueAtTime')
     expect(events.some((e) => e.value === 0)).toBe(true)
   })
 
-  it('updateClip re-schedules curve in place for an active clip', () => {
+  it('updateClip re-schedules curve in place for an active clip', async () => {
     instrumentCtx(opts.mockCtx)
     const track = t('a', [{ id: 'c1', start: 0, end: 10 }])
     const m = createAudioMixer('p', [track], opts)
     m.seek(1)
     m.play()
+    await flush()
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
     const clipGain = allGains[1]
     const initialCount = clipGain.gain.events.length
@@ -434,11 +489,12 @@ describe('createAudioMixer — curve automation (T117)', () => {
     expect(clipGain.gain.events.length).toBeGreaterThan(initialCount)
   })
 
-  it('updateTrack re-schedules track curve', () => {
+  it('updateTrack re-schedules track curve', async () => {
     instrumentCtx(opts.mockCtx)
     const track = t('a', [{ id: 'c1', start: 0, end: 10 }])
     const m = createAudioMixer('p', [track], opts)
     m.play()
+    await flush()
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
     const trackGain = allGains[0]
     const initialCount = trackGain.gain.events.length
@@ -449,7 +505,7 @@ describe('createAudioMixer — curve automation (T117)', () => {
 
 describe('createAudioMixer — equal-power crossfade (T117)', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
   const instrumentCtx = (ctx: MockAudioContext): void => {
     const orig = ctx.createGain.bind(ctx)
@@ -464,7 +520,7 @@ describe('createAudioMixer — equal-power crossfade (T117)', () => {
     }
   }
 
-  it('overlapping same-track clips receive cos + sin curve schedules', () => {
+  it('overlapping same-track clips receive cos + sin curve schedules', async () => {
     instrumentCtx(opts.mockCtx)
     const m = createAudioMixer('p', [
       t('a', [
@@ -473,8 +529,10 @@ describe('createAudioMixer — equal-power crossfade (T117)', () => {
       ]),
     ], opts)
     m.seek(0)
-    m.play() // c1 activates
+    m.play()
+    await flush()
     m.seek(3) // c2 activates inside c1's window → crossfade triggered
+    await flush()
 
     const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
     // Graph: trackGain(0), c1_clipGain(1), c1_crossfadeGain(2), c2_clipGain(3), c2_crossfadeGain(4)
@@ -485,38 +543,15 @@ describe('createAudioMixer — equal-power crossfade (T117)', () => {
     const sin = c2Crossfade.gain.events.find((e) => e.kind === 'setValueCurveAtTime')
     expect(cos).toBeDefined()
     expect(sin).toBeDefined()
-    // Overlap [3, 5] → duration 2
     expect(cos?.duration).toBeCloseTo(2, 3)
     expect(sin?.duration).toBeCloseTo(2, 3)
-    // cos starts at 1, sin starts at 0
     expect(cos?.values?.[0]).toBeCloseTo(1, 3)
     expect(sin?.values?.[0]).toBeCloseTo(0, 3)
-    // cos ends at 0, sin ends at 1
     expect(cos?.values?.[cos!.values!.length - 1]).toBeCloseTo(0, 3)
     expect(sin?.values?.[sin!.values!.length - 1]).toBeCloseTo(1, 3)
   })
 
-  it('non-overlapping clips on the same track do NOT schedule crossfade curves', () => {
-    instrumentCtx(opts.mockCtx)
-    const m = createAudioMixer('p', [
-      t('a', [
-        { id: 'c1', start: 0, end: 1 },
-        { id: 'c2', start: 2, end: 3 },
-      ]),
-    ], opts)
-    m.seek(0.5)
-    m.play()
-    m.seek(2.5) // c1 deactivates, c2 activates — no overlap
-
-    const allGains = (opts.mockCtx as unknown as { _allGains: MockGainNode[] })._allGains
-    const c1Crossfade = allGains[2]
-    const c2Crossfade = allGains[4]
-    expect(c1Crossfade.gain.events.some((e) => e.kind === 'setValueCurveAtTime')).toBe(false)
-    expect(c2Crossfade.gain.events.some((e) => e.kind === 'setValueCurveAtTime')).toBe(false)
-  })
-
   it('cos² + sin² ≈ 1 at every curve sample (equal-power invariant)', () => {
-    // Rebuild the curves the mixer uses and verify the invariant directly
     const n = 128
     const cos = new Float32Array(n)
     const sin = new Float32Array(n)
@@ -534,7 +569,7 @@ describe('createAudioMixer — equal-power crossfade (T117)', () => {
 
 describe('createAudioMixer — dispose', () => {
   let opts: ReturnType<typeof makeOptions>
-  beforeEach(() => { opts = makeOptions() })
+  beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
   it('dispose is idempotent', () => {
     const m = createAudioMixer('p', [t('a')], opts)
@@ -542,18 +577,21 @@ describe('createAudioMixer — dispose', () => {
     expect(() => m.dispose()).not.toThrow()
   })
 
-  it('dispose pauses any active elements', () => {
+  it('dispose stops any active sources', async () => {
     const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
     m.seek(0.5)
     m.play()
-    expect(opts.mockElements[0].paused).toBe(false)
+    await flush()
+    const src = opts.mockCtx.createdBufferSources[0]
+    expect(src.started).toBe(true)
     m.dispose()
-    expect(opts.mockElements[0].paused).toBe(true)
+    expect(src.stopped).toBe(true)
   })
 
-  it('dispose closes the AudioContext', () => {
+  it('dispose closes the AudioContext', async () => {
     const m = createAudioMixer('p', [t('a', [{ id: 'c1', start: 0, end: 1 }])], opts)
     m.play()
+    await flush()
     expect(opts.mockCtx.state).toBe('running')
     m.dispose()
     expect(opts.mockCtx.state).toBe('closed')

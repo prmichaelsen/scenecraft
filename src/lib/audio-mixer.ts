@@ -1,10 +1,27 @@
 /**
- * Real-time WebAudio streaming mixer for the Timeline (M14).
+ * Real-time WebAudio mixer for the Timeline (M14 + M15 task 1).
  *
- * Uses `HTMLAudioElement` + `MediaElementAudioSourceNode` for streaming (not
- * `decodeAudioData`) so projects with hours of audio stay within browser
- * memory limits. Per-clip `GainNode` + per-track `GainNode` are in place
- * from T116; curve automation + equal-power crossfade are wired in T117.
+ * M15 migrates playback from `HTMLAudioElement` + `MediaElementAudioSourceNode`
+ * to `AudioBufferSourceNode`. This is a prerequisite for offline rendering
+ * (M15 task 2) because `OfflineAudioContext` cannot consume media-element
+ * sources. The live graph must mirror whatever the offline renderer will use,
+ * so both paths share a single source-node topology.
+ *
+ * Key properties of the new path:
+ *  - Audio is fetched once and decoded to an `AudioBuffer`, then cached
+ *    module-wide keyed by `source_path` so re-adding a clip (undo/redo, drag)
+ *    does not re-decode.
+ *  - `AudioBufferSourceNode` is SINGLE-USE: every start()/stop() cycle
+ *    requires a fresh node. On seek/pause/resume we throw away the old node
+ *    and build a new one from the cached buffer.
+ *  - Scheduling is done on the AudioContext clock via
+ *    `source.start(when, offset, duration)`, where `when` is derived from
+ *    the playhead and `ctx.currentTime`. No more `.currentTime` tweaking.
+ *  - Volume curves, analyser taps, master bus — unchanged. Those talk to
+ *    `AudioNode` interfaces; the swap is upstream of them.
+ *
+ * Decode cache: MVP has no eviction. We track a simple counter + size in
+ * debug logs. LRU eviction is deferred to a follow-up milestone.
  *
  * Design: agent/design/local.audio-streaming-and-mixing.md
  */
@@ -20,7 +37,7 @@ export type AudioMixer = {
   play(): void
   /** Pause every active element. Re-enabling via `play()` resumes at the next `seek()`. */
   pause(): void
-  /** Jump the playhead; activate/deactivate clips. When `isPlaying`, also syncs `audio.currentTime`. */
+  /** Jump the playhead; activate/deactivate clips. When `isPlaying`, also starts fresh source nodes. */
   seek(seconds: number): void
   /** A specific clip's data changed. Re-read + re-schedule if active. */
   updateClip(clipId: string): void
@@ -28,15 +45,11 @@ export type AudioMixer = {
   updateTrack(trackId: string): void
   /** Full track list changed (add/remove/reorder). Rebuild graph from scratch. */
   rebuild(tracks: AudioTrack[]): void
-  /** Per-track L/R AnalyserNode taps for stereo level metering. Mono
-   *  signals are upmixed to stereo before the split (via a GainNode with
-   *  `channelCount=2, channelCountMode='explicit', channelInterpretation='speakers'`)
-   *  so both L and R receive the same signal. Null until the track's graph
-   *  has been built (first play/seek). */
+  /** Per-track L/R AnalyserNode taps for stereo level metering. */
   getTrackAnalysers(trackId: string): { left: AnalyserNode; right: AnalyserNode } | null
   /** Master-bus stereo analyser taps. */
   getMasterAnalysers(): { left: AnalyserNode; right: AnalyserNode } | null
-  /** Tear down all nodes + elements; close AudioContext. */
+  /** Tear down all nodes; close AudioContext. */
   dispose(): void
 }
 
@@ -44,16 +57,27 @@ export type AudioMixer = {
 export type AudioMixerOptions = {
   /** Override for tests / non-browser environments. Default: `new AudioContext({ latencyHint: 'playback' })`. */
   audioCtxFactory?: () => AudioContext
-  /** Override for tests / SSR. Default: `document.createElement('audio')`. */
-  audioElementFactory?: () => HTMLAudioElement
   /** Override for URL building in tests. Default: `scenecraftFileUrl(projectName, sourcePath)`. */
   sourceUrlFactory?: (projectName: string, sourcePath: string) => string
+  /**
+   * Override for fetching raw audio bytes. Default uses `fetch(url).arrayBuffer()`.
+   * Tests can return pre-built buffers synchronously via a resolved promise.
+   */
+  fetchBytes?: (url: string) => Promise<ArrayBuffer>
+  /**
+   * Override for decoding. Default delegates to `AudioContext.decodeAudioData`.
+   * Tests can return a mock AudioBuffer. The mixer never inspects the buffer's
+   * contents — only its identity and `.duration` matter at runtime.
+   */
+  decode?: (ctx: AudioContext, bytes: ArrayBuffer) => Promise<AudioBuffer>
 }
 
 type ClipNode = {
   clip: AudioClip
-  audio: HTMLAudioElement | null
-  source: MediaElementAudioSourceNode | null
+  /** Decoded audio buffer. Shared via the module-level cache keyed by source_path. */
+  buffer: AudioBuffer | null
+  /** Active buffer source node. Single-use; replaced on every start/stop cycle. */
+  source: AudioBufferSourceNode | null
   /** Per-clip volume curve gain. Multiplied by crossfade gain downstream. */
   clipGain: GainNode | null
   /** Crossfade multiplier — layered on top of clipGain so volume + crossfade compose cleanly. */
@@ -66,8 +90,7 @@ type TrackNode = {
   track: AudioTrack
   /** Track volume + enabled + muted gate. */
   trackGain: GainNode | null
-  /** L/R passive analyser taps post-trackGain, pre-master. Used by
-   *  per-track stereo level meters in the timeline header. */
+  /** L/R passive analyser taps post-trackGain, pre-master. */
   analyserL: AnalyserNode | null
   analyserR: AnalyserNode | null
   clips: Map<string, ClipNode>
@@ -105,15 +128,26 @@ const DEFAULT_AUDIO_CTX_FACTORY = (): AudioContext =>
     latencyHint: 'playback',
   })
 
-const DEFAULT_AUDIO_ELEMENT_FACTORY = (): HTMLAudioElement => {
-  const el = document.createElement('audio')
-  // 'metadata' fetches just enough to know duration/dimensions — avoids
-  // parallel full-file downloads across many clips. The element upgrades
-  // to streaming playback on .play() anyway.
-  el.preload = 'metadata'
-  el.crossOrigin = 'anonymous'
-  return el
+const DEFAULT_FETCH_BYTES = async (url: string): Promise<ArrayBuffer> => {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`audio fetch ${url} → ${res.status}`)
+  return res.arrayBuffer()
 }
+
+const DEFAULT_DECODE = (ctx: AudioContext, bytes: ArrayBuffer): Promise<AudioBuffer> =>
+  ctx.decodeAudioData(bytes)
+
+/**
+ * Module-level decode cache. Survives individual mixer instance disposal,
+ * which is what we want: re-opening a project shouldn't force a re-decode.
+ * MVP has no eviction — a long session on a large project will accumulate
+ * AudioBuffers. LRU is a follow-up. The `size()` helper below powers the
+ * debug log on each new decode.
+ */
+const decodeCache = new Map<string, AudioBuffer>()
+
+/** Debug-only counters so developers can gauge cache pressure. */
+const decodeStats = { decodes: 0, hits: 0 }
 
 export function createAudioMixer(
   projectName: string,
@@ -121,17 +155,20 @@ export function createAudioMixer(
   options: AudioMixerOptions = {},
 ): AudioMixer {
   const audioCtxFactory = options.audioCtxFactory ?? DEFAULT_AUDIO_CTX_FACTORY
-  const audioElementFactory = options.audioElementFactory ?? DEFAULT_AUDIO_ELEMENT_FACTORY
   const sourceUrlFactory = options.sourceUrlFactory ?? scenecraftFileUrl
+  const fetchBytes = options.fetchBytes ?? DEFAULT_FETCH_BYTES
+  const decode = options.decode ?? DEFAULT_DECODE
 
   let audioCtx: AudioContext | null = null
   const trackMap = new Map<string, TrackNode>()
+  /** In-flight decode promises so concurrent activations of the same clip
+   *  don't fire duplicate fetches. Keyed by source_path. Resolves to the
+   *  decoded buffer (also written into decodeCache). */
+  const pendingDecodes = new Map<string, Promise<AudioBuffer>>()
+
   // Master bus — every track's trackGain feeds into masterGain, which feeds
   // both a stereo L/R analyser pair (for the transport-bar level meter) and
-  // the destination. A `ChannelSplitterNode` after a stereo-forcing gain
-  // splits the signal into two analysers so the meter can show per-channel
-  // levels (and mono sources show matching L/R via the default speaker
-  // upmix).
+  // the destination.
   let masterGain: GainNode | null = null
   let masterSplitter: ChannelSplitterNode | null = null
   let masterAnalyserL: AnalyserNode | null = null
@@ -140,14 +177,13 @@ export function createAudioMixer(
   let lastPlayhead = 0
   let disposed = false
 
-  // Analyser FFT size — 1024 gives ~21ms of time-domain samples at 48kHz,
-  // short enough for responsive peak metering without wasting CPU.
   const ANALYSER_FFT_SIZE = 1024
 
-  /** Build a {left,right} pair of analysers fed from `source`. Inserts a
-   *  ChannelSplitter so each analyser only sees one channel. `source` is
-   *  expected to already be configured for stereo (the mixer applies
-   *  channelCount=2 + speakers upmix on the feeding gain nodes). */
+  const log = (msg: string): void => {
+    if (typeof console !== 'undefined') console.debug(`[audio-mixer] ${msg}`)
+  }
+
+  /** Build a {left,right} pair of analysers fed from `source`. */
   const buildStereoAnalyserPair = (ctx: AudioContext, source: AudioNode): {
     splitter: ChannelSplitterNode
     left: AnalyserNode
@@ -170,8 +206,6 @@ export function createAudioMixer(
     if (masterGain) return
     masterGain = ctx.createGain()
     masterGain.gain.value = 1
-    // Force stereo mixdown so mono track sums still expose two channels to
-    // the meter (default WebAudio speaker upmix copies mono → L, R).
     masterGain.channelCount = 2
     masterGain.channelCountMode = 'explicit'
     masterGain.channelInterpretation = 'speakers'
@@ -179,46 +213,66 @@ export function createAudioMixer(
     masterSplitter = pair.splitter
     masterAnalyserL = pair.left
     masterAnalyserR = pair.right
-    // masterGain also drives the actual audio output.
     masterGain.connect(ctx.destination)
-  }
-
-  const log = (msg: string): void => {
-    if (typeof console !== 'undefined') console.debug(`[audio-mixer] ${msg}`)
   }
 
   const ensureCtx = (): AudioContext => {
     if (!audioCtx) audioCtx = audioCtxFactory()
     if (audioCtx.state === 'suspended') {
-      // AudioContext starts suspended in most browsers until a user gesture;
-      // resume() returns a promise that rejects silently if still blocked.
       audioCtx.resume().catch(() => {})
     }
     return audioCtx
   }
 
+  /**
+   * Kick off decode for a clip's source_path if not already cached / pending.
+   * Returns the buffer promise. Callers set `clipNode.buffer` on resolution.
+   */
+  const decodeClipBuffer = (ctx: AudioContext, clipNode: ClipNode): Promise<AudioBuffer> => {
+    const key = clipNode.clip.source_path
+    const cached = decodeCache.get(key)
+    if (cached) {
+      decodeStats.hits++
+      clipNode.buffer = cached
+      return Promise.resolve(cached)
+    }
+    const existing = pendingDecodes.get(key)
+    if (existing) return existing.then((buf) => { clipNode.buffer = buf; return buf })
+
+    const url = sourceUrlFactory(projectName, clipNode.clip.source_path)
+    const p = (async () => {
+      const bytes = await fetchBytes(url)
+      const buf = await decode(ctx, bytes)
+      decodeCache.set(key, buf)
+      decodeStats.decodes++
+      log(`decoded ${key} — cache: ${decodeCache.size} buffers, ${decodeStats.decodes} total decodes, ${decodeStats.hits} hits`)
+      return buf
+    })()
+    pendingDecodes.set(key, p)
+    p.finally(() => pendingDecodes.delete(key))
+    return p.then((buf) => { clipNode.buffer = buf; return buf })
+  }
+
+  /** Build the persistent per-clip chain (gains). Source node is built later,
+   *  per activation. Connects into the track's gain if already present. */
   const buildClipGraph = (ctx: AudioContext, trackNode: TrackNode, clipNode: ClipNode): void => {
-    if (clipNode.audio) return // already built
-    const audio = audioElementFactory()
-    audio.src = sourceUrlFactory(projectName, clipNode.clip.source_path)
-    const source = ctx.createMediaElementSource(audio)
+    if (clipNode.clipGain) return
     const clipGain = ctx.createGain()
     const crossfadeGain = ctx.createGain()
     clipGain.gain.value = clipNode.clip.muted ? 0 : 1
     crossfadeGain.gain.value = 1
-    source.connect(clipGain).connect(crossfadeGain)
+    clipGain.connect(crossfadeGain)
     if (trackNode.trackGain) crossfadeGain.connect(trackNode.trackGain)
-    clipNode.audio = audio
-    clipNode.source = source
     clipNode.clipGain = clipGain
     clipNode.crossfadeGain = crossfadeGain
+
+    // Kick off decode in the background. Fire-and-forget: activation either
+    // finds the buffer already there, or awaits its own resolution.
+    decodeClipBuffer(ctx, clipNode).catch((err) => {
+      log(`decode failed for ${clipNode.clip.source_path}: ${err instanceof Error ? err.message : String(err)}`)
+    })
   }
 
-  /**
-   * DAW-style effective mute: a track is silent if it's explicitly muted, OR
-   * if any OTHER track is solo'd and this one isn't. Multiple solos compose
-   * (all solo'd tracks play, everything else is silent).
-   */
   const isTrackEffectivelyMuted = (trackNode: TrackNode): boolean => {
     if (trackNode.track.muted) return true
     const anySolo = [...trackMap.values()].some((tn) => tn.track.solo)
@@ -231,16 +285,10 @@ export function createAudioMixer(
     ensureMasterGraph(ctx)
     const trackGain = ctx.createGain()
     trackGain.gain.value = isTrackEffectivelyMuted(trackNode) ? 0 : 1
-    // Force stereo on the track bus so mono sources still expose L/R to
-    // the per-track meter's analyser pair (default speaker upmix).
     trackGain.channelCount = 2
     trackGain.channelCountMode = 'explicit'
     trackGain.channelInterpretation = 'speakers'
-    // Passive L/R analyser taps post-trackGain so muted/soloed-out tracks
-    // correctly show silence in the meter. The analyser branch doesn't
-    // route back to audio output — it's a pure sidechain.
     const pair = buildStereoAnalyserPair(ctx, trackGain)
-    // Route audio forward to the master bus (which feeds destination).
     trackGain.connect(masterGain!)
     trackNode.trackGain = trackGain
     trackNode.analyserL = pair.left
@@ -257,18 +305,25 @@ export function createAudioMixer(
     }
   }
 
-  const tearDownClip = (clipNode: ClipNode): void => {
-    if (clipNode.audio) {
-      try { clipNode.audio.pause() } catch { /* ignore */ }
-      clipNode.audio.src = ''
+  /** Stop and release the current source node on a clip. Safe to call when
+   *  no source is attached. Does NOT touch `buffer` — that stays cached. */
+  const stopClipSource = (clipNode: ClipNode): void => {
+    if (clipNode.source) {
+      try { clipNode.source.stop() } catch { /* already stopped */ }
+      try { clipNode.source.disconnect() } catch { /* ignore */ }
+      clipNode.source = null
     }
-    try { clipNode.source?.disconnect() } catch { /* ignore */ }
+  }
+
+  const tearDownClip = (clipNode: ClipNode): void => {
+    stopClipSource(clipNode)
     try { clipNode.clipGain?.disconnect() } catch { /* ignore */ }
     try { clipNode.crossfadeGain?.disconnect() } catch { /* ignore */ }
-    clipNode.audio = null
-    clipNode.source = null
     clipNode.clipGain = null
     clipNode.crossfadeGain = null
+    // `buffer` ref is cleared too — the module-level cache still owns it,
+    // so re-adding this clip will hit the cache and re-assign.
+    clipNode.buffer = null
     clipNode.active = false
   }
 
@@ -290,7 +345,7 @@ export function createAudioMixer(
       for (const c of (t.clips ?? [])) {
         trackNode.clips.set(c.id, {
           clip: c,
-          audio: null,
+          buffer: null,
           source: null,
           clipGain: null,
           crossfadeGain: null,
@@ -313,7 +368,6 @@ export function createAudioMixer(
       return
     }
 
-    // Anchor at current playhead's gain, then schedule future breakpoints
     const anchorDb = sampleClipDbAtPlayhead(clipNode.clip, playhead)
     g.setValueAtTime(dbToLinear(anchorDb), ctxNow)
 
@@ -351,12 +405,6 @@ export function createAudioMixer(
     }
   }
 
-  /**
-   * Schedule equal-power crossfade on overlapping same-track clips.
-   * `incumbent` is already active when `newcomer` becomes active and they
-   * share a track — fade incumbent via cos, newcomer via sin, over the
-   * overlap interval `[overlapStart, overlapEnd]`.
-   */
   const scheduleCrossfade = (
     incumbent: ClipNode,
     newcomer: ClipNode,
@@ -393,34 +441,65 @@ export function createAudioMixer(
     return null
   }
 
+  /**
+   * Activate a clip at the current playhead. Constructs a FRESH
+   * AudioBufferSourceNode (they're single-use), wires it to the existing
+   * clipGain → crossfadeGain → trackGain chain, and schedules start() at
+   * an AudioContext time aligned with the playhead.
+   *
+   * If the buffer isn't decoded yet, schedules itself to run once the decode
+   * resolves. `isPlaying` is re-checked at that time in case the user paused
+   * while the decode was in flight.
+   */
   const activateClip = (clipNode: ClipNode, playhead: number): void => {
-    if (!clipNode.audio) return
-    const { start_time } = clipNode.clip
+    if (!audioCtx || !clipNode.clipGain) return
+
+    // No buffer yet → wait for decode. The closure re-checks state on resolve.
+    if (!clipNode.buffer) {
+      decodeClipBuffer(audioCtx, clipNode).then(() => {
+        if (disposed) return
+        // State may have moved on. Only finish activation if we're still
+        // inside the clip window at the current playhead.
+        const insideNow = lastPlayhead >= clipNode.clip.start_time && lastPlayhead < clipNode.clip.end_time
+        if (insideNow && !clipNode.active) activateClip(clipNode, lastPlayhead)
+      }).catch(() => { /* logged in decode path */ })
+      return
+    }
+
+    // Tear down any previous source (e.g. mid-playback updateClip path).
+    stopClipSource(clipNode)
+
+    const ctx = audioCtx
+    const { start_time, end_time } = clipNode.clip
     const rate = clipNode.clip.playback_rate ?? 1
     const effOffset = clipNode.clip.effective_source_offset ?? clipNode.clip.source_offset
     const sourcePosition = Math.max(0, effOffset + (playhead - start_time) * rate)
+    const remainingTimeline = Math.max(0, end_time - Math.max(playhead, start_time))
+    // duration is in source-time, not timeline time, so scale by rate
+    const durationSource = remainingTimeline * rate
 
-    // playbackRate drives linear time remap on linked clips.
-    // preservesPitch keeps dialogue natural at non-unity rates.
+    const src = ctx.createBufferSource()
+    src.buffer = clipNode.buffer
     try {
-      clipNode.audio.playbackRate = rate
-      // preservesPitch is widely supported but not in older TS lib types
-      ;(clipNode.audio as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true
-    } catch { /* older browser — ignore */ }
+      src.playbackRate.value = rate
+      // `detune` could be used to mimic preservesPitch, but WebAudio's
+      // BufferSourceNode has no native pitch-preservation. For the common
+      // video-link case rate is near 1.0 so pitch drift is minimal.
+      // TODO(M15 task N): wire a soundtouch/phase-vocoder shim if users
+      // report unacceptable dialogue pitch on extreme remaps.
+    } catch { /* older engines */ }
 
-    try {
-      clipNode.audio.currentTime = sourcePosition
-    } catch { /* readyState may not allow — retry on loadedmetadata */ }
+    src.connect(clipNode.clipGain)
 
-    // Reset crossfade gain before any new schedule lands
-    if (clipNode.crossfadeGain && audioCtx) {
-      clipNode.crossfadeGain.gain.cancelScheduledValues(audioCtx.currentTime)
-      clipNode.crossfadeGain.gain.setValueAtTime(1, audioCtx.currentTime)
+    // Crossfade starts at 1 for an activation without overlap; crossfades
+    // override this for same-track overlapping clips.
+    if (clipNode.crossfadeGain) {
+      clipNode.crossfadeGain.gain.cancelScheduledValues(ctx.currentTime)
+      clipNode.crossfadeGain.gain.setValueAtTime(1, ctx.currentTime)
     }
 
     scheduleClipCurve(clipNode, playhead)
 
-    // Equal-power crossfade against any currently-active clips on the same track
     const trackNode = findTrackNodeFor(clipNode)
     if (trackNode) {
       for (const incumbent of findOverlappingActiveClips(trackNode, clipNode)) {
@@ -429,17 +508,34 @@ export function createAudioMixer(
     }
 
     if (isPlaying) {
-      clipNode.audio.play().catch(() => {
-        // NotAllowedError / AbortError — swallow
-      })
+      // Schedule at the AudioContext clock. If playhead is before clip start
+      // (activation ahead of time), delay start; otherwise play immediately
+      // from mid-clip.
+      const whenDelta = Math.max(0, start_time - playhead)
+      const when = ctx.currentTime + whenDelta
+      try {
+        // `start(when, offset, duration)` — omit `duration` when the buffer
+        // naturally ends first (source_offset + durationSource > buffer.duration).
+        // The browser handles clamping. We still pass durationSource so the
+        // node self-stops at the clip's end_time, sparing us a manual stop().
+        const bufDur = clipNode.buffer.duration
+        const effectiveDuration = Math.min(durationSource, Math.max(0, bufDur - sourcePosition))
+        if (effectiveDuration > 0) {
+          src.start(when, sourcePosition, effectiveDuration)
+        } else {
+          // Clip window is entirely past the end of the buffer — no-op.
+        }
+      } catch (err) {
+        log(`start() failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
     }
+
+    clipNode.source = src
     clipNode.active = true
   }
 
   const deactivateClip = (clipNode: ClipNode): void => {
-    if (clipNode.audio) {
-      try { clipNode.audio.pause() } catch { /* ignore */ }
-    }
+    stopClipSource(clipNode)
     if (clipNode.clipGain && audioCtx) {
       clipNode.clipGain.gain.cancelScheduledValues(audioCtx.currentTime)
     }
@@ -450,29 +546,26 @@ export function createAudioMixer(
     clipNode.active = false
   }
 
+  /**
+   * Reconcile active/inactive state across all clips relative to `playhead`.
+   * `hardSeek` means the user actually jumped the playhead — tear down and
+   * rebuild any currently-active source nodes so they restart from the new
+   * offset. For normal frame-by-frame ticks, leave running sources alone.
+   */
   const reevaluateClips = (playhead: number, hardSeek: boolean): void => {
     for (const trackNode of trackMap.values()) {
       for (const clipNode of trackNode.clips.values()) {
-        const { start_time, end_time, source_offset } = clipNode.clip
-        const effOffset = clipNode.clip.effective_source_offset ?? source_offset
-        const rate = clipNode.clip.playback_rate ?? 1
+        const { start_time, end_time } = clipNode.clip
         const inside = playhead >= start_time && playhead < end_time
         if (inside && !clipNode.active) {
           activateClip(clipNode, playhead)
         } else if (!inside && clipNode.active) {
           deactivateClip(clipNode)
-        } else if (inside && clipNode.active && clipNode.audio) {
-          // Already marked active. On a hard seek (scrub / jump), resync the
-          // <audio> element's currentTime to honor the new playhead. During
-          // normal frame-by-frame playback (hardSeek=false), leave the
-          // streaming position alone to avoid audible hiccups.
-          if (hardSeek) {
-            const sourcePosition = Math.max(0, effOffset + (playhead - start_time) * rate)
-            try { clipNode.audio.currentTime = sourcePosition } catch { /* ignore */ }
-          }
-          if (isPlaying && clipNode.audio.paused) {
-            clipNode.audio.play().catch(() => { /* NotAllowedError — swallow */ })
-          }
+        } else if (inside && clipNode.active && hardSeek) {
+          // User scrubbed within the clip's window — single-use BufferSource
+          // can't seek, so tear down and rebuild at the new offset.
+          deactivateClip(clipNode)
+          activateClip(clipNode, playhead)
         }
       }
     }
@@ -490,10 +583,10 @@ export function createAudioMixer(
       isPlaying = true
       ensureGraph()
       scheduleAllTrackCurves(lastPlayhead)
-      // Activate any clips already inside the playhead window. Force
-      // currentTime resync — user pressed play expecting audio to start AT
-      // the playhead, not from whatever position the <audio> element last
-      // paused at.
+      // Any currently-"active" clip nodes were paused mid-clip — they have
+      // no live source. Treat play() as a hard seek so those get
+      // reconstructed. hardSeek=true also triggers activate for clips that
+      // weren't active yet.
       reevaluateClips(lastPlayhead, /* hardSeek */ true)
       log(`play() @${lastPlayhead.toFixed(3)}s`)
     },
@@ -503,8 +596,12 @@ export function createAudioMixer(
       isPlaying = false
       for (const trackNode of trackMap.values()) {
         for (const clipNode of trackNode.clips.values()) {
-          if (clipNode.active && clipNode.audio) {
-            try { clipNode.audio.pause() } catch { /* ignore */ }
+          if (clipNode.active) {
+            stopClipSource(clipNode)
+            // Leave `active = true` so the play() → reevaluate with hardSeek
+            // knows to restart it. Actually no — that's fragile. Set to
+            // false; play() treats any inside-clip as needing activation.
+            clipNode.active = false
           }
         }
       }
@@ -516,10 +613,6 @@ export function createAudioMixer(
       const crossedLargeGap = Math.abs(seconds - lastPlayhead) > 0.05
       lastPlayhead = seconds
       if (!audioCtx) return
-      // On a real seek (user scrubbing the playhead, not just a per-frame
-      // tick), reschedule track curves and hard-resync each active clip's
-      // <audio> element so it honors the new playhead. Small forward ticks
-      // leave streaming position alone to avoid hiccups.
       if (crossedLargeGap) scheduleAllTrackCurves(seconds)
       reevaluateClips(seconds, /* hardSeek */ crossedLargeGap)
     },
@@ -529,10 +622,8 @@ export function createAudioMixer(
       for (const trackNode of trackMap.values()) {
         const clipNode = trackNode.clips.get(clipId)
         if (!clipNode) continue
-        // Re-schedule this clip's curve + mute in place if it's active
         if (clipNode.active) scheduleClipCurve(clipNode, lastPlayhead)
         else if (clipNode.clipGain && audioCtx) {
-          // For inactive clips, still apply mute so the next activation starts correct
           const ctxNow = audioCtx.currentTime
           clipNode.clipGain.gain.cancelScheduledValues(ctxNow)
           clipNode.clipGain.gain.setValueAtTime(clipNode.clip.muted ? 0 : 1, ctxNow)
@@ -546,10 +637,6 @@ export function createAudioMixer(
       if (disposed) return
       const trackNode = trackMap.get(trackId)
       if (!trackNode) return
-      // Toggling solo on any track changes the effective-mute of every other
-      // track, so we always reschedule ALL track curves here. O(N_tracks)
-      // is trivial; this keeps solo behavior correct without tracking which
-      // field changed.
       for (const tn of trackMap.values()) scheduleTrackCurve(tn, lastPlayhead)
       log(`updateTrack(${trackId})`)
     },
@@ -559,12 +646,6 @@ export function createAudioMixer(
       populateFromTracks(nextTracks)
       if (audioCtx) {
         ensureGraph()
-        // Graph was torn down + re-built; any clip that was active before
-        // rebuild is now at `active: false` with a fresh HTMLAudioElement.
-        // Re-schedule track curves and re-activate the clips that sit under
-        // the current playhead so mid-playback rebuilds (triggered by
-        // refreshTimeline() after drags / trims / align-apply / etc.) don't
-        // silently drop audio that should keep playing.
         scheduleAllTrackCurves(lastPlayhead)
         reevaluateClips(lastPlayhead, /* hardSeek */ true)
       }
@@ -602,4 +683,15 @@ export function createAudioMixer(
       }
     },
   }
+}
+
+/**
+ * Test / debug helper: clear the module-level decode cache. Production code
+ * should never call this — the cache is intentionally process-wide so that
+ * swapping mixer instances (project switch, HMR) doesn't cost another decode.
+ */
+export function __clearDecodeCacheForTest(): void {
+  decodeCache.clear()
+  decodeStats.decodes = 0
+  decodeStats.hits = 0
 }
