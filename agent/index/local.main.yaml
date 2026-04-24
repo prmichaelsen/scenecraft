@@ -44,3 +44,19 @@ local:
         authenticated users, or platform infra decisions all depend on
         the contracts this document pins.
       applies: acp.proceed, acp.plan, acp.design-create, acp.spec, acp.task-create
+
+    - path: agent/design/local.track-contribution-point-and-light-show-plugin.md
+      weight: 0.8
+      kind: design
+      description: |
+        M17 design: track-type contribution point (frontend + Python plugin
+        system), sidecar-schema migration of core tracks, register_migration
+        plugin primitive, and the light_show plugin that dogfoods both.
+        Includes GDTF-backed fixture profiles, GrandMA3-referenced scene DSL,
+        and a 3D preview panel via three.js/r3f.
+      rationale: |
+        Required reading before any M17 task execution or any work touching
+        the track contribution point, tracks schema, plugin migration system,
+        or the light_show plugin. Pins the sidecar pattern and documents the
+        scope boundaries for M17 vs. post-M17 follow-ups.
+      applies: acp.proceed, acp.plan, acp.task-create, acp.design-create

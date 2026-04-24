@@ -1201,6 +1201,73 @@ milestones:
         estimated_hours: 2
         actual_hours: null
 
+  - id: milestone_17
+    name: Track Contribution Point and Light Show Plugin
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-17-track-contribution-point-and-light-show-plugin.md
+    tasks_total: 7
+    tasks_completed: 0
+    estimated_weeks: 4
+    tasks:
+      - id: task-135
+        name: Migration contribution point (Python plugin host)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-135-migration-contribution-point.md
+        estimated_hours: 4
+        actual_hours: null
+        notes: "Adds register_migration to Python PluginHost with versioned up/down migrations (SQL or Python), schema_migrations meta table. Reusable infra; generate_music/isolate_vocals can adopt post-M17."
+      - id: task-136
+        name: Core tracks schema unification + migration
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-136-tracks-schema-unification.md
+        estimated_hours: 8
+        actual_hours: null
+        notes: "Unified tracks + per-type sidecars (tracks_video, tracks_audio); drops audio_tracks; one-shot migration script preserves existing project DB."
+      - id: task-137
+        name: TrackType contribution point (frontend)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-137-tracktype-contribution-point.md
+        estimated_hours: 8
+        actual_hours: null
+        notes: "registerTrackType on PluginHost; extract video/audio as built-in registrations; refactor Timeline.tsx render loop to dispatch via registry. Behavioral parity with pre-refactor."
+      - id: task-138
+        name: Light show plugin backend skeleton
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-138-light-show-backend-skeleton.md
+        estimated_hours: 10
+        actual_hours: null
+        notes: "Plugin directory, plugin.yaml, 4 migrations (tables + GDTF seed profiles + ~15 scene primitives + demo rig), REST endpoints, MCP tool handlers. Depends on task-135 and task-136."
+      - id: task-139
+        name: Scene evaluator (TS DSL interpreter)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-139-scene-evaluator.md
+        estimated_hours: 6
+        actual_hours: null
+        notes: "TS evaluator: role resolution, parameter bindings (static + curves), time remap, output overlays, track merge math. <5ms per 50-fixture rig per frame."
+      - id: task-140
+        name: 3D preview panel + UniverseContext
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-140-3d-preview-panel.md
+        estimated_hours: 10
+        actual_hours: null
+        notes: "three.js + r3f + drei; additive cone beams; UniverseContext following JobStateContext pattern (no Zustand); playhead-driven render; 60fps target."
+      - id: task-141
+        name: Scene List panel, candidates, end-to-end polish
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-141-scene-list-candidates-polish.md
+        estimated_hours: 6
+        actual_hours: null
+        notes: "Scene List panel with hover-preview; transition candidate MCP tools (add/select/generate); end-to-end MCP authoring flow verification."
+
 tasks:
   milestone_1:
     - id: task-1
