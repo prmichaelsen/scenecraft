@@ -26,9 +26,16 @@
  * Design: agent/design/local.audio-streaming-and-mixing.md
  */
 
-import type { AudioTrack, AudioClip, CurvePoint } from './audio-client'
+import type { AudioTrack, AudioClip } from './audio-client'
 import { scenecraftFileUrl } from './scenecraft-client'
-import { dbToLinear, sampleClipDbAtPlayhead, sampleTrackDbAtPlayhead } from './audio-curves'
+import {
+  COS_CURVE,
+  SIN_CURVE,
+  isTrackEffectivelyMuted as isTrackEffectivelyMutedShared,
+  scheduleClipCurveOnParam,
+  scheduleTrackCurveOnParam,
+  scheduleCrossfadeOnParams,
+} from './mix-graph'
 
 /** Public API the Timeline consumes. */
 export type AudioMixer = {
@@ -96,32 +103,9 @@ type TrackNode = {
   clips: Map<string, ClipNode>
 }
 
-const sortedCurvePoints = (curve: CurvePoint[] | null | undefined): CurvePoint[] => {
-  if (!curve || curve.length === 0) return []
-  return [...curve].sort((a, b) => a[0] - b[0])
-}
-
-const CROSSFADE_CURVE_LEN = 128
-
-/** Precomputed cos(t·π/2) for 0 ≤ t ≤ 1 — equal-power fade-out side. */
-const COS_CURVE = (() => {
-  const arr = new Float32Array(CROSSFADE_CURVE_LEN)
-  for (let i = 0; i < CROSSFADE_CURVE_LEN; i++) {
-    const t = i / (CROSSFADE_CURVE_LEN - 1)
-    arr[i] = Math.cos(t * Math.PI / 2)
-  }
-  return arr
-})()
-
-/** Precomputed sin(t·π/2) — equal-power fade-in side. */
-const SIN_CURVE = (() => {
-  const arr = new Float32Array(CROSSFADE_CURVE_LEN)
-  for (let i = 0; i < CROSSFADE_CURVE_LEN; i++) {
-    const t = i / (CROSSFADE_CURVE_LEN - 1)
-    arr[i] = Math.sin(t * Math.PI / 2)
-  }
-  return arr
-})()
+// Re-export the crossfade curves for any callers that import them from here
+// historically. New code should import from ./mix-graph directly.
+export { COS_CURVE, SIN_CURVE }
 
 const DEFAULT_AUDIO_CTX_FACTORY = (): AudioContext =>
   new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)({
@@ -274,10 +258,8 @@ export function createAudioMixer(
   }
 
   const isTrackEffectivelyMuted = (trackNode: TrackNode): boolean => {
-    if (trackNode.track.muted) return true
-    const anySolo = [...trackMap.values()].some((tn) => tn.track.solo)
-    if (anySolo && !trackNode.track.solo) return true
-    return false
+    const allTracks = [...trackMap.values()].map((tn) => tn.track)
+    return isTrackEffectivelyMutedShared(trackNode.track, allTracks)
   }
 
   const buildTrackGraph = (ctx: AudioContext, trackNode: TrackNode): void => {
@@ -359,50 +341,23 @@ export function createAudioMixer(
 
   const scheduleClipCurve = (clipNode: ClipNode, playhead: number): void => {
     if (!clipNode.clipGain || !audioCtx) return
-    const g = clipNode.clipGain.gain
-    const ctxNow = audioCtx.currentTime
-    g.cancelScheduledValues(ctxNow)
-
-    if (clipNode.clip.muted) {
-      g.setValueAtTime(0, ctxNow)
-      return
-    }
-
-    const anchorDb = sampleClipDbAtPlayhead(clipNode.clip, playhead)
-    g.setValueAtTime(dbToLinear(anchorDb), ctxNow)
-
-    const { start_time, end_time } = clipNode.clip
-    const span = Math.max(end_time - start_time, 1e-9)
-    const pts = sortedCurvePoints(clipNode.clip.volume_curve)
-    for (const [xNorm, db] of pts) {
-      const xSec = start_time + xNorm * span
-      if (xSec <= playhead) continue
-      if (xSec > end_time) break
-      const dtCtx = xSec - playhead
-      g.linearRampToValueAtTime(dbToLinear(db), ctxNow + dtCtx)
-    }
+    scheduleClipCurveOnParam(
+      clipNode.clipGain.gain,
+      clipNode.clip,
+      playhead,
+      audioCtx.currentTime,
+    )
   }
 
   const scheduleTrackCurve = (trackNode: TrackNode, playhead: number): void => {
     if (!trackNode.trackGain || !audioCtx) return
-    const g = trackNode.trackGain.gain
-    const ctxNow = audioCtx.currentTime
-    g.cancelScheduledValues(ctxNow)
-
-    if (isTrackEffectivelyMuted(trackNode)) {
-      g.setValueAtTime(0, ctxNow)
-      return
-    }
-
-    const anchorDb = sampleTrackDbAtPlayhead(trackNode.track, playhead)
-    g.setValueAtTime(dbToLinear(anchorDb), ctxNow)
-
-    const pts = sortedCurvePoints(trackNode.track.volume_curve)
-    for (const [xSec, db] of pts) {
-      if (xSec <= playhead) continue
-      const dtCtx = xSec - playhead
-      g.linearRampToValueAtTime(dbToLinear(db), ctxNow + dtCtx)
-    }
+    scheduleTrackCurveOnParam(
+      trackNode.trackGain.gain,
+      trackNode.track,
+      playhead,
+      audioCtx.currentTime,
+      isTrackEffectivelyMuted(trackNode),
+    )
   }
 
   const scheduleCrossfade = (
@@ -411,16 +366,14 @@ export function createAudioMixer(
     playhead: number,
   ): void => {
     if (!audioCtx || !incumbent.crossfadeGain || !newcomer.crossfadeGain) return
-    const overlapStart = Math.max(incumbent.clip.start_time, newcomer.clip.start_time)
-    const overlapEnd = Math.min(incumbent.clip.end_time, newcomer.clip.end_time)
-    const duration = Math.max(0, overlapEnd - overlapStart)
-    if (duration <= 0) return
-    const ctxNow = audioCtx.currentTime
-    const fadeStartCtx = ctxNow + Math.max(0, overlapStart - playhead)
-    incumbent.crossfadeGain.gain.cancelScheduledValues(ctxNow)
-    newcomer.crossfadeGain.gain.cancelScheduledValues(ctxNow)
-    incumbent.crossfadeGain.gain.setValueCurveAtTime(COS_CURVE, fadeStartCtx, duration)
-    newcomer.crossfadeGain.gain.setValueCurveAtTime(SIN_CURVE, fadeStartCtx, duration)
+    scheduleCrossfadeOnParams(
+      incumbent.crossfadeGain.gain,
+      newcomer.crossfadeGain.gain,
+      incumbent.clip,
+      newcomer.clip,
+      playhead,
+      audioCtx.currentTime,
+    )
   }
 
   const findOverlappingActiveClips = (trackNode: TrackNode, target: ClipNode): ClipNode[] => {
