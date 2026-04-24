@@ -48,12 +48,14 @@
 
 import { describe, expect, it } from 'vitest'
 import type { AudioClip, AudioTrack } from '../audio-client'
+import type { TrackEffect } from '../audio-graph'
 import { renderMixToBuffer, type MixRenderOptions } from '../mix-render'
 import {
   createAudioMixer,
   __clearDecodeCacheForTest,
   type AudioMixerOptions,
 } from '../audio-mixer'
+import { EFFECT_TYPES, type EffectNode } from '../audio-effect-types'
 
 // ── Shared mock OfflineAudioContext (serves both live + offline paths) ────
 
@@ -218,30 +220,51 @@ class MockHybridContext {
   }
 
   /**
-   * Analytically render every scheduled source → destination chain. Walks
-   * the connection graph, multiplying by every gain on the path and
-   * skipping analyser / splitter taps (which are passthrough for audio).
+   * Analytically render every scheduled source → destination chain. Uses
+   * DFS over outbound edges to find a path that reaches the destination,
+   * multiplying by every gain encountered on that path. Analyser / splitter
+   * taps (dead-end branches that never reach destination) are correctly
+   * ignored — the search picks the branch that terminates at destination.
+   *
+   * This matters for the live-mixer graph, where `trackGain` fans out to
+   * BOTH a splitter-based analyser tap AND onward to `masterGain`. Greedy
+   * `connections[0]`-only walks would stop at the analyser and miss the
+   * remainder of the chain.
    */
   startRendering(): Promise<AudioBuffer> {
     const left = new Float32Array(this.length)
     const right = new Float32Array(this.length)
 
+    // Finds a simple path from `src` to a destination node, collecting the
+    // gain params of every gain node along the way. Returns null if no path
+    // reaches destination (in which case the source is audible through only
+    // analyser taps and doesn't contribute to PCM).
+    const findDestinationPath = (src: MockNodeBase): MockAudioParam[] | null => {
+      const path: MockAudioParam[] = []
+      const visited = new Set<MockNodeBase>()
+      const dfs = (node: MockNodeBase): boolean => {
+        if (node.kind === 'destination') return true
+        if (visited.has(node)) return false
+        visited.add(node)
+        for (const next of node.connections) {
+          if (next.kind === 'gain' && next.gain) {
+            path.push(next.gain)
+            if (dfs(next)) return true
+            path.pop()
+          } else if (dfs(next)) {
+            return true
+          }
+        }
+        return false
+      }
+      return dfs(src) ? path : null
+    }
+
     for (const src of this.createdSources) {
       if (!src.started || !src.buffer || src.stopped) continue
 
-      // Walk source → ... → destination, collecting every gain param. Skip
-      // analyser/splitter; they pass audio through unchanged.
-      const gainParams: MockAudioParam[] = []
-      let cursor: MockNodeBase = src
-      const visited = new Set<MockNodeBase>()
-      while (cursor.connections.length > 0) {
-        const next: MockNodeBase = cursor.connections[0]
-        if (visited.has(next)) break
-        visited.add(next)
-        if (next.kind === 'gain' && next.gain) gainParams.push(next.gain)
-        if (next.kind === 'destination') break
-        cursor = next
-      }
+      const gainParams = findDestinationPath(src)
+      if (!gainParams) continue
 
       const buf = src.buffer
       const bufLeft = buf.getChannelData(0)
@@ -343,6 +366,7 @@ async function renderOffline(
   startTimeS: number,
   endTimeS: number,
   sampleRate = 48000,
+  masterEffects: readonly TrackEffect[] = [],
 ): Promise<{ pcm: Float32Array; ctx: MockHybridContext }> {
   let capturedCtx: MockHybridContext | null = null
   const opts: MixRenderOptions = {
@@ -352,6 +376,7 @@ async function renderOffline(
     sampleRate,
     channels: 2,
     bufferCache: buffers,
+    masterEffects,
     offlineCtxFactory: (init) => {
       capturedCtx = new MockHybridContext(init)
       return capturedCtx as unknown as OfflineAudioContext
@@ -386,6 +411,7 @@ async function renderLive(
   startTimeS: number,
   endTimeS: number,
   sampleRate = 48000,
+  masterEffects: readonly TrackEffect[] = [],
 ): Promise<{ pcm: Float32Array; ctx: MockHybridContext }> {
   const frames = Math.ceil((endTimeS - startTimeS) * sampleRate)
   const ctx = new MockHybridContext({ numberOfChannels: 2, length: frames, sampleRate })
@@ -412,6 +438,7 @@ async function renderLive(
       if (!buf) throw new Error(`live-decode: no pre-seeded buffer for path ${path}`)
       return buf
     },
+    masterEffects,
   }
 
   __clearDecodeCacheForTest()
@@ -609,6 +636,76 @@ describe('live vs offline PCM parity — muted track', () => {
       expect(live.pcm[i]).toBe(0)
       expect(offline.pcm[i]).toBe(0)
     }
+  })
+})
+
+// ── Master-bus effect chain fidelity ─────────────────────────────────────
+
+// Register a temporary effect_type that wraps a single GainNode. Using a
+// plain gain as the "master effect" lets us verify live/offline parity
+// without depending on the amplitude behavior of complex dynamics processors
+// (which respond to signal history and can drift between paths for reasons
+// orthogonal to scheduling parity).
+const MASTER_TEST_TYPE = '__fidelity_master_gain'
+EFFECT_TYPES[MASTER_TEST_TYPE] = {
+  type: MASTER_TEST_TYPE,
+  label: 'FidelityMasterGain',
+  category: 'dynamics',
+  params: [
+    { name: 'gain', label: 'Gain', animatable: true, range: { min: 0, max: 10 }, scale: 'linear', default: 1 },
+  ],
+  build: (ctx, staticParams): EffectNode => {
+    const g = ctx.createGain()
+    const v = typeof staticParams.gain === 'number' ? staticParams.gain : 1
+    g.gain.setValueAtTime(v, ctx.currentTime)
+    return {
+      input: g,
+      output: g,
+      setParam: (_name, value, when) => { g.gain.setValueAtTime(value, when ?? ctx.currentTime) },
+      scheduleCurve: () => { /* n/a for this test */ },
+      dispose: () => { try { g.disconnect() } catch { /* ignore */ } },
+    }
+  },
+}
+
+describe('live vs offline PCM parity — master-bus effect chain', () => {
+  it('matches with a single master-bus gain effect wired between masterGain and destination', async () => {
+    const sr = 48000
+    const duration = 0.1
+    const buf = makeBuffer(duration + 0.01, sr, 2, (f) => 0.5 * Math.sin((2 * Math.PI * 440 * f) / sr))
+    const buffers = new Map<string, AudioBuffer>([['sine.wav', buf]])
+    const tracks: AudioTrack[] = [
+      mkTrack('t1', [mkClip({ id: 'c1', start_time: 0, end_time: duration, source_path: 'sine.wav' })]),
+    ]
+    const masterEffects: TrackEffect[] = [{
+      id: 'me1',
+      track_id: '',
+      effect_type: MASTER_TEST_TYPE,
+      order_index: 0,
+      enabled: true,
+      static_params: { gain: 0.75 },
+    }]
+
+    const offline = await renderOffline(tracks, buffers, 0, duration, sr, masterEffects)
+    const live = await renderLive(tracks, buffers, 0, duration, sr, masterEffects)
+
+    const diff = maxAbsDiff(live.pcm, offline.pcm)
+    // Expect EXACTLY 0 — both paths share buildEffectChain and set the same
+    // setValueAtTime(0.75, 0) on the effect's gain param.
+    expect(diff).toBe(0)
+
+    // Sanity: the master effect actually attenuated (otherwise the test is
+    // a noop and would silently pass even if one path ignored the chain).
+    let liveEnergy = 0
+    for (let i = 0; i < live.pcm.length; i++) liveEnergy += Math.abs(live.pcm[i])
+    expect(liveEnergy).toBeGreaterThan(0)
+    // Max PCM in live should be ≤ buffer peak (0.5) * gain (0.75) + ε.
+    let liveMax = 0
+    for (let i = 0; i < live.pcm.length; i++) {
+      const v = Math.abs(live.pcm[i])
+      if (v > liveMax) liveMax = v
+    }
+    expect(liveMax).toBeLessThan(0.5 * 0.75 + 1e-3)
   })
 })
 

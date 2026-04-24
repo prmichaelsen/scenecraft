@@ -31,11 +31,14 @@ import { scenecraftFileUrl } from './scenecraft-client'
 import {
   COS_CURVE,
   SIN_CURVE,
+  buildEffectChain,
   isTrackEffectivelyMuted as isTrackEffectivelyMutedShared,
   scheduleClipCurveOnParam,
   scheduleTrackCurveOnParam,
   scheduleCrossfadeOnParams,
+  type EffectChainHandle,
 } from './mix-graph'
+import type { TrackEffect } from './audio-graph'
 
 /** Public API the Timeline consumes. */
 export type AudioMixer = {
@@ -56,6 +59,12 @@ export type AudioMixer = {
   getTrackAnalysers(trackId: string): { left: AnalyserNode; right: AnalyserNode } | null
   /** Master-bus stereo analyser taps. */
   getMasterAnalysers(): { left: AnalyserNode; right: AnalyserNode } | null
+  /**
+   * Replace the master-bus effect chain. Disposes existing chain nodes and
+   * wires fresh ones between `masterGain` and `masterAnalyser`. Used when the
+   * embedded chat agent adds / removes / reorders a master-bus effect.
+   */
+  reevaluateMasterChain(effects: readonly TrackEffect[]): void
   /** Tear down all nodes; close AudioContext. */
   dispose(): void
 }
@@ -77,6 +86,12 @@ export type AudioMixerOptions = {
    * contents — only its identity and `.duration` matter at runtime.
    */
   decode?: (ctx: AudioContext, bytes: ArrayBuffer) => Promise<AudioBuffer>
+  /**
+   * Initial master-bus effects. The chain is built lazily when the audio
+   * graph is first needed. Pass an empty array (or omit) for no master fx.
+   * Mutate at runtime via `reevaluateMasterChain()`.
+   */
+  masterEffects?: readonly TrackEffect[]
 }
 
 type ClipNode = {
@@ -150,13 +165,20 @@ export function createAudioMixer(
    *  decoded buffer (also written into decodeCache). */
   const pendingDecodes = new Map<string, Promise<AudioBuffer>>()
 
-  // Master bus — every track's trackGain feeds into masterGain, which feeds
-  // both a stereo L/R analyser pair (for the transport-bar level meter) and
-  // the destination.
+  // Master bus topology:
+  //
+  //   trackGains → masterGain → masterFxChain → masterAnalyser (tap) → destination
+  //
+  // The fx chain is always present — if there are no master effects, its
+  // internal input/output are passthrough GainNodes so the audio path stays
+  // the same shape for empty vs. populated chains (simpler wiring, no
+  // special cases).
   let masterGain: GainNode | null = null
+  let masterFxChain: EffectChainHandle | null = null
   let masterSplitter: ChannelSplitterNode | null = null
   let masterAnalyserL: AnalyserNode | null = null
   let masterAnalyserR: AnalyserNode | null = null
+  let masterEffects: readonly TrackEffect[] = options.masterEffects ?? []
   let isPlaying = false
   let lastPlayhead = 0
   let disposed = false
@@ -193,11 +215,21 @@ export function createAudioMixer(
     masterGain.channelCount = 2
     masterGain.channelCountMode = 'explicit'
     masterGain.channelInterpretation = 'speakers'
-    const pair = buildStereoAnalyserPair(ctx, masterGain)
+
+    // masterFxChain.output is where the analyser tap + destination both
+    // attach. When masterEffects is empty, the chain is just a pair of
+    // passthrough gains — same topology, same signal.
+    masterFxChain = buildEffectChain(ctx, masterEffects)
+    masterGain.connect(masterFxChain.input)
+
+    // Analyser tap lives POST-chain (pro-DAW convention — meter shows what's
+    // leaving the system). The tap is non-invasive; masterFxChain.output
+    // continues to destination independently.
+    const pair = buildStereoAnalyserPair(ctx, masterFxChain.output)
     masterSplitter = pair.splitter
     masterAnalyserL = pair.left
     masterAnalyserR = pair.right
-    masterGain.connect(ctx.destination)
+    masterFxChain.output.connect(ctx.destination)
   }
 
   const ensureCtx = (): AudioContext => {
@@ -279,6 +311,11 @@ export function createAudioMixer(
 
   const ensureGraph = (): void => {
     const ctx = ensureCtx()
+    // Always build the master graph so master-bus effects process even when
+    // the project has zero tracks (e.g. a fresh project listening through a
+    // master limiter preview). Without this the chain would only materialize
+    // via `buildTrackGraph`'s call — which never runs for an empty project.
+    ensureMasterGraph(ctx)
     for (const trackNode of trackMap.values()) {
       buildTrackGraph(ctx, trackNode)
       for (const clipNode of trackNode.clips.values()) {
@@ -616,6 +653,47 @@ export function createAudioMixer(
       return { left: masterAnalyserL, right: masterAnalyserR }
     },
 
+    reevaluateMasterChain(nextEffects: readonly TrackEffect[]) {
+      if (disposed) return
+      // Snapshot the desired state. Subsequent `ensureMasterGraph` calls
+      // (e.g. from future rebuilds) will use this list to build the chain.
+      masterEffects = nextEffects
+
+      // If the master graph hasn't been built yet, we're done — the next
+      // ensureMasterGraph() will pick up the new list.
+      if (!audioCtx || !masterGain) return
+
+      const ctx = audioCtx
+
+      // Detach the current chain. masterGain feeds masterFxChain.input;
+      // masterFxChain.output feeds both the analyser splitter and destination.
+      // Disconnecting masterGain severs the only inbound edge to the old
+      // chain; disposing the old chain releases all its internal edges.
+      try { masterGain.disconnect() } catch { /* ignore */ }
+      const oldChain = masterFxChain
+      if (oldChain) {
+        try { oldChain.dispose() } catch { /* ignore */ }
+      }
+
+      // Also tear down the analyser splitter — it was fed from the old
+      // chain's output which we just disposed. We'll rebuild it from the
+      // fresh chain's output below.
+      try { masterSplitter?.disconnect() } catch { /* ignore */ }
+      try { masterAnalyserL?.disconnect() } catch { /* ignore */ }
+      try { masterAnalyserR?.disconnect() } catch { /* ignore */ }
+
+      // Build fresh chain + re-wire.
+      masterFxChain = buildEffectChain(ctx, masterEffects)
+      masterGain.connect(masterFxChain.input)
+      const pair = buildStereoAnalyserPair(ctx, masterFxChain.output)
+      masterSplitter = pair.splitter
+      masterAnalyserL = pair.left
+      masterAnalyserR = pair.right
+      masterFxChain.output.connect(ctx.destination)
+
+      log(`reevaluateMasterChain(${nextEffects.length} effects)`)
+    },
+
     dispose() {
       if (disposed) return
       disposed = true
@@ -623,10 +701,12 @@ export function createAudioMixer(
       for (const trackNode of trackMap.values()) tearDownTrack(trackNode)
       trackMap.clear()
       try { masterGain?.disconnect() } catch { /* ignore */ }
+      try { masterFxChain?.dispose() } catch { /* ignore */ }
       try { masterSplitter?.disconnect() } catch { /* ignore */ }
       try { masterAnalyserL?.disconnect() } catch { /* ignore */ }
       try { masterAnalyserR?.disconnect() } catch { /* ignore */ }
       masterGain = null
+      masterFxChain = null
       masterSplitter = null
       masterAnalyserL = null
       masterAnalyserR = null

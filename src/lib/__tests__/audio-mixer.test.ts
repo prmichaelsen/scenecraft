@@ -394,15 +394,23 @@ describe('createAudioMixer — curve automation (T117)', () => {
   let opts: ReturnType<typeof makeOptions>
   beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
+  // The mixer creates, in order, before the first track gain is built:
+  //   1. masterGain
+  //   2. master fx-chain passthrough input
+  //   3. master fx-chain passthrough output
+  // (The empty master chain always wires input→output passthroughs so the
+  // audio topology is identical whether or not a master effect is present.)
+  // We skip those 3 so tests can index `_allGains[0]` as the first trackGain.
+  const MASTER_GAIN_COUNT = 3
   const instrumentCtx = (ctx: MockAudioContext): void => {
     const origCreateGain = ctx.createGain.bind(ctx)
     const gains: MockGainNode[] = []
     ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
-    let skippedMaster = false
+    let skipped = 0
     ctx.createGain = () => {
       const g = origCreateGain()
-      if (!skippedMaster) {
-        skippedMaster = true
+      if (skipped < MASTER_GAIN_COUNT) {
+        skipped++
         return g
       }
       gains.push(g)
@@ -507,14 +515,16 @@ describe('createAudioMixer — equal-power crossfade (T117)', () => {
   let opts: ReturnType<typeof makeOptions>
   beforeEach(() => { __clearDecodeCacheForTest(); opts = makeOptions() })
 
+  // Same skip logic as curve-automation describe: masterGain + 2 passthroughs.
+  const MASTER_GAIN_COUNT = 3
   const instrumentCtx = (ctx: MockAudioContext): void => {
     const orig = ctx.createGain.bind(ctx)
     const gains: MockGainNode[] = []
     ;(ctx as unknown as { _allGains: MockGainNode[] })._allGains = gains
-    let skippedMaster = false
+    let skipped = 0
     ctx.createGain = () => {
       const g = orig()
-      if (!skippedMaster) { skippedMaster = true; return g }
+      if (skipped < MASTER_GAIN_COUNT) { skipped++; return g }
       gains.push(g)
       return g
     }
