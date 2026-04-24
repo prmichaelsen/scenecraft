@@ -50,6 +50,19 @@ export type MixRenderRequest = {
   sample_rate: number
 }
 
+/**
+ * Fired by the backend after any mutation to master-bus effects
+ * (create / update / delete / reorder). The frontend reacts by refetching
+ * the current master-bus effects list and rebuilding the live mixer's
+ * master chain via `reevaluateMasterChain()`.
+ *
+ * No payload — the message is a pure invalidation signal; the frontend
+ * always refetches the full list so ordering / static_params stay in sync.
+ */
+export type MasterBusEffectsChanged = {
+  type: 'master_bus_effects_changed'
+}
+
 export type ServerMessage =
   | { type: 'chunk'; content: string }
   | { type: 'tool_call'; toolCall: { id: string; name: string; input: Record<string, unknown> } }
@@ -61,6 +74,7 @@ export type ServerMessage =
   | { type: 'complete' }
   | { type: 'error'; error: string }
   | MixRenderRequest
+  | MasterBusEffectsChanged
 
 export type ClientMessage =
   | { type: 'message'; content: string; images?: string[] }
@@ -304,5 +318,56 @@ export async function handleMixRenderRequest(
     if (wasPlaying && opts.mixer) {
       try { opts.mixer.play() } catch (e) { console.warn('[mix-render] play() failed:', e) }
     }
+  }
+}
+
+// --- Master-bus effects invalidation handler (M-master-bus-wiring-fe) ---
+
+import type { TrackEffect } from './audio-graph'
+import { fetchMasterBusEffects } from './scenecraft-client'
+
+/**
+ * Minimal mixer surface needed to rebuild the master chain. Matches the
+ * ``reevaluateMasterChain`` method on ``AudioMixer``; typed as a subset so
+ * tests can pass mocks with only this method stubbed.
+ */
+export type MasterChainMixer = {
+  reevaluateMasterChain(effects: readonly TrackEffect[]): void
+}
+
+export type HandleMasterBusEffectsChangedOptions = {
+  /** Project whose master-bus effects to refetch. */
+  projectName: string
+  /** Live mixer to invalidate. When null, the fetch still runs but the
+   *  rebuild is a no-op — mirrors the behavior when the mixer hasn't
+   *  finished mounting yet. */
+  mixer: MasterChainMixer | null
+
+  // ── Test injection hooks ─────────────────────────────────────────────────
+  /** Override fetch for the master-bus effects GET (tests mock this). */
+  fetchEffectsImpl?: typeof fetchMasterBusEffects
+}
+
+/**
+ * Handle a server-initiated ``master_bus_effects_changed`` invalidation.
+ * Refetches the current master-bus effect list and passes it to the live
+ * mixer's ``reevaluateMasterChain`` so the audio graph reflects the new
+ * state. Errors are logged to the console only — the chat agent narrates
+ * mutations in its own messages, so no UI toast is surfaced for v1.
+ */
+export async function handleMasterBusEffectsChanged(
+  opts: HandleMasterBusEffectsChangedOptions,
+): Promise<void> {
+  const fetchEffectsImpl = opts.fetchEffectsImpl ?? fetchMasterBusEffects
+  try {
+    const effects = await fetchEffectsImpl(opts.projectName)
+    if (!opts.mixer) {
+      console.warn('[master-bus] mixer not ready; skipping reevaluateMasterChain')
+      return
+    }
+    opts.mixer.reevaluateMasterChain(effects as unknown as readonly TrackEffect[])
+    console.log(`[master-bus] rebuilt master chain (${effects.length} effects)`)
+  } catch (err) {
+    console.warn('[master-bus] invalidation handler failed:', err)
   }
 }

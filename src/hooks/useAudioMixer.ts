@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { createAudioMixer, type AudioMixer } from '@/lib/audio-mixer'
 import type { AudioTrack } from '@/lib/audio-client'
+import { fetchMasterBusEffects } from '@/lib/scenecraft-client'
+import type { TrackEffect } from '@/lib/audio-graph'
+
+/**
+ * Event name dispatched on `window` when the backend notifies us that
+ * master-bus effects were mutated (via the `master_bus_effects_changed`
+ * WS message). Listeners refetch the list and call `reevaluateMasterChain`.
+ * Using a window event instead of context avoids plumbing the mixer
+ * instance through multiple dock panels.
+ */
+export const MASTER_BUS_EFFECTS_CHANGED_EVENT = 'scenecraft:master-bus-effects-changed'
 
 /**
  * React wrapper around the WebAudio streaming mixer.
@@ -41,6 +52,32 @@ export function useAudioMixer(
       setMixer(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName])
+
+  // Initial master-bus load + WS-driven invalidation.
+  // Runs once on mount (per projectName) to seed the master chain with
+  // whatever the DB says, and then subscribes to the window-level event
+  // that ChatPanel dispatches when the backend sends
+  // `master_bus_effects_changed`. Without this effect the mixer starts
+  // with an empty chain even when the DB has master effects configured.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const rebuild = () => {
+      fetchMasterBusEffects(projectName)
+        .then((effects) => {
+          if (!mixerRef.current) return
+          mixerRef.current.reevaluateMasterChain(effects as unknown as readonly TrackEffect[])
+        })
+        .catch((err) => {
+          console.warn('[useAudioMixer] fetchMasterBusEffects failed:', err)
+        })
+    }
+
+    rebuild()
+    const listener = () => rebuild()
+    window.addEventListener(MASTER_BUS_EFFECTS_CHANGED_EVENT, listener)
+    return () => window.removeEventListener(MASTER_BUS_EFFECTS_CHANGED_EVENT, listener)
   }, [projectName])
 
   // Track list changed: rebuild graph
