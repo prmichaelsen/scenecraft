@@ -135,7 +135,81 @@
 - **R31**: When `source.kind === 'video'`, the panel's drag handle emits `dragstart` events with:
   - `dataTransfer.setData('application/x-scenecraft-video-subclip', JSON.stringify({ path, inSeconds, outSeconds, label }))` where `inSeconds = inPoint ?? 0` and `outSeconds = outPoint ?? duration`
   - `dataTransfer.effectAllowed = 'copy'`
-- **R32**: The timeline / keyframe drop handler (new; addition to `Timeline.tsx`) receives `application/x-scenecraft-video-subclip`, creates a new `keyframe` + `transition` pair at the drop position, sets `transition.trim_in = inSeconds` and `transition.trim_out = outSeconds`, and runs existing transition reconciliation (overlapping tr's nudged / trimmed per current logic).
+- **R32**: The timeline / keyframe drop handler (new; addition to `Timeline.tsx`) receives `application/x-scenecraft-video-subclip` and runs the **same wire-up logic** the existing `POST /api/projects/:name/add-keyframe` endpoint runs — there is no separate "reconciliation" or "nudging" step. Concretely:
+
+  **In English.** The handler parses the drop position into a new keyframe time, calls the existing add-keyframe path, then attaches the dropped subclip's media reference (path + `trim_in` + `trim_out`) onto the appropriate adjacent transition. The add-keyframe path itself does the timeline-neighbor wiring:
+    1. Insert the new `keyframes` row at the drop time (on the target track).
+    2. Find the new kf's previous and next neighbors on the same track.
+    3. If a transition already spans `(prev → next)` (the new kf was dropped inside an existing video segment), **relink** that transition so its `to_kf` becomes the new kf (keeping its existing video, `trim_in`, `trim_out`, candidates, etc.) and update its `duration_seconds` to `new_time − prev_time`. Then create a fresh **blank** transition for `(new_kf → next)` with the right duration but no video selected.
+    4. If no spanning transition exists, create blank transitions to whichever neighbors exist: `(prev → new_kf)` and/or `(new_kf → next)`.
+    5. Then attach the dropped subclip's media reference to the appropriate transition (see OQ-9 below for which transition it lands on).
+  None of the existing transitions move in time, get trimmed, or get bumped sideways — that's why "nudging" is the wrong word. The only mutation to existing rows is the spanning-transition relink (its `to_kf` and `duration_seconds` change; its video stays).
+
+  **In Python pseudocode** (mirrors `_handle_add_keyframe` in `api_server.py:5514`):
+
+  ```python
+  # Drop payload: { path, inSeconds, outSeconds, label }
+  new_time = drop_position_seconds(event)
+
+  with transaction(project_dir):
+      # 1. Insert new keyframe at drop time
+      new_id = next_keyframe_id(project_dir)
+      add_keyframe(project_dir, {
+          "id": new_id,
+          "timestamp": new_time,
+          "track_id": target_track_id,
+          # ... other defaults from existing add-keyframe path
+      })
+
+      # 2. Find timeline neighbors on the same track
+      track_kfs = sorted(
+          [k for k in get_keyframes(project_dir) if k["track_id"] == target_track_id],
+          key=lambda k: parse_ts(k["timestamp"]),
+      )
+      idx = next(i for i, k in enumerate(track_kfs) if k["id"] == new_id)
+      prev_kf = track_kfs[idx - 1] if idx > 0 else None
+      next_kf = track_kfs[idx + 1] if idx < len(track_kfs) - 1 else None
+
+      # 3. Look for an existing transition spanning (prev → next)
+      old_tr = None
+      if prev_kf and next_kf:
+          old_tr = find_transition(project_dir,
+                                   from_kf=prev_kf["id"],
+                                   to_kf=next_kf["id"])
+
+      if old_tr:
+          # Relink: old transition keeps its video; its endpoint becomes new_kf.
+          dur_before = round(new_time - parse_ts(prev_kf["timestamp"]), 2)
+          update_transition(project_dir, old_tr["id"],
+                            to=new_id,
+                            duration_seconds=dur_before,
+                            remap={"method": "linear", "target_duration": dur_before})
+          # And add a fresh blank transition new_kf → next_kf
+          dur_after = round(parse_ts(next_kf["timestamp"]) - new_time, 2)
+          add_transition(project_dir, blank_transition(new_id, next_kf["id"], dur_after,
+                                                      target_track_id))
+      else:
+          # 4. No spanning transition — create blanks to whichever neighbors exist
+          if prev_kf:
+              dur_before = round(new_time - parse_ts(prev_kf["timestamp"]), 2)
+              add_transition(project_dir, blank_transition(prev_kf["id"], new_id,
+                                                          dur_before, target_track_id))
+          if next_kf:
+              dur_after = round(parse_ts(next_kf["timestamp"]) - new_time, 2)
+              add_transition(project_dir, blank_transition(new_id, next_kf["id"],
+                                                          dur_after, target_track_id))
+
+      # 5. Attach the dropped subclip's media reference to the appropriate
+      #    transition (see OQ-9). Most likely the (prev_kf → new_kf) transition,
+      #    since the new keyframe is the END of the dropped clip's content.
+      attach_subclip_video(project_dir,
+                           transition_id=<picked per OQ-9>,
+                           pool_path=payload["path"],
+                           trim_in=payload["inSeconds"],
+                           trim_out=payload["outSeconds"])
+  ```
+
+  Existing transitions never move in time. Only the spanning transition's `to_kf` and `duration_seconds` change during relink; its video stays put.
 
 ### Plugin contribution point
 
@@ -507,20 +581,36 @@ The core behavior contract — happy path, common bad paths, primary positive an
 **Then** (assertions):
 - **subclip-payload-shape**: `JSON.parse(dataTransfer.getData('application/x-scenecraft-video-subclip'))` equals `{ path: 'pool/bounces/foo.mp4', inSeconds: 0, outSeconds: 16, label: 'range 32-48s v2' }`
 
-#### Test: video-drop-creates-kf-tr-pair (covers R32)
+#### Test: video-drop-relinks-spanning-transition (covers R32)
 
 **Given**:
-- A video subclip dragstart fired with `{inSeconds: 10, outSeconds: 25}` on `pool/bounces/foo.mp4`
-- Drop target is the timeline keyframe surface at t = 40.0s
+- Existing timeline on a video track has keyframes at t = 30 and t = 60 connected by a spanning transition `tr_existing` (with its own video, trim_in=5, trim_out=20)
+- Source monitor has a video source loaded at `path = pool/bounces/foo.mp4` with `inPoint = 10`, `outPoint = 25`
+- A `dragstart` fired with the corresponding `application/x-scenecraft-video-subclip` payload
 
-**When**: The drop is handled by the Timeline's new video-subclip drop handler
+**When**: The drop lands on the timeline at t = 40.0
 
 **Then** (assertions):
-- **keyframe-created**: a new `keyframes` row exists at timestamp 40.0
-- **transition-created**: a new `transitions` row exists referencing the new keyframe
-- **trim-in**: the new transition's `trim_in === 10`
-- **trim-out**: the new transition's `trim_out === 25`
-- **reconciliation-ran**: any transitions overlapping [40.0, 40.0 + 15.0] were adjusted or the drop was rejected per existing reconciliation rules (test asserts the reconciliation function was invoked)
+- **keyframe-created**: exactly one new `keyframes` row exists at timestamp 40.0 on the target track
+- **spanning-tr-relinked**: `tr_existing.to_kf` is now the new kf id (was the kf at t=60); `tr_existing.duration_seconds === 10` (= 40 − 30); `tr_existing.trim_in` and `tr_existing.trim_out` and the row's selected video are unchanged
+- **second-tr-created**: a new transition exists from the new kf to the kf at t=60 with `duration_seconds === 20` (= 60 − 40); this transition is blank (no `selected`, no `trim_in`/`trim_out`, no video)
+- **subclip-attached**: the dropped subclip's video reference (path + trim_in=10, trim_out=25) is attached to exactly one transition per OQ-9; that transition's `trim_in === 10` and `trim_out === 25`
+- **no-other-rows-mutated**: no other `keyframes` or `transitions` rows had their `timestamp`, `from_kf`, `to_kf`, `duration_seconds`, `trim_in`, `trim_out`, or `selected` columns change
+
+#### Test: video-drop-no-spanning-transition (covers R32)
+
+**Given**:
+- Track has keyframes at t = 30 and t = 60 but **no transition** between them
+- Source monitor has the same video subclip as above with `inPoint = 10`, `outPoint = 25`
+
+**When**: The drop lands on the timeline at t = 40.0
+
+**Then** (assertions):
+- **keyframe-created**: a new `keyframes` row at t = 40.0
+- **prev-tr-created**: a new transition `(prev → new_kf)` with `duration_seconds === 10`; blank by default (or carries the subclip per OQ-9)
+- **next-tr-created**: a new transition `(new_kf → next)` with `duration_seconds === 20`; blank
+- **subclip-attached**: the dropped subclip's video reference is attached to the transition designated by OQ-9 with `trim_in === 10`, `trim_out === 25`
+- **no-existing-rows-mutated**: the kf at t=30 and t=60 are unchanged; no other transition rows were created or modified
 
 #### Test: recent-sources-pushed-on-setsource (covers R23)
 
@@ -848,6 +938,12 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **OQ-6 — Progress bar fallback when `poolSegmentId` is absent on audio source.** Spec says "scrubbable progress bar." Does this need waveform-like visual indication of position, or a plain `<input type="range">`?
 - **OQ-7 — Right-click menu wiring on timeline video clip (R46).** The exact mechanism (ContextMenuProvider subscription? extension of existing `onContextMenu` handler?) is unspecified; implementers pick based on current timeline architecture.
 - **OQ-8 — `invalid-kind-value-rejected` test outcome.** Spec lets implementer choose compile-time-only or runtime-guard. Should spec pin one? Compile-time-only is lighter but loses runtime safety for JSON-deserialized sources.
+- **OQ-9 — Where does a dropped video subclip's media reference attach?** R32's wire-up reuses `add-keyframe`'s relink+blank-fill logic (the existing add-keyframe path creates blank transitions around the new kf). The dropped subclip's `path` + `trim_in` + `trim_out` need to land on **one** of:
+    - The transition INTO the new kf (`prev_kf → new_kf`) — treats the new keyframe as the END of the dropped clip's playback. Most natural NLE-style "I just dropped a clip ending here" reading.
+    - The transition OUT of the new kf (`new_kf → next_kf`) — treats the drop position as the START of the clip.
+    - Both transitions (clip spans the new kf) — only sensible when both neighbors exist; doubles the duration of the dropped clip across the timeline.
+    - A new "wrapper" transition pair around two new keyframes (one at drop position, one at drop+duration of subclip) — most accurate to source-clip duration but introduces a second new kf and may collide with existing kfs.
+  Recommendation pending implementer review: option 1 (prev_kf → new_kf) for v1, since it preserves the existing add-keyframe shape and matches "drop = clip ends here" semantics. Should be confirmed before implementation.
 
 ---
 
