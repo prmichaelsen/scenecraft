@@ -29,7 +29,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 - Three new SQLite tables in per-project `project.db`: `light_show__scenes`, `light_show__scene_placements`, `light_show__live_override`
 - Nine DB helper functions re-exported from `plugin_api.py`
-- One shared catalog file: `scenecraft-engine/src/scenecraft/plugins/light_show/primitives_catalog.json`
+- One shared catalog file: `scenecraft-engine/src/scenecraft/plugins/light_show/primitives_catalog.yaml` (YAML; static config that ships with the plugin)
 - Ten REST endpoints under `/api/projects/:name/plugins/light_show/` (scenes, placements, live, primitives — GET/PUT/POST variants)
 - Three new MCP tools declared in `plugin.yaml`: `scenes`, `scene_timeline`, `scene_live` — each action-dispatched
 - Two primitive apply functions in frontend `primitives.ts`: `applyRotatingHead`, `applyStaticColor`
@@ -62,7 +62,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ### `scenes` MCP tool
 
-- **R4.** `scenes.list_primitives` MUST return the contents of `primitives_catalog.json` verbatim, wrapped as `{primitives: [...]}`.
+- **R4.** `scenes.list_primitives` MUST return the parsed contents of `primitives_catalog.yaml` (YAML → JSON via `yaml.safe_load`) wrapped as `{primitives: [...]}` over the wire. The structural content of the response MUST be byte-for-byte equivalent to the parsed YAML — no field reordering, omission, or transformation.
 - **R5.** `scenes.list` MUST return all scenes as `{scenes: [{id, label, type, params, created_at, updated_at}]}` with `params` deserialized from `params_json`.
 - **R6.** `scenes.set` MUST accept `{scenes: [...]}` and upsert by `id` with partial-state semantics: for existing ids, omitted fields preserve current values; for new ids, a new row is inserted with the provided fields, using primitive catalog defaults for any unspecified `params`.
 - **R7.** `scenes.set` MUST reject entries missing `id`, returning `{error: "upsert_light_show_scenes: each scene must have an id"}`.
@@ -107,7 +107,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ### Frontend primitive catalog
 
-- **R31.** The frontend `PRIMITIVE_REGISTRY` MUST contain an entry for each primitive in `primitives_catalog.json`. Frontend build-time or runtime validation that catalog keys match registry keys MUST be present (e.g., assert in module top-level).
+- **R31.** The frontend `PRIMITIVE_REGISTRY` MUST contain an entry for each primitive in `primitives_catalog.yaml`. Frontend build-time or runtime validation that catalog keys match registry keys MUST be present (e.g., assert in module top-level).
 
 ### `applyRotatingHead`
 
@@ -144,56 +144,62 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ## Interfaces / Data Shapes
 
-### `primitives_catalog.json`
+### `primitives_catalog.yaml`
 
-```json
-{
-  "primitives": [
-    {
-      "id": "rotating_head",
-      "label": "Rotating Head",
-      "description": "Sinusoidal pan/tilt sweep with hold color + intensity. Period controls cycle length; amplitude controls arc width.",
-      "params_schema": {
-        "type": "object",
-        "properties": {
-          "role":                { "type": "string",  "default": "moving_head",
-                                   "description": "Fixture role filter; undefined = all fixtures" },
-          "period_sec":          { "type": "number",  "minimum": 0.1, "default": 4.0 },
-          "pan_amplitude_rad":   { "type": "number",  "minimum": 0,   "default": 0.7853981633974483 },
-          "tilt_center_rad":     { "type": "number",  "default": -0.3 },
-          "tilt_amplitude_rad":  { "type": "number",  "minimum": 0,   "default": 0.2 },
-          "tilt_period_sec":     { "type": "number",  "minimum": 0.1, "default": 4.0 },
-          "intensity":           { "type": "number",  "minimum": 0, "maximum": 1, "default": 1.0 },
-          "color":               { "type": "array",   "minItems": 3, "maxItems": 3,
-                                   "items": { "type": "number", "minimum": 0, "maximum": 1 },
-                                   "default": [1, 1, 1] }
-        }
-      }
-    },
-    {
-      "id": "static_color",
-      "label": "Static Color",
-      "description": "Hold a color + intensity. No animation; use for static backdrops or baseline fills.",
-      "params_schema": {
-        "type": "object",
-        "properties": {
-          "role":       { "type": "string", "description": "Fixture role filter; undefined = all fixtures" },
-          "intensity":  { "type": "number", "minimum": 0, "maximum": 1, "default": 1.0 },
-          "color":      { "type": "array",  "minItems": 3, "maxItems": 3,
-                          "items": { "type": "number", "minimum": 0, "maximum": 1 },
-                          "default": [1, 1, 1] }
-        }
-      }
-    }
-  ]
-}
+```yaml
+primitives:
+  - id: rotating_head
+    label: Rotating Head
+    description: |
+      Sinusoidal pan/tilt sweep with hold color + intensity.
+      Period controls cycle length; amplitude controls arc width.
+    params_schema:
+      type: object
+      properties:
+        role:
+          type: string
+          default: moving_head
+          description: Fixture role filter; undefined = all fixtures
+        period_sec:        { type: number, minimum: 0.1, default: 4.0 }
+        pan_amplitude_rad: { type: number, minimum: 0,   default: 0.7853981633974483 }
+        tilt_center_rad:   { type: number, default: -0.3 }
+        tilt_amplitude_rad: { type: number, minimum: 0,  default: 0.2 }
+        tilt_period_sec:   { type: number, minimum: 0.1, default: 4.0 }
+        intensity:         { type: number, minimum: 0, maximum: 1, default: 1.0 }
+        color:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { type: number, minimum: 0, maximum: 1 }
+          default: [1, 1, 1]
+
+  - id: static_color
+    label: Static Color
+    description: |
+      Hold a color + intensity. No animation; use for static
+      backdrops or baseline fills.
+    params_schema:
+      type: object
+      properties:
+        role:
+          type: string
+          description: Fixture role filter; undefined = all fixtures
+        intensity: { type: number, minimum: 0, maximum: 1, default: 1.0 }
+        color:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { type: number, minimum: 0, maximum: 1 }
+          default: [1, 1, 1]
 ```
+
+The catalog is **static config that ships with the plugin code** — same shape on every install of the same plugin version. Backend reads it via `yaml.safe_load` (the engine already vends `ruamel.yaml` for `plugin.yaml` parsing — same dependency); frontend reads it at build time (Vite's `?raw` import + `js-yaml`) or at runtime via the REST `/primitives` endpoint, which returns the parsed YAML as JSON.
 
 ### REST endpoints
 
 | Method | Path | Request body | Response body |
 |---|---|---|---|
-| GET | `/api/projects/:name/plugins/light_show/primitives` | — | `{primitives: [...]}` (catalog verbatim) |
+| GET | `/api/projects/:name/plugins/light_show/primitives` | — | `{primitives: [...]}` (parsed YAML catalog, returned as JSON body) |
 | GET | `/api/projects/:name/plugins/light_show/scenes` | — | `{scenes: [...]}` |
 | PUT | `/api/projects/:name/plugins/light_show/scenes` | `{scenes: [...]}` | `{scenes: [...]}` |
 | POST | `/api/projects/:name/plugins/light_show/scenes/remove` | `{ids: [...]}` | `{scenes: [...]}` or `{error, blocked?}` |
@@ -396,7 +402,7 @@ Same pattern for a scene held by the live override: `scene_live.deactivate` firs
 
 - [ ] All three new DB tables exist after schema migration on both new and existing project DBs (verified via sqlite schema query)
 - [ ] All nine DB helper functions are importable from `scenecraft.plugin_api`
-- [ ] `primitives_catalog.json` exists at the declared path with the two primitives and their full parameter schemas
+- [ ] `primitives_catalog.yaml` exists at the declared path with the two primitives and their full parameter schemas
 - [ ] `scenes.list_primitives` returns the catalog file contents verbatim
 - [ ] `scenes.set` partial upsert preserves omitted fields on existing rows
 - [ ] `scenes.remove` atomically rejects when any target has placements or is held by the live override
@@ -438,7 +444,7 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 
 #### Test: scenes-list-primitives-returns-catalog-verbatim (covers R4)
 
-**Given**: The `primitives_catalog.json` file exists with the two MVP primitives.
+**Given**: The `primitives_catalog.yaml` file exists with the two MVP primitives.
 
 **When**: Chat calls `tools_scenes({action: "list_primitives"}, ctx)`.
 
@@ -446,7 +452,7 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 - **returns-primitives-wrapper**: response has `primitives` key, value is a list.
 - **includes-rotating-head**: one primitive has `id == "rotating_head"` with all default values specified in the spec.
 - **includes-static-color**: one primitive has `id == "static_color"`.
-- **schema-shape-matches-file**: the response matches the file contents byte-for-byte (after JSON normalization).
+- **schema-shape-matches-file**: parsing the YAML file independently and comparing the resulting object structure to the response body (both as Python dicts / JS objects) yields equality — no fields added, removed, or reordered.
 
 #### Test: scenes-set-creates-new (covers R5, R6)
 
@@ -848,7 +854,7 @@ Boundaries, concurrency, idempotency, ordering, resource exhaustion. Every edge 
 
 #### Test: primitive-registry-catalog-mismatch-assertion (covers R31)
 
-**Given**: `primitives_catalog.json` contains a primitive `"rotating_head"` but `PRIMITIVE_REGISTRY` in `primitives.ts` has no entry for it.
+**Given**: `primitives_catalog.yaml` contains a primitive `"rotating_head"` but `PRIMITIVE_REGISTRY` in `primitives.ts` has no entry for it.
 
 **When**: Frontend module imports / boots.
 

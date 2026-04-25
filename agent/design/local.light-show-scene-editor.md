@@ -100,7 +100,7 @@ Persists across engine restart (matches "DMX persists to backend" project memory
 
 ### Part 2: Primitive catalog
 
-Primitives are TS functions keyed by `type`. The **shared source of truth** is `scenecraft-engine/src/scenecraft/plugins/light_show/primitives_catalog.json` — read by the backend for `scenes.list_primitives` MCP responses and imported by the frontend as the schema reference. Ships with two primitives:
+Primitives are TS functions keyed by `type`. The **shared source of truth** is `scenecraft-engine/src/scenecraft/plugins/light_show/primitives_catalog.yaml` — read by the backend for `scenes.list_primitives` MCP responses and read at frontend build time (or runtime via REST `/primitives`) as the schema reference. YAML is preferred per project convention for static config / catalogs that ship with code. Ships with two primitives:
 
 **`rotating_head`** — pan/tilt sinusoidal sweep with hold color + intensity.
 
@@ -142,7 +142,7 @@ Fade envelopes multiply the **final intensity** only (per Q 3.1) — color, pan,
 | Action | Args | Behavior |
 |---|---|---|
 | `list` | — | Returns all scenes. |
-| `list_primitives` | — | Returns `primitives_catalog.json` verbatim: `{primitives: [{id, label, description, params_schema}]}`. |
+| `list_primitives` | — | Returns `primitives_catalog.yaml` verbatim: `{primitives: [{id, label, description, params_schema}]}`. |
 | `set` | `scenes: [{id, label?, type?, params?}, ...]` | Bulk partial upsert by id. Unknown ids create new scenes. Omitted fields preserve existing values. |
 | `remove` | `ids: [...]` | Delete by id. **Rejects** if any target scene has placements OR is held by the live override; returns list of blocking references. |
 
@@ -199,7 +199,7 @@ Frontend keeps one subscription and filters on `kind`.
   - New helpers: `list/upsert/remove_light_show_scenes`, `list/upsert/remove_light_show_placements`, `get/activate/deactivate_light_show_live_override`
 - `src/scenecraft/plugin_api.py`
   - Re-export the 9 new helpers + update `__all__`
-- `src/scenecraft/plugins/light_show/primitives_catalog.json` **(new)**
+- `src/scenecraft/plugins/light_show/primitives_catalog.yaml` **(new)**
   - Shared catalog: primitive id, label, description, param JSON-schema
 - `src/scenecraft/plugins/light_show/routes.py`
   - Add REST handlers for `/scenes`, `/placements`, `/live`, `/primitives`
@@ -300,7 +300,7 @@ export function evaluateLayeredScene(args: {
 
 - **Chat-first authoring works end-to-end.** `scenes.set` → `scene_timeline.set` → play timeline → rotating head animates in the 3D preview. No code changes, no redeploy.
 - **Precedence is trivially debuggable.** Three layers, deterministic pick, mode label in the diag bar. You can always tell which layer is driving output.
-- **Extensible without DSL debt.** Adding a new primitive = one entry in `primitives_catalog.json` + one TS function in `primitives.ts`. No parser, no grammar.
+- **Extensible without DSL debt.** Adding a new primitive = one entry in `primitives_catalog.yaml` + one TS function in `primitives.ts`. No parser, no grammar.
 - **Pre-programmed + live-triggered unified.** Same scene library serves both timeline placements and live cues. Chat can build up a cue sheet (library scenes) and fire them live or pre-schedule them — same authoring, same mental model.
 - **Audio reactivity still works.** `context.masterLevel` / `masterLowLevel` reach primitives as before. A rotating-head primitive can read low-band energy to modulate its speed without any matrix infrastructure.
 - **Dogfoods the M17 plan.** This is a concrete deliverable on the M17 roadmap. Validates the data model before the full scene DSL / track contribution point work lands.
