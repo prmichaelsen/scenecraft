@@ -146,7 +146,7 @@ Per frame, the scene runner resolves which scene (if any) drives fixture output,
 
 1. **Live override wins** — if `light_show__live_override` has a row, its scene is applied. `sceneTime = now - activated_at`. Fade-in uses wall clock; fade-out begins when `deactivation_started_at` is set and runs `fade_out_sec`, after which the row is deleted.
 2. **Timeline placement wins** — if any placement has `start_time <= playhead <= end_time`, the one with highest `display_order` (ties broken by `created_at`) is applied. `sceneTime = playhead - start_time` (deterministic — scrubbing shows the primitive at its exact scene-local time). Fade-in/out envelopes are a deterministic function of `sceneTime` vs. `(fade_in_sec, end_time - fade_out_sec)`.
-3. **Fallback** — existing behavior: dropdown-picked scene (`rainbow_chase`, `beat_strobe`, etc.) runs as before. The master-bus audio-reactive path is preserved.
+3. **Fallback** — *transitional*: existing behavior preserved — dropdown-picked scene (`rainbow_chase`, `beat_strobe`, etc.) runs when nothing is scheduled. Master-bus audio-reactive path is preserved. **Long-term direction**: when a dedicated Scene Editor Panel lands (with its own decoupled preview state, see Future Considerations), the dropdown is removed and fallback becomes blackout (intensity 0). The Scene Editor Panel will host all "preview a scene in isolation" UX, enabling scene authoring during a live show without interrupting show output.
 
 Fade envelopes multiply the **final intensity** only (per Q 3.1) — color, pan, and tilt pass through at scene-computed values.
 
@@ -475,6 +475,11 @@ Deferred per clarification-14:
 - **Merge modes on overlapping placements** — HTP, additive, multiply, min.
 - **Waveform `shape` param** on `rotating_head` (triangle / sawtooth / pulse).
 - **More primitives** — `strobe`, `chase`, `fade`, `breathe`, `circle`, `figure_eight`, etc.
+- **Scene Editor Panel (decoupled preview).** Dedicated panel that hosts scene authoring with its own state buffer and isolated playhead — completely decoupled from the show's evaluator. Enables a user to:
+  - Edit scene params and see them preview in real-time without affecting the live show
+  - Build a new scene during a running show (inspired-on-the-fly authoring)
+  - Run multiple scenes side-by-side for comparison
+  When this ships, the dropdown fallback in `LightShow3DPanel` is removed and the show panel's fallback becomes blackout (no scheduled output → fixtures dim). The primitive `apply()` contract already supports this — primitives are pure functions of `(sceneTime, states, params, context)` with no panel-specific state, so the editor panel just runs its own state buffer through the same primitive functions. Zero changes to the catalog or primitives module needed; only panel composition changes.
 - **Search upgrade path** — `label_query` semantics start as `LOWER(label) LIKE '%q%'` (sufficient up to a few thousand scenes). Forward-compatible to:
   - **Phase 2: FTS5 with trigram tokenizer** — virtual table on `(id, label, type)`, BM25 ranking, sync triggers. ~1 day of work; same `label_query` API. Vanilla SQLite 3.34+; no new dependencies.
   - **Phase 3: typo-tolerant** — `spellfix1` extension or post-fetch `rapidfuzz`. Practical only if typos become common.
