@@ -1371,8 +1371,8 @@ milestones:
 
   - id: milestone_19
     name: Light Show Scene Editor MVP
-    status: not_started
-    started: null
+    status: in_progress
+    started: 2026-04-25
     completed: null
     file: agent/milestones/milestone-19-light-show-scene-editor.md
     tasks_total: 12
@@ -1381,16 +1381,24 @@ milestones:
     tasks:
       - id: task-151
         name: Schema + DB helpers + plugin_api re-exports
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T22:30:00Z
+        completed_date: 2026-04-25T23:00:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-151-schema-and-db-helpers.md
         estimated_hours: 1
-        actual_hours: null
-        notes: "Three new tables (light_show__scenes, __scene_placements, __live_override) + 9 helpers + sparse params + null-delete merge-patch + atomic rejection + reference-blocking on remove. Spec R1-R3, R28, R30."
+        actual_hours: 0.5
+        notes: |
+          Landed on worktree m19/task-151-schema in scenecraft-engine
+          (commit 8568ca2). 3 tables + composite-PK index + CHECK constraints,
+          9 helpers (3 scenes + 3 placements + 3 live override) + 2 exception
+          classes for blocked-removal, all re-exported via plugin_api. Sparse
+          params + RFC 7396 JSON Merge Patch + atomic batch validation +
+          reference-blocking. 11 new __all__ entries; 16 existing plugin_host
+          tests still green. NOT merged to main — stacked worktrees posture.
       - id: task-152
         name: Primitives catalog YAML
-        status: not_started
-        started: null
+        status: in_progress
+        started: 2026-04-25T23:00:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-152-primitives-catalog.md
         estimated_hours: 0.5
         actual_hours: null
