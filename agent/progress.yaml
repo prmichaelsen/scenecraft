@@ -1369,6 +1369,113 @@ milestones:
         actual_hours: 0.5
         notes: "Created centralized clip-colors.ts with getClipColorScheme(). Added variant_kind to AudioClip type. AudioLane wired to use color map. Committed on feat/m18-149-orange-clip."
 
+  - id: milestone_19
+    name: Light Show Scene Editor MVP
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-19-light-show-scene-editor.md
+    tasks_total: 12
+    tasks_completed: 0
+    estimated_weeks: 1
+    tasks:
+      - id: task-151
+        name: Schema + DB helpers + plugin_api re-exports
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-151-schema-and-db-helpers.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "Three new tables (light_show__scenes, __scene_placements, __live_override) + 9 helpers + sparse params + null-delete merge-patch + atomic rejection + reference-blocking on remove. Spec R1-R3, R28, R30."
+      - id: task-152
+        name: Primitives catalog YAML
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-152-primitives-catalog.md
+        estimated_hours: 0.5
+        actual_hours: null
+        notes: "primitives_catalog.yaml: rotating_head + static_color with locked defaults (clarification-14 Q 5.1/5.2). Shared source of truth for backend list_primitives + frontend registry validation. Spec R4."
+      - id: task-153
+        name: REST endpoints (conventional REST)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-153-rest-endpoints.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "GET/POST /scenes, GET/PATCH/DELETE /scenes/:id; same for /placements; GET/PUT/DELETE /live (singleton); GET /primitives. Query-param filter+pagination. 409 Conflict on blocked deletes. WS broadcasts with new kind values. Spec R30, R29."
+      - id: task-154
+        name: tools_scenes MCP handler (action-dispatched)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-154-tools-scenes-handler.md
+        estimated_hours: 1.5
+        actual_hours: null
+        notes: "list/list_primitives/set/remove. Filter+pagination, sparse params, partial-upsert + null-delete merge-patch, atomic batches, reference-blocking on remove. Spec R4-R11."
+      - id: task-155
+        name: tools_scene_timeline MCP handler
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-155-tools-scene-timeline-handler.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "list/set/remove. Filter (scene_id, time_range overlap) + pagination. Auto-UUID on insert. Spec R12-R17."
+      - id: task-156
+        name: tools_scene_live MCP handler
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-156-tools-scene-live-handler.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "activate/deactivate/status. scene_id-or-inline mutual exclusion. save_as creates library scene with that label. Replace-on-active-activate. Spec R18-R28."
+      - id: task-157
+        name: plugin.yaml MCP tool declarations
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-157-plugin-yaml-declarations.md
+        estimated_hours: 0.5
+        actual_hours: null
+        notes: "Three tool entries (scenes, scene_timeline, scene_live) per spec input_schemas. scene_live destructive:true."
+      - id: task-158
+        name: Backend pytest coverage
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-158-backend-tests.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "~30 tests translating spec Given/When/Then to pytest. Schema, three tools, REST, persistence, WS broadcasts, catalog roundtrip. R1-R29 backend coverage."
+      - id: task-159
+        name: Frontend client + types
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-159-frontend-client.md
+        estimated_hours: 0.5
+        actual_hours: null
+        notes: "light-show-client.ts: SceneRow / PlacementRow / LiveOverrideRow / PrimitiveCatalogEntry types + fetchers for all REST endpoints. Sparse params preserved on round-trip."
+      - id: task-160
+        name: Primitives module (apply functions + registry + catalog parity)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-160-primitives-module.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "primitives.ts: applyRotatingHead + applyStaticColor + PRIMITIVE_REGISTRY + module-init drift assertion + resolveParams helper for evaluator. Install vitest if not present. Spec R31-R38."
+      - id: task-161
+        name: Layered scene evaluator
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-161-scene-evaluator.md
+        estimated_hours: 1.5
+        actual_hours: null
+        notes: "scene-evaluator.ts: live > timeline > fallback precedence. Wall-clock for live, playhead-relative for placements. Sparse-params merge with catalog defaults at apply-time. Intensity-only fade envelopes. Auto-DELETE /live when fade completes. Spec R39-R48."
+      - id: task-162
+        name: LightShow3DPanel integration + manual E2E
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-19-light-show-scene-editor/task-162-panel-integration.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "Wire fetch + WS subscription + reconnect-refetch (NO polling). Replace SceneRunner scene resolution with evaluateLayeredScene. Diag bar shows LIVE/TIMELINE/FALLBACK label. Manual rotating-head E2E. tsc clean. Spec R49-R50."
+
 tasks:
   milestone_1:
     - id: task-1
@@ -2298,12 +2405,26 @@ tasks:
       estimated_hours: 8
       actual_hours: null
       started: null
+    - id: task-150
+      name: "Research Spike: Multi-Channel Live Audio Inputs for light_show"
+      status: not_started
+      milestone_id: null
+      file: agent/tasks/unassigned/task-150-research-multi-channel-live-audio.md
+      estimated_hours: 5
+      actual_hours: null
+      started: null
+      notes: |
+        Research feasibility + integration shape for multichannel live audio
+        capture (FOH mixer feed → modulation matrix sources). Captured from
+        chat side-discussion during clarification-14 Q&A. Output: design doc
+        at agent/design/local.live-audio-inputs.md. Depends conceptually on
+        the modulation matrix landing (clarification-14 Item 7).
 
 documentation:
-  design_documents: 10
-  milestone_documents: 5
+  design_documents: 11
+  milestone_documents: 6
   pattern_documents: 0
-  task_documents: 51
+  task_documents: 63
 
 progress:
   planning: 80
@@ -2311,6 +2432,7 @@ progress:
   overall: 75
 
 recent_work:
+  - "M19 Planned: Light Show Scene Editor MVP — clarification-14 (19 Qs across 6 items + modulation matrix + deferred), design (local.light-show-scene-editor.md), spec (local.light-show-scene-editor.md, 51 R + 66 tests), milestone doc, 12 task docs (task-151 through task-162). Three-tier data model (scenes / placements / single-slot live override), primitive catalog (rotating_head + static_color), layered evaluator (live > placement > fallback), three action-dispatched MCP tools (scenes / scene_timeline / scene_live). Server-assigned UUID scene ids; sparse param storage with RFC 7396 null-delete merge-patch; conventional REST; WS reconnect-driven refetch (no polling). ~12h estimated."
   - "M18 Planned: Foley Generation Plugin — clarification-12, design (local.foley-generation-plugin.md), milestone doc, 8 task docs (task-142 through task-149). MMAudio via Replicate (zsxkib/mmaudio), t2fx + v2fx modes, selection-driven mode dispatch, Set-in/Set-out playhead UX, pre-trim workaround for cog duration override. Introduces typed plugin_api.providers.replicate namespace as successor to M16's call_service shim. ~31h estimated."
   - "M16 Task 130: Musicful REST endpoints (POST /run, GET /generations, POST /generations/:id/retry, GET /credits) + plugin-host method routing. _rest_routes split into per-method buckets; register_rest_endpoint gains method kwarg (POST default); dispatch_rest(method, path, ...). api_server do_GET gains plugin-fallback. WS free via existing JobManager /ws/jobs seam. 51 tests pass"
   - "Editor: per-track level meter collapses to single bar for mono tracks (Reaper-style — no track-type concept, derives from max clip channel count; master stays stereo). audio-mixer.getTrackChannelCount, useTrackChannels 2Hz polling hook, LevelMeter channels prop"
@@ -2339,6 +2461,7 @@ recent_work:
   - "Frame buffer cache with IndexedDB persistence"
 
 next_steps:
+  - "M19 Light Show Scene Editor MVP: ready to start. Task-151 (schema + DB helpers, 1h) → 152 (catalog YAML, 0.5h) → 153 (REST, 1h) → 154/155/156 (three MCP tool handlers, ~3.5h) → 157 (plugin.yaml, 0.5h) → 158 (backend tests, 1h) → 159/160/161/162 (frontend stack, ~4h). Goal: chat creates rotating_head scene → places on timeline 5-15s → press play → 3D preview animates. Spec: agent/specs/local.light-show-scene-editor.md (51 R + 66 tests). Decisions: clarification-14."
   - "M18 Foley Generation Plugin: ready to start. Task-142 (Replicate provider core, 6h) is the foundational prerequisite — typed plugin_api.providers.replicate namespace. Then 7 plugin-specific tasks (~25h). Full design in agent/design/local.foley-generation-plugin.md, decision log in agent/clarifications/clarification-12-foley-generation-plugin.md"
   - "M16 continuation: task-131 (Frontend plugin module), task-132 (MusicGenerationsPanel), task-133 (Chat tools + elicitation), task-134 (Drag-to-timeline + purple styling). 4 tasks remaining (~14h), all frontend. Engine-side fully shipped (tasks 127/128/129/130); auth (126) deferred until auth milestone begins"
   - "M14: In-Editor Audio Playback — real-time WebAudio streaming mixer so users hear curves/mute/crossfade during editing (4 tasks, ~14h, 1-1.5 weeks)"
