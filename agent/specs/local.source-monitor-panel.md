@@ -246,7 +246,7 @@
 - **R42**: Bin panel: single-click on a pool item calls `setSource` with `kind` matching the segment kind (audio files → `'audio'`, video files → `'video'`), `path = segment.pool_path`, `label = segment.label || basename(pool_path)`, `poolSegmentId = segment.id`.
 - **R43**: Bin panel: existing hover-preview behavior in the program-preview panel is unchanged.
 - **R44**: Isolate vocals panel: single-click on a stem row calls `setSource` with `kind: 'audio'`.
-- **R45**: Isolate vocals panel: the existing inline `PoolAudioPlayButton` is removed (click becomes the primary preview gesture).
+- **R45**: Isolate vocals panel: the existing inline `PoolAudioPlayButton` on each stem row **remains** (mirrors R41 for music gen — quick-listen via inline ▶ coexists with the source-monitor detail view via single-click). Clicking the inline ▶ does NOT load the row into the source monitor; only single-clicking the row body does.
 - **R46**: Timeline video clip (in the keyframe/transition surface): right-click menu gains an action labelled "Open source in source monitor" that calls `setSource({ kind: 'video', path: clip.source_path, label: clip.label, poolSegmentId: clip.pool_segment_id })`.
 
 ### Session behavior
@@ -697,15 +697,16 @@ The core behavior contract — happy path, common bad paths, primary positive an
 - **tab-activated**: `source-monitor` tab is active
 - **hover-preview-unchanged**: hovering a different bin item still triggers the existing program-preview behavior
 
-#### Test: isolate-vocals-click-loads-source (covers R44)
+#### Test: isolate-vocals-click-loads-source (covers R44, R45)
 
 **Given**: The isolate vocals panel is rendered with a stem row
 
-**When**: The user single-clicks the stem row
+**When**: The user single-clicks the stem row body
 
 **Then** (assertions):
 - **setsource-called**: source loaded with the stem's pool path and id
-- **no-inline-play-button**: the stem row contains NO `PoolAudioPlayButton` element
+- **inline-play-button-present**: the stem row contains a `PoolAudioPlayButton` element (mirrors music gen — inline ▶ stays for quick-listen)
+- **inline-play-does-not-load-source**: clicking the inline ▶ button starts inline audio playback but does NOT update `useSourceMonitor().source` (event propagation is stopped on the button)
 
 #### Test: timeline-video-clip-right-click-opens-source (covers R46)
 
@@ -1073,7 +1074,7 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 |---|---|---|
 | Music gen panel | Both — inline ▶ stays; single-click row also loads into source monitor | Inline = quick-listen; source monitor = scrub / in-out / detail. |
 | Bin panel | Both — hover preview stays; single-click loads into source monitor | Hover = ambient awareness; click = evaluation. |
-| Isolate vocals panel | Replace — drop inline `PoolAudioPlayButton`; single-click row → source monitor | Unifies the stem workflow under one surface. |
+| Isolate vocals panel | Both — inline ▶ stays; single-click row also loads into source monitor (harmonized with music gen) | Originally clarification picked "drop inline" but harmonization on 2026-04-25 chose to keep both for consistency with music gen. Quick-listen via inline ▶, detail/scrub via source monitor. |
 | Timeline clip (video) | Right-click → "Open source in source monitor" | Surfaces the pre-trimmed media without leaving the timeline. |
 
 ---

@@ -189,7 +189,7 @@ When in/out aren't set, drag uses the full source range.
 |---|---|
 | **Music gen panel** | Keep inline ▶ for quick-listen. Single-click on a track row also calls `setSource` to load into source monitor. |
 | **Bin panel** | Hover-preview in program-preview panel stays. Single-click on a pool item calls `setSource`. |
-| **Isolate vocals panel** | Drop the inline `PoolAudioPlayButton`. Single-click row calls `setSource` (click = primary preview gesture). |
+| **Isolate vocals panel** | Keep the inline `PoolAudioPlayButton` (mirrors music gen). Single-click row also calls `setSource`. Inline ▶ for quick-listen; source monitor for scrub / I/O / detail. |
 | **Timeline clip (video)** | Right-click → "Open source in source monitor" loads the original pre-trimmed media. |
 | **Finalizations panel** (future, via `local.finalize-range.md`) | Row click loads `rendered_preview_path` as a video source. |
 
@@ -325,7 +325,7 @@ Each step is independently shippable and reversible.
 |---|---|---|
 | Music gen panel | **Both** — inline ▶ stays; single-click row also loads into source monitor | Inline = quick-listen; source monitor = scrub / in-out / detail. |
 | Bin panel | **Both** — hover preview stays; single-click loads into source monitor | Hover = ambient awareness; click = evaluation. |
-| Isolate vocals panel | **Replace** — drop inline `PoolAudioPlayButton`; single-click row → source monitor | Unifies the stem workflow under one surface. |
+| Isolate vocals panel | **Both** — inline ▶ stays; single-click row also loads into source monitor (harmonized with music gen on 2026-04-25) | Quick-listen via inline ▶, detail/scrub via source monitor. Mirrors music gen for consistency. |
 | Timeline clip (video) | Right-click → "Open source in source monitor" | Surfaces the pre-trimmed media without leaving the timeline. |
 
 ### Urgency
