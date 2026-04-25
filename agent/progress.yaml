@@ -1397,12 +1397,18 @@ milestones:
           tests still green. NOT merged to main — stacked worktrees posture.
       - id: task-152
         name: Primitives catalog YAML
-        status: in_progress
+        status: completed
         started: 2026-04-25T23:00:00Z
+        completed_date: 2026-04-25T23:10:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-152-primitives-catalog.md
         estimated_hours: 0.5
-        actual_hours: null
-        notes: "primitives_catalog.yaml: rotating_head + static_color with locked defaults (clarification-14 Q 5.1/5.2). Shared source of truth for backend list_primitives + frontend registry validation. Spec R4."
+        actual_hours: 0.2
+        notes: |
+          Landed on worktree m19/task-152-primitives in scenecraft-engine
+          (commit dad7ad0, stacked on m19/task-151-schema). primitives_catalog.yaml
+          shipped with rotating_head + static_color and locked defaults from
+          clarification-14 Q5. yaml.safe_load round-trips clean; spec R4
+          verified.
       - id: task-153
         name: REST endpoints (conventional REST)
         status: not_started
