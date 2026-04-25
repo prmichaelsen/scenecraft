@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, forwardRef, useImperativeHandle, useState } from 'react'
+import { Component, useRef, useCallback, useEffect, forwardRef, useImperativeHandle, useState, type ErrorInfo, type ReactNode } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData } from '@/routes/project/$name/editor'
 import { PanelLayout, validateLayout, type LayoutNode, type PanelRegistry, type PanelLayoutHandle } from '@/components/panel-layout'
@@ -212,11 +212,69 @@ function MacroPanelComponent() {
   return <Panel><MacroPanel /></Panel>
 }
 
+// Per-plugin-panel error boundary. Catches anything a plugin panel throws
+// during render or in lifecycle, and renders an inline fallback. Scoped
+// tightly so a bad plugin doesn't take down the whole editor (the
+// outer LayoutErrorBoundary nukes the workspace; this one just shows a
+// "panel crashed" tile and leaves siblings alive).
+//
+// Recovery: a "Retry" button forces a fresh mount by bumping internal
+// state. If the panel keeps throwing, the user can switch tabs to escape.
+type PluginPanelBoundaryProps = { panelId: string; children: ReactNode }
+type PluginPanelBoundaryState = { error: Error | null; retryNonce: number }
+
+class PluginPanelErrorBoundary extends Component<PluginPanelBoundaryProps, PluginPanelBoundaryState> {
+  state: PluginPanelBoundaryState = { error: null, retryNonce: 0 }
+
+  static getDerivedStateFromError(error: Error): Partial<PluginPanelBoundaryState> {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(`[plugin-panel] ${this.props.panelId} crashed:`, error, info.componentStack)
+  }
+
+  retry = () => {
+    this.setState((s) => ({ error: null, retryNonce: s.retryNonce + 1 }))
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="h-full flex items-center justify-center bg-[#111827] text-gray-400 text-xs p-4">
+          <div className="text-center space-y-2 max-w-md">
+            <div className="text-gray-300">
+              Panel <code className="text-purple-400">{this.props.panelId}</code> crashed
+            </div>
+            <div className="font-mono text-[10px] text-gray-500 break-words">
+              {this.state.error.message}
+            </div>
+            <button
+              onClick={this.retry}
+              className="px-2 py-1 text-[10px] rounded border border-gray-600 hover:border-purple-500 text-gray-300"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )
+    }
+    // ``key`` on children forces remount on retry so the panel restarts
+    // its lifecycle from scratch instead of hydrating into the same
+    // broken state.
+    return <div key={this.state.retryNonce} className="h-full">{this.props.children}</div>
+  }
+}
+
 // Generic wrapper for any PluginHost-contributed panel. Looks the panel up
 // by id at render time so when the plugin deactivates (HMR or dynamic
 // unload), the panel body is replaced by a fallback without a stale
 // component reference lingering in the registry. Editor-context props are
 // injected here so plugin panels don't need to import editor internals.
+//
+// Wrapped in a per-panel error boundary so plugin renders that throw don't
+// trigger the outer LayoutErrorBoundary's workspace reset — the user just
+// sees a "panel crashed" tile inline and other panels stay alive.
 function makePluginPanelComponent(panelId: string) {
   return function PluginPanelComponent() {
     const data = useEditorData()
@@ -240,13 +298,15 @@ function makePluginPanelComponent(panelId: string) {
       onClose?: () => void
     }>
     return (
-      <Panel>
-        <PluginPanel
-          entity={entity}
-          projectName={data.projectName}
-          onClose={() => {}}
-        />
-      </Panel>
+      <PluginPanelErrorBoundary panelId={panelId}>
+        <Panel>
+          <PluginPanel
+            entity={entity}
+            projectName={data.projectName}
+            onClose={() => {}}
+          />
+        </Panel>
+      </PluginPanelErrorBoundary>
     )
   }
 }
