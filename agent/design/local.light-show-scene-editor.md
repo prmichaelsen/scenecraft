@@ -475,6 +475,22 @@ Deferred per clarification-14:
 - **Merge modes on overlapping placements** — HTP, additive, multiply, min.
 - **Waveform `shape` param** on `rotating_head` (triangle / sawtooth / pulse).
 - **More primitives** — `strobe`, `chase`, `fade`, `breathe`, `circle`, `figure_eight`, etc.
+- **Industry-standard interop** (GDTF, MVR, external scene/show formats) — three layers, each handled differently:
+  - **GDTF (fixture metadata)** → `light_show__fixture_profiles` table (planned in broader M17 design). Defines what channels a specific fixture has (Dimmer, Pan, Tilt, ColorAdd_R/G/B, Gobo, etc.), beam angle, 3D model. Replaces today's hardcoded "6ch for moving_head / 4ch for par" channel layout in `dmx-mapper.ts`. NOT a scene catalog concern.
+  - **MVR (rig topology)** → one-time `light_show.import_mvr` backend op. Parses `.mvr` zip, upserts `light_show__fixtures` rows + registers contained GDTF profiles. Industry-standard rig interchange (compatible with GrandMA3, Vectorworks, Capture, BlenderDMX, etc.). NOT a scene catalog concern.
+  - **External scene / show formats** (GrandMA3 phasers/presets/sequences, Hog 4 cues, ETC EOS, Avolites, etc.) — handled at the **scene catalog layer** via two complementary mechanisms:
+    1. **Import adapters → translate to our primitives** (preferred path). Each external concept maps to one of our primitive instances when there's a clean equivalent. Examples:
+       | External concept | Our primitive |
+       |---|---|
+       | MA3 cue (static state at a moment) | `static_color` placement at that time |
+       | MA3 phaser (parameterized effect) | matching parameterized primitive (e.g. pan-sweep → `rotating_head`) |
+       | MA3 sequence (cue list) | series of placements — one per cue, with `start_time` per cue trigger |
+       | MA3 preset (saved state) | scene library entry, type by content |
+       | Hog 4 / EOS cue | same path |
+       Lossy where external concepts have no equivalent; either gets a new primitive added to the catalog, or fails import with a clear error. Catalog-only changes — no evaluator surgery.
+    2. **`dmx_playback` primitive (escape hatch).** Params: `frames: [{time_sec, channel_values: bytes}]`. The `apply()` function indexes into the recorded frames at `sceneTime` and writes channels directly. Encodes anything any console produces, but it's a recording — not parameterized, not editable. Useful for "import this exact look" when no clean primitive mapping exists. One catalog entry + one `apply()` function.
+  - **Architectural principle**: scenecraft owns the internal animation vocabulary (the primitive catalog). Industry formats become **adapter inputs** that translate to/from our primitive instances. We never adopt a third-party scene DSL's *evaluation semantics* wholesale — that would change how primitives compose, not just what's available. Keeping our evaluator owns the merge math means import/export adapters are a UI/IO concern, not an architecture concern.
+  - **What this means for the catalog over time**: it grows organically. New primitives are added when (a) a useful animation shape isn't expressible from existing ones, or (b) an import adapter needs a closer mapping for a common external concept. The data model and evaluator stay as-is.
 - **Scene Editor Panel (decoupled preview).** Dedicated panel that hosts scene authoring with its own state buffer and isolated playhead — completely decoupled from the show's evaluator. Enables a user to:
   - Edit scene params and see them preview in real-time without affecting the live show
   - Build a new scene during a running show (inspired-on-the-fly authoring)

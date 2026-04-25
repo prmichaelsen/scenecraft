@@ -1290,6 +1290,7 @@ Boundaries, concurrency, idempotency, ordering, resource exhaustion. Every edge 
 - **Fuzzy / FTS / semantic search on `label_query`.** MVP uses `LOWER(label) LIKE '%q%'` substring matching only. The forward-compatible upgrade path (FTS5 trigram → spellfix1 → embeddings) does not change the tool surface — only the storage backend behind `label_query` evolves.
 - **Scene library export / import.**
 - **Backend Python port of the evaluator.** TS frontend only.
+- **Industry-standard format interop** (GDTF, MVR, external scene/show files). The MVP catalog ships only the two primitives needed for the rotating-head goal. Adopting industry standards happens at adjacent layers — see design's Future Considerations: GDTF → `light_show__fixture_profiles`; MVR → one-time `import_mvr` backend op; external scene formats → import adapters that translate to our primitives, with `dmx_playback` as the escape-hatch primitive for raw-bits "play this exact look" cases. None of these change the scene editor's data model or evaluator.
 
 ---
 
