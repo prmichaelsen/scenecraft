@@ -135,90 +135,90 @@
 - **R31**: When `source.kind === 'video'`, the panel's drag handle emits `dragstart` events with:
   - `dataTransfer.setData('application/x-scenecraft-video-subclip', JSON.stringify({ path, inSeconds, outSeconds, label }))` where `inSeconds = inPoint ?? 0` and `outSeconds = outPoint ?? duration`
   - `dataTransfer.effectAllowed = 'copy'`
-- **R32**: The timeline / keyframe drop handler (new; addition to `Timeline.tsx`) receives `application/x-scenecraft-video-subclip` and inserts the dropped subclip into the kf+tr timeline. **Video-only** — audio drops use R30's `audio_clips` path, which has no analogous problem because audio clip rows are free-floating (any `start_time` / `end_time` / `source_offset`) and don't need to fit between adjacent anchor points.
+- **R32**: The timeline / keyframe drop handler (new; addition to `Timeline.tsx`) receives `application/x-scenecraft-video-subclip` and inserts the dropped subclip into the kf+tr timeline using **insert-and-consume semantics** — the project's canonical "consume on overlap" mental model. **Video-only** — audio drops use R30's `audio_clips` path, which has no analogous problem because audio clip rows are free-floating (any `start_time` / `end_time` / `source_offset`) and don't need to fit between adjacent anchor points.
 
-  The video case has a real semantics question: a video subclip has an intrinsic length (`outSeconds − inSeconds`) but the kf+tr model forces transitions to span exactly the gap between adjacent keyframes. If the subclip is 15 s and the available slot between neighbors is 10 s or 20 s, the lengths don't match. **OQ-10** captures the choice between two families of behavior:
+  The drop creates a contiguous range `[drop_pos, drop_pos + clip_duration]` on the target track. Any existing keyframes or transitions inside that range get consumed; any transitions straddling either boundary get split at the boundary so the consumed half goes away cleanly. The new range carries the subclip with `trim_in` / `trim_out` matching the in/out markers verbatim, so the clip plays at native 1.0 rate. Composes existing primitives (`split-transition`, `add_keyframe`, soft-deletes) under a single `undo_begin` group so the whole drop is one Ctrl+Z away from being reverted.
 
-  - **Fit-and-remap** (one new kf, no consume): insert one kf, attach the subclip to one of the resulting transitions, let the existing `remap` field stretch/squish to fit. No existing rows are deleted; no kfs in the target range are consumed. Existing add-keyframe behavior plus a media attach.
-  - **Insert-and-consume** (two new kfs, consume range): insert two kfs at `(drop_pos, drop_pos + clip_duration)`, delete any existing kfs strictly inside that range, split any transitions straddling either boundary. The transition between the two new kfs carries the subclip at 1.0 remap. NLE-style insert semantics.
+  **In English (insert-and-consume — Option B).** Two rules govern overlap:
+    - **Partial coverage → split.** If an existing transition straddles either boundary of the consumed range (`drop_pos` or `drop_pos + clip_duration`), it gets split at the boundary using the existing `split-transition` primitive. The half outside the consumed range survives byte-identically (same `selected` pool_segment, same junction rows, `trim_in`/`trim_out` adjusted at `split_source_offset = trim_in + split_progress * (trim_out − trim_in)`); the half inside gets soft-deleted in the consume step.
+    - **Full coverage → consume.** Any kf or transition entirely inside the consumed range is soft-deleted.
 
-  R32 below describes the **fit-and-remap path** (Option A) since it reuses the existing `add-keyframe` shape and is the v1 recommendation pending OQ-10 resolution. If OQ-10 picks insert-and-consume, R32 is rewritten and tests are replaced before implementation.
+  Algorithm:
+    1. Compute `range_start = drop_pos`, `range_end = drop_pos + (outSeconds − inSeconds)` on the target track.
+    2. **Split at the left boundary.** If a transition's `(from_kf.ts < range_start < to_kf.ts)` (partial coverage at the left edge), call `split-transition(transitionId=that_tr.id, splitTime=range_start)`. The original transition is soft-deleted; two new transitions appear, both pointing at the same `selected` pool_segment with `trim_in`/`trim_out` split at `split_source_offset`. A kf is inserted at `range_start` as a side-effect — that kf becomes the left boundary anchor.
+    3. **Split at the right boundary.** Same as step 2, but at `range_end`. A kf at `range_end` becomes the right boundary anchor.
+    4. **Consume strictly-inside rows.** Soft-delete every kf with `range_start < timestamp < range_end` (boundary kfs survive). Soft-delete every transition with `range_start ≤ from_kf.ts && to_kf.ts ≤ range_end` (entirely inside the consumed range — full coverage).
+    5. **Insert boundary kfs if needed.** If step 2 didn't run (no partial coverage at the left boundary — the drop is on empty space, exactly at an existing kf, or past the last kf), call `add_keyframe` at `range_start`. Same for the right boundary if step 3 didn't run.
+    6. **Wire the new transition.** Add `(left_boundary_kf → right_boundary_kf)` with `selected = source.poolSegmentId`, `trim_in = inSeconds`, `trim_out = outSeconds`, `source_video_duration = source_video_duration` (from the dropped subclip's metadata), `duration_seconds = clip_duration`, `remap = {"method": "linear", "target_duration": clip_duration}`. The clip plays at native 1.0 rate.
+    7. Wrap the entire sequence in `undo_begin(project_dir, f"Drop subclip at {fmt(range_start)}")` so Ctrl+Z reverts the whole drop as one operation.
 
-  **In English (Option A — fit-and-remap).**
+  Surviving rows (the outside-the-range halves of split transitions, the kfs/trs outside the range entirely) are byte-identical to before the drop. The split primitive does metadata-only splits — no re-encoding.
 
-  **In English.** The handler parses the drop position into a new keyframe time, calls the existing add-keyframe path, then attaches the dropped subclip's media reference (path + `trim_in` + `trim_out`) onto the appropriate adjacent transition. The add-keyframe path itself does the timeline-neighbor wiring:
-    1. Insert the new `keyframes` row at the drop time (on the target track).
-    2. Find the new kf's previous and next neighbors on the same track.
-    3. If a transition already spans `(prev → next)` (the new kf was dropped inside an existing video segment), **relink** that transition so its `to_kf` becomes the new kf (keeping its existing video, `trim_in`, `trim_out`, candidates, etc.) and update its `duration_seconds` to `new_time − prev_time`. Then create a fresh **blank** transition for `(new_kf → next)` with the right duration but no video selected.
-    4. If no spanning transition exists, create blank transitions to whichever neighbors exist: `(prev → new_kf)` and/or `(new_kf → next)`.
-    5. Then attach the dropped subclip's media reference to the appropriate transition (see OQ-9 below for which transition it lands on).
-  None of the existing transitions move in time, get trimmed, or get bumped sideways — that's why "nudging" is the wrong word. The only mutation to existing rows is the spanning-transition relink (its `to_kf` and `duration_seconds` change; its video stays).
-
-  **In Python pseudocode** (mirrors `_handle_add_keyframe` in `api_server.py:5514`):
+  **In Python pseudocode** (composes existing primitives — `split-transition` at `api_server.py:6941`, `add_keyframe` at `api_server.py:5514`):
 
   ```python
-  # Drop payload: { path, inSeconds, outSeconds, label }
-  new_time = drop_position_seconds(event)
+  # Drop payload: { path, inSeconds, outSeconds, label, source_video_duration, poolSegmentId }
+  range_start = drop_position_seconds(event)
+  clip_duration = payload["outSeconds"] - payload["inSeconds"]
+  range_end = range_start + clip_duration
 
-  with transaction(project_dir):
-      # 1. Insert new keyframe at drop time
-      new_id = next_keyframe_id(project_dir)
-      add_keyframe(project_dir, {
-          "id": new_id,
-          "timestamp": new_time,
-          "track_id": target_track_id,
-          # ... other defaults from existing add-keyframe path
+  with undo_begin(project_dir, f"Drop subclip at {fmt(range_start)}"):
+      # 1. Partial coverage at left boundary → split.
+      left_straddle = find_straddling_transition(project_dir, target_track,
+                                                 at_seconds=range_start)
+      if left_straddle:
+          split_transition(project_dir, left_straddle["id"], split_time=range_start)
+          # split-transition inserted a kf at range_start as a side-effect.
+
+      # 2. Partial coverage at right boundary → split.
+      # Re-query — the timeline shape changed if step 1 ran.
+      right_straddle = find_straddling_transition(project_dir, target_track,
+                                                  at_seconds=range_end)
+      if right_straddle:
+          split_transition(project_dir, right_straddle["id"], split_time=range_end)
+
+      # 3. Full coverage → consume strictly-inside kfs and trs.
+      track_kfs = [k for k in get_keyframes(project_dir)
+                   if k["track_id"] == target_track and not k.get("deleted_at")]
+      for kf in track_kfs:
+          ts = parse_ts(kf["timestamp"])
+          if range_start < ts < range_end:
+              delete_keyframe(project_dir, kf["id"])  # soft-delete
+
+      track_trs = [t for t in get_transitions(project_dir)
+                   if t.get("track_id") == target_track and not t.get("deleted_at")]
+      for tr in track_trs:
+          fkf = get_keyframe(project_dir, tr["from"])
+          tkf = get_keyframe(project_dir, tr["to"])
+          if not fkf or not tkf:
+              continue
+          if (range_start <= parse_ts(fkf["timestamp"]) and
+              parse_ts(tkf["timestamp"]) <= range_end):
+              delete_transition(project_dir, tr["id"])  # soft-delete
+
+      # 4. Ensure boundary kfs exist (split-transition created them when it ran;
+      #    otherwise we add them).
+      left_kf = find_keyframe_at_or_create(project_dir, target_track, range_start)
+      right_kf = find_keyframe_at_or_create(project_dir, target_track, range_end)
+
+      # 5. Wire the new transition with the dropped subclip at native 1.0 rate.
+      new_tr_id = next_transition_id(project_dir)
+      add_transition(project_dir, {
+          "id": new_tr_id,
+          "from": left_kf["id"],
+          "to": right_kf["id"],
+          "track_id": target_track,
+          "duration_seconds": round(clip_duration, 2),
+          "slots": 1,
+          "selected": payload["poolSegmentId"],
+          "trim_in": payload["inSeconds"],
+          "trim_out": payload["outSeconds"],
+          "source_video_duration": payload.get("source_video_duration"),
+          "remap": {"method": "linear", "target_duration": round(clip_duration, 2)},
       })
-
-      # 2. Find timeline neighbors on the same track
-      track_kfs = sorted(
-          [k for k in get_keyframes(project_dir) if k["track_id"] == target_track_id],
-          key=lambda k: parse_ts(k["timestamp"]),
-      )
-      idx = next(i for i, k in enumerate(track_kfs) if k["id"] == new_id)
-      prev_kf = track_kfs[idx - 1] if idx > 0 else None
-      next_kf = track_kfs[idx + 1] if idx < len(track_kfs) - 1 else None
-
-      # 3. Look for an existing transition spanning (prev → next)
-      old_tr = None
-      if prev_kf and next_kf:
-          old_tr = find_transition(project_dir,
-                                   from_kf=prev_kf["id"],
-                                   to_kf=next_kf["id"])
-
-      if old_tr:
-          # Relink: old transition keeps its video; its endpoint becomes new_kf.
-          dur_before = round(new_time - parse_ts(prev_kf["timestamp"]), 2)
-          update_transition(project_dir, old_tr["id"],
-                            to=new_id,
-                            duration_seconds=dur_before,
-                            remap={"method": "linear", "target_duration": dur_before})
-          # And add a fresh blank transition new_kf → next_kf
-          dur_after = round(parse_ts(next_kf["timestamp"]) - new_time, 2)
-          add_transition(project_dir, blank_transition(new_id, next_kf["id"], dur_after,
-                                                      target_track_id))
-      else:
-          # 4. No spanning transition — create blanks to whichever neighbors exist
-          if prev_kf:
-              dur_before = round(new_time - parse_ts(prev_kf["timestamp"]), 2)
-              add_transition(project_dir, blank_transition(prev_kf["id"], new_id,
-                                                          dur_before, target_track_id))
-          if next_kf:
-              dur_after = round(parse_ts(next_kf["timestamp"]) - new_time, 2)
-              add_transition(project_dir, blank_transition(new_id, next_kf["id"],
-                                                          dur_after, target_track_id))
-
-      # 5. Attach the dropped subclip's media reference to the appropriate
-      #    transition (see OQ-9). Most likely the (prev_kf → new_kf) transition,
-      #    since the new keyframe is the END of the dropped clip's content.
-      attach_subclip_video(project_dir,
-                           transition_id=<picked per OQ-9>,
-                           pool_path=payload["path"],
-                           trim_in=payload["inSeconds"],
-                           trim_out=payload["outSeconds"])
   ```
 
-  Existing transitions never move in time. Only the spanning transition's `to_kf` and `duration_seconds` change during relink; its video stays put.
+  Surviving rows are byte-identical to pre-drop. The clip plays at native 1.0 rate (`trim_out − trim_in == duration_seconds`). The whole drop is one Ctrl+Z away from being reverted.
 
 ### Plugin contribution point
 
@@ -590,36 +590,69 @@ The core behavior contract — happy path, common bad paths, primary positive an
 **Then** (assertions):
 - **subclip-payload-shape**: `JSON.parse(dataTransfer.getData('application/x-scenecraft-video-subclip'))` equals `{ path: 'pool/bounces/foo.mp4', inSeconds: 0, outSeconds: 16, label: 'range 32-48s v2' }`
 
-#### Test: video-drop-relinks-spanning-transition (covers R32)
+#### Test: video-drop-splits-on-partial-coverage (covers R32)
 
 **Given**:
-- Existing timeline on a video track has keyframes at t = 30 and t = 60 connected by a spanning transition `tr_existing` (with its own video, trim_in=5, trim_out=20)
-- Source monitor has a video source loaded at `path = pool/bounces/foo.mp4` with `inPoint = 10`, `outPoint = 25`
-- A `dragstart` fired with the corresponding `application/x-scenecraft-video-subclip` payload
+- A target video track has kfs at t=30 and t=60 connected by a single transition `tr_existing` (`selected = ps_old`, `trim_in = 5`, `trim_out = 20`, `source_video_duration = 30`)
+- Source monitor has a 15s subclip loaded: `path = 'pool/bounces/foo.mp4'`, `poolSegmentId = ps_new`, `inPoint = 10`, `outPoint = 25` (clip_duration = 15)
 
-**When**: The drop lands on the timeline at t = 40.0
+**When**: The drop lands at t = 40 on that track (so consumed range is `[40, 55]`, both boundaries straddle `tr_existing`)
 
 **Then** (assertions):
-- **keyframe-created**: exactly one new `keyframes` row exists at timestamp 40.0 on the target track
-- **spanning-tr-relinked**: `tr_existing.to_kf` is now the new kf id (was the kf at t=60); `tr_existing.duration_seconds === 10` (= 40 − 30); `tr_existing.trim_in` and `tr_existing.trim_out` and the row's selected video are unchanged
-- **second-tr-created**: a new transition exists from the new kf to the kf at t=60 with `duration_seconds === 20` (= 60 − 40); this transition is blank (no `selected`, no `trim_in`/`trim_out`, no video)
-- **subclip-attached**: the dropped subclip's video reference (path + trim_in=10, trim_out=25) is attached to exactly one transition per OQ-9; that transition's `trim_in === 10` and `trim_out === 25`
-- **no-other-rows-mutated**: no other `keyframes` or `transitions` rows had their `timestamp`, `from_kf`, `to_kf`, `duration_seconds`, `trim_in`, `trim_out`, or `selected` columns change
+- **left-split**: `tr_existing` is soft-deleted; a new transition exists for `(kf@30 → new_kf@40)` referencing `ps_old` with `trim_in = 5`, `trim_out = 5 + (40−30)/(60−30) * (20−5) = 10` (split at left source offset)
+- **right-split**: a new transition exists for `(new_kf@55 → kf@60)` referencing `ps_old` with `trim_in = 5 + (55−30)/(60−30) * (20−5) = 17.5`, `trim_out = 20` (split at right source offset)
+- **boundary-kfs-exist**: kfs at t=40 and t=55 exist on the target track
+- **dropped-clip-tr**: a new transition `(kf@40 → kf@55)` exists with `selected = ps_new`, `trim_in = 10`, `trim_out = 25`, `duration_seconds = 15`, `remap.method = "linear"`, `remap.target_duration = 15`
+- **inside-rows-consumed**: no other kfs or trs exist with timestamps in `(40, 55)` exclusive; the new transition for the dropped clip is the only tr in `[40, 55]`
+- **outer-rows-untouched**: kf@30 and kf@60 are unchanged (same `id`, `timestamp`, `prompt`, etc.)
+- **single-undo-group**: the entire drop is in one undo group; calling undo once reverts everything
 
-#### Test: video-drop-no-spanning-transition (covers R32)
+#### Test: video-drop-consumes-on-full-coverage (covers R32)
 
 **Given**:
-- Track has keyframes at t = 30 and t = 60 but **no transition** between them
-- Source monitor has the same video subclip as above with `inPoint = 10`, `outPoint = 25`
+- Target track has kfs at t=30, t=42, t=48, and t=60 with transitions `tr_a (30→42, selected=ps_a)`, `tr_b (42→48, selected=ps_b)`, `tr_c (48→60, selected=ps_c)`
+- Source monitor has a 20s subclip: `inPoint = 0`, `outPoint = 20`, `poolSegmentId = ps_new`
 
-**When**: The drop lands on the timeline at t = 40.0
+**When**: The drop lands at t = 35 (consumed range `[35, 55]`)
 
 **Then** (assertions):
-- **keyframe-created**: a new `keyframes` row at t = 40.0
-- **prev-tr-created**: a new transition `(prev → new_kf)` with `duration_seconds === 10`; blank by default (or carries the subclip per OQ-9)
-- **next-tr-created**: a new transition `(new_kf → next)` with `duration_seconds === 20`; blank
-- **subclip-attached**: the dropped subclip's video reference is attached to the transition designated by OQ-9 with `trim_in === 10`, `trim_out === 25`
-- **no-existing-rows-mutated**: the kf at t=30 and t=60 are unchanged; no other transition rows were created or modified
+- **left-split-of-tr_a**: `tr_a` (30→42) straddles the left boundary at 35 → split. `(kf@30 → kf@35)` survives with `selected = ps_a` and adjusted `trim_in`/`trim_out`
+- **kf-42-consumed**: kf at t=42 is soft-deleted (full coverage)
+- **kf-48-consumed**: kf at t=48 is soft-deleted (full coverage)
+- **tr_b-consumed**: `tr_b` (42→48) is soft-deleted (full coverage of both endpoints)
+- **right-split-of-tr_c**: `tr_c` (48→60) straddles the right boundary at 55 → split. `(kf@55 → kf@60)` survives with `selected = ps_c` and adjusted `trim_in`/`trim_out`
+- **boundary-kfs-exist**: kfs at t=35 and t=55 exist
+- **dropped-clip-tr**: a new transition `(kf@35 → kf@55)` with `selected = ps_new`, `trim_in = 0`, `trim_out = 20`, `duration_seconds = 20`
+- **outer-rows-untouched**: kf@30 and kf@60 are unchanged
+
+#### Test: video-drop-no-overlap-empty-space (covers R32)
+
+**Given**:
+- Target track has kfs only at t=10 and t=80 with a single transition between them at slot `[10, 80]` `selected = ps_old`
+- A 15s subclip with `inPoint = 5`, `outPoint = 20`
+
+**When**: The drop lands at t = 30 (consumed range `[30, 45]`, both boundaries straddle the same transition)
+
+**Then** (assertions):
+- **straddling-tr-split-twice**: the original transition `(10→80)` is split first at t=30 then at t=45, yielding three transitions: `(10→30)`, `(30→45)`, `(45→80)` all referencing `ps_old` with adjusted `trim_in`/`trim_out`
+- **middle-tr-consumed**: the middle transition `(30→45)` is soft-deleted in the consume step (full coverage of both endpoints)
+- **dropped-clip-tr**: a new transition `(kf@30 → kf@45)` exists with `selected = ps_new`, `trim_in = 5`, `trim_out = 20`
+- **boundary-kfs-exist**: kfs at t=30 and t=45 exist (created by the split-transition calls)
+
+#### Test: video-drop-into-pure-empty-space (covers R32)
+
+**Given**:
+- Target track has kfs at t=10 and t=80 with **no** transition between them (gap)
+- A 15s subclip with `inPoint = 5`, `outPoint = 20`
+
+**When**: The drop lands at t = 30 (consumed range `[30, 45]`, no straddling transitions)
+
+**Then** (assertions):
+- **no-splits-run**: split-transition is NOT called (no straddling transitions)
+- **no-rows-consumed**: no existing kfs or trs are soft-deleted
+- **boundary-kfs-created-via-add-keyframe**: new kfs at t=30 and t=45 exist (created via `add_keyframe`)
+- **dropped-clip-tr**: a new transition `(kf@30 → kf@45)` with `selected = ps_new`, `trim_in = 5`, `trim_out = 20`, `duration_seconds = 15`
+- **outer-rows-untouched**: kf@10 and kf@80 unchanged
 
 #### Test: recent-sources-pushed-on-setsource (covers R23)
 
@@ -947,13 +980,11 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **OQ-6 — Progress bar fallback when `poolSegmentId` is absent on audio source.** Spec says "scrubbable progress bar." Does this need waveform-like visual indication of position, or a plain `<input type="range">`?
 - **OQ-7 — Right-click menu wiring on timeline video clip (R46).** The exact mechanism (ContextMenuProvider subscription? extension of existing `onContextMenu` handler?) is unspecified; implementers pick based on current timeline architecture.
 - **OQ-8 — `invalid-kind-value-rejected` test outcome.** Spec lets implementer choose compile-time-only or runtime-guard. Should spec pin one? Compile-time-only is lighter but loses runtime safety for JSON-deserialized sources.
-- **OQ-9 — Where does a dropped video subclip's media reference attach? (only relevant if OQ-10 picks Option A.)** With Option A — fit-and-remap — R32 inserts one new kf and creates blank transitions around it. The dropped subclip's `path` + `trim_in` + `trim_out` need to land on **one** of:
-    - The transition INTO the new kf (`prev_kf → new_kf`) — treats the new keyframe as the END of the dropped clip's playback. Most natural NLE-style "I just dropped a clip ending here" reading.
-    - The transition OUT of the new kf (`new_kf → next_kf`) — treats the drop position as the START of the clip.
-    - Both transitions (clip spans the new kf) — only sensible when both neighbors exist; doubles the duration of the dropped clip across the timeline.
-  Recommendation pending: option 1 (prev_kf → new_kf) for v1, since it preserves the existing add-keyframe shape and matches "drop = clip ends here" semantics. Moot if OQ-10 picks Option B.
+- **OQ-9 — Where does a dropped video subclip's media reference attach?** **Resolved: moot.** OQ-10 resolved to Option B (insert-and-consume), which inserts two boundary kfs and attaches the subclip to the single new transition between them. There's no ambiguity about which transition carries the media — there's only one new transition, and it carries the subclip at native 1.0 rate.
 
-- **OQ-10 — Video subclip drop semantics: fit-and-remap (A) vs. insert-and-consume (B)?** A subclip has intrinsic duration `outSeconds − inSeconds`. The kf+tr model forces transitions to span exactly between adjacent keyframes. When those don't match, what wins?
+- **OQ-10 — Video subclip drop semantics: fit-and-remap (A) vs. insert-and-consume (B)?** **Resolved: B (insert-and-consume).** The user identified consume-on-overlap as the project's canonical mental model (2026-04-25 chat); A would ship a knowingly-wrong NLE behavior (off-rate playback). R32 above is now the canonical algorithm. paste-group's skip-on-overlap policy is flagged as a separate bug to fix (see Related Artifacts).
+
+  Original options preserved below for context:
 
   **What scenecraft already has** (worth grounding the options against):
   - `POST /api/projects/:p/split-transition` (`api_server.py:6941`, `_handle_split_transition`) — given `(transitionId, splitTime)`, soft-deletes the original transition, inserts a new kf at `splitTime`, creates two new transitions both pointing at the same `selected` pool_segment with `trim_in` / `trim_out` split at the corresponding source offset (`split_source_offset = trim_in + split_progress * (trim_out − trim_in)`). Pure metadata split — no re-encoding. Junction rows are cloned so both halves share candidates.
@@ -1056,6 +1087,8 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **Panel infrastructure**: `src/components/editor/EditorPanelLayout.tsx`, `src/components/panel-layout/*`
 - **Reuse patterns**: `src/plugins/isolate_vocals/AudioIsolationsPanel.tsx` (`PoolAudioPlayButton`), `src/components/editor/AudioWaveform.tsx`, `src/plugins/generate-music/MusicGenerationsPanel.tsx` (recent play-button wiring)
 - **Backend endpoints relied upon**: `GET /api/projects/:name/files/:path`, `GET /api/projects/:name/pool/:seg_id/peaks` (both existing)
+- **Existing primitives composed by R32**: `POST /api/projects/:name/split-transition` (`api_server.py:6941`), `add_keyframe` (db) + `_handle_add_keyframe` (`api_server.py:5514`), soft-delete primitives for kf/tr
+- **Known related bug — paste-group**: `_handle_paste_group` (`api_server.py:5843`) uses **skip-on-overlap** when a pasted transition would overlap an existing one on the target track — silently drops the pasted tr (and may orphan its kfs). This contradicts the project's canonical "consume on overlap" mental model. The same `split + soft-delete` machinery R32 composes should be applied to paste-group so it consumes overlapping rows instead of skipping. Track as a separate bug — out of scope for this spec, but worth a task before any user encounters the surprising drop.
 
 ---
 
