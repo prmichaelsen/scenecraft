@@ -496,8 +496,9 @@ Deferred per clarification-14:
   - Build a new scene during a running show (inspired-on-the-fly authoring)
   - Run multiple scenes side-by-side for comparison
   When this ships, the dropdown fallback in `LightShow3DPanel` is removed and the show panel's fallback becomes blackout (no scheduled output → fixtures dim). The primitive `apply()` contract already supports this — primitives are pure functions of `(sceneTime, states, params, context)` with no panel-specific state, so the editor panel just runs its own state buffer through the same primitive functions. Zero changes to the catalog or primitives module needed; only panel composition changes.
-- **Search upgrade path** — `label_query` semantics start as `LOWER(label) LIKE '%q%'` (sufficient up to a few thousand scenes). Forward-compatible to:
-  - **Phase 2: FTS5 with trigram tokenizer** — virtual table on `(id, label, type)`, BM25 ranking, sync triggers. ~1 day of work; same `label_query` API. Vanilla SQLite 3.34+; no new dependencies.
+- **Search upgrade path** — `label_query` semantics start as `LOWER(label) LIKE '%q%'` (sufficient up to a few thousand scenes; **ASCII case-insensitive only** — SQLite's built-in `LOWER()` doesn't transform accented Latin / CJK / Cyrillic etc., so non-ASCII matches case-sensitively at MVP). Forward-compatible to:
+  - **Unicode-aware lowercase** (small lift): register `conn.create_function("LOWER_UNI", 1, str.lower, deterministic=True)` and swap the SQL. Python's `str.lower()` is fully Unicode-aware. Worth doing if international scene labels become common.
+  - **Phase 2: FTS5 with trigram tokenizer** — virtual table on `(id, label, type)`, BM25 ranking, sync triggers. ~1 day of work; same `label_query` API. Vanilla SQLite 3.34+; no new dependencies. The `unicode61` tokenizer also gives full Unicode case-fold for free.
   - **Phase 3: typo-tolerant** — `spellfix1` extension or post-fetch `rapidfuzz`. Practical only if typos become common.
   - **Phase 4: semantic / embedding search** — `sqlite-vec` / `sqlite-vss` if labels become free-text. Big lift; only worth it if scene labels evolve toward descriptive prose.
   None of these change the `scenes.list` MCP tool surface — only the storage backend behind `label_query` changes.
