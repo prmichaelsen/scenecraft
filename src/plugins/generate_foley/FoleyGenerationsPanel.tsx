@@ -65,12 +65,12 @@ export function FoleyGenerationsPanel({ projectName }: PanelProps) {
     if (!projectName) return
     setLoadingGenerations(true)
     try {
-      const { generations } = await fetchFoleyGenerations(projectName, {
+      const response = await fetchFoleyGenerations(projectName, {
         entityType: selectedTransition ? 'transition' : undefined,
         entityId: selectedTransition?.id,
         limit: 50,
       })
-      setGenerations(generations)
+      setGenerations(Array.isArray(response?.generations) ? response.generations : [])
     } catch {
       // silent fail
     } finally {
@@ -467,7 +467,7 @@ function RunCard({
       )}
 
       {/* Completed: show drag handle for each track */}
-      {gen.status === 'completed' && gen.tracks.map((track) => (
+      {gen.status === 'completed' && (gen.tracks ?? []).map((track) => (
         <div
           key={track.pool_segment_id}
           className="mt-1.5 flex items-center gap-2 p-1.5 rounded bg-orange-900/20 border border-orange-800/40 cursor-grab active:cursor-grabbing"
