@@ -135,7 +135,16 @@
 - **R31**: When `source.kind === 'video'`, the panel's drag handle emits `dragstart` events with:
   - `dataTransfer.setData('application/x-scenecraft-video-subclip', JSON.stringify({ path, inSeconds, outSeconds, label }))` where `inSeconds = inPoint ?? 0` and `outSeconds = outPoint ?? duration`
   - `dataTransfer.effectAllowed = 'copy'`
-- **R32**: The timeline / keyframe drop handler (new; addition to `Timeline.tsx`) receives `application/x-scenecraft-video-subclip` and runs the **same wire-up logic** the existing `POST /api/projects/:name/add-keyframe` endpoint runs — there is no separate "reconciliation" or "nudging" step. Concretely:
+- **R32**: The timeline / keyframe drop handler (new; addition to `Timeline.tsx`) receives `application/x-scenecraft-video-subclip` and inserts the dropped subclip into the kf+tr timeline. **Video-only** — audio drops use R30's `audio_clips` path, which has no analogous problem because audio clip rows are free-floating (any `start_time` / `end_time` / `source_offset`) and don't need to fit between adjacent anchor points.
+
+  The video case has a real semantics question: a video subclip has an intrinsic length (`outSeconds − inSeconds`) but the kf+tr model forces transitions to span exactly the gap between adjacent keyframes. If the subclip is 15 s and the available slot between neighbors is 10 s or 20 s, the lengths don't match. **OQ-10** captures the choice between two families of behavior:
+
+  - **Fit-and-remap** (one new kf, no consume): insert one kf, attach the subclip to one of the resulting transitions, let the existing `remap` field stretch/squish to fit. No existing rows are deleted; no kfs in the target range are consumed. Existing add-keyframe behavior plus a media attach.
+  - **Insert-and-consume** (two new kfs, consume range): insert two kfs at `(drop_pos, drop_pos + clip_duration)`, delete any existing kfs strictly inside that range, split any transitions straddling either boundary. The transition between the two new kfs carries the subclip at 1.0 remap. NLE-style insert semantics.
+
+  R32 below describes the **fit-and-remap path** (Option A) since it reuses the existing `add-keyframe` shape and is the v1 recommendation pending OQ-10 resolution. If OQ-10 picks insert-and-consume, R32 is rewritten and tests are replaced before implementation.
+
+  **In English (Option A — fit-and-remap).**
 
   **In English.** The handler parses the drop position into a new keyframe time, calls the existing add-keyframe path, then attaches the dropped subclip's media reference (path + `trim_in` + `trim_out`) onto the appropriate adjacent transition. The add-keyframe path itself does the timeline-neighbor wiring:
     1. Insert the new `keyframes` row at the drop time (on the target track).
@@ -938,12 +947,27 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **OQ-6 — Progress bar fallback when `poolSegmentId` is absent on audio source.** Spec says "scrubbable progress bar." Does this need waveform-like visual indication of position, or a plain `<input type="range">`?
 - **OQ-7 — Right-click menu wiring on timeline video clip (R46).** The exact mechanism (ContextMenuProvider subscription? extension of existing `onContextMenu` handler?) is unspecified; implementers pick based on current timeline architecture.
 - **OQ-8 — `invalid-kind-value-rejected` test outcome.** Spec lets implementer choose compile-time-only or runtime-guard. Should spec pin one? Compile-time-only is lighter but loses runtime safety for JSON-deserialized sources.
-- **OQ-9 — Where does a dropped video subclip's media reference attach?** R32's wire-up reuses `add-keyframe`'s relink+blank-fill logic (the existing add-keyframe path creates blank transitions around the new kf). The dropped subclip's `path` + `trim_in` + `trim_out` need to land on **one** of:
+- **OQ-9 — Where does a dropped video subclip's media reference attach? (only relevant if OQ-10 picks Option A.)** With Option A — fit-and-remap — R32 inserts one new kf and creates blank transitions around it. The dropped subclip's `path` + `trim_in` + `trim_out` need to land on **one** of:
     - The transition INTO the new kf (`prev_kf → new_kf`) — treats the new keyframe as the END of the dropped clip's playback. Most natural NLE-style "I just dropped a clip ending here" reading.
     - The transition OUT of the new kf (`new_kf → next_kf`) — treats the drop position as the START of the clip.
     - Both transitions (clip spans the new kf) — only sensible when both neighbors exist; doubles the duration of the dropped clip across the timeline.
-    - A new "wrapper" transition pair around two new keyframes (one at drop position, one at drop+duration of subclip) — most accurate to source-clip duration but introduces a second new kf and may collide with existing kfs.
-  Recommendation pending implementer review: option 1 (prev_kf → new_kf) for v1, since it preserves the existing add-keyframe shape and matches "drop = clip ends here" semantics. Should be confirmed before implementation.
+  Recommendation pending: option 1 (prev_kf → new_kf) for v1, since it preserves the existing add-keyframe shape and matches "drop = clip ends here" semantics. Moot if OQ-10 picks Option B.
+
+- **OQ-10 — Video subclip drop semantics: fit-and-remap (A) vs. insert-and-consume (B)?** A subclip has intrinsic duration `outSeconds − inSeconds`. The kf+tr model forces transitions to span exactly between adjacent keyframes. When those don't match, what wins? Four candidate behaviors:
+
+    - **A. Fit-and-remap (one new kf, no consume).** Insert one kf at drop position. Existing add-keyframe path creates blank transitions around it (or relinks a spanning transition). Subclip media attaches to one transition (per OQ-9). The transition's `duration_seconds` is the kf-to-kf gap; the subclip plays through the existing `remap` field's linear stretch/squish. No kfs deleted. No transitions split. Cheapest and reuses existing infrastructure exactly.
+      - Trade-off: subclip plays at non-1.0 rate when its length doesn't match the slot. User has to add a manual kf later to give it a 1.0-rate slot.
+
+    - **B. Insert-and-consume (two new kfs, consume range, NLE-standard).** Insert two kfs at `(drop_pos, drop_pos + clip_duration)`. Delete any existing kfs strictly inside `(drop_pos, drop_pos + clip_duration)`. For transitions that straddle a boundary, **split** at the boundary (mirrors the existing `audio-clips/batch-ops` `"split"` op pattern). The new transition between the two new kfs carries the subclip with 1.0 remap (`trim_in` + `trim_out` matching the I/O markers verbatim).
+      - Trade-off: deletes user data without a confirmation. Could be irreversible feeling unless wrapped in a single undo group with a clear summary.
+
+    - **C. Insert-no-consume-reject-collisions.** Insert two kfs as in B, but if any existing kfs fall in the consumed range, REJECT the drop with a "clear timeline space first" error. Conservative, never destroys data.
+      - Trade-off: annoying when the user is intentionally replacing a section.
+
+    - **D. Hybrid: A by default, B when user holds a modifier (Shift / Alt).** Default = fit-and-remap. Modified drop = insert-and-consume.
+      - Trade-off: discoverability — modifier behavior needs a UI hint.
+
+  V1 recommendation: **A** for simplicity and zero data loss. Promote to D in a later milestone once the panel has bedded in. B is the most NLE-standard but requires the consume + split + undo-group machinery, which is a milestone of its own.
 
 ---
 
