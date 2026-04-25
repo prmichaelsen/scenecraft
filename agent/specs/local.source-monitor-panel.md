@@ -953,21 +953,42 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
     - Both transitions (clip spans the new kf) — only sensible when both neighbors exist; doubles the duration of the dropped clip across the timeline.
   Recommendation pending: option 1 (prev_kf → new_kf) for v1, since it preserves the existing add-keyframe shape and matches "drop = clip ends here" semantics. Moot if OQ-10 picks Option B.
 
-- **OQ-10 — Video subclip drop semantics: fit-and-remap (A) vs. insert-and-consume (B)?** A subclip has intrinsic duration `outSeconds − inSeconds`. The kf+tr model forces transitions to span exactly between adjacent keyframes. When those don't match, what wins? Four candidate behaviors:
+- **OQ-10 — Video subclip drop semantics: fit-and-remap (A) vs. insert-and-consume (B)?** A subclip has intrinsic duration `outSeconds − inSeconds`. The kf+tr model forces transitions to span exactly between adjacent keyframes. When those don't match, what wins?
+
+  **What scenecraft already has** (worth grounding the options against):
+  - `POST /api/projects/:p/split-transition` (`api_server.py:6941`, `_handle_split_transition`) — given `(transitionId, splitTime)`, soft-deletes the original transition, inserts a new kf at `splitTime`, creates two new transitions both pointing at the same `selected` pool_segment with `trim_in` / `trim_out` split at the corresponding source offset (`split_source_offset = trim_in + split_progress * (trim_out − trim_in)`). Pure metadata split — no re-encoding. Junction rows are cloned so both halves share candidates.
+  - `POST /api/projects/:p/paste-group` (`_handle_paste_group`, `api_server.py:5843`) — pastes a group of kfs+trs (and audio_clips) at a target time. Collision policy is **skip-on-overlap**: any pasted transition whose time range overlaps an existing transition on the target track is silently dropped (kfs still get created — they may end up orphaned). Existing rows are never mutated.
+  - `_handle_add_keyframe` (`api_server.py:5514`) — single point insert, relink-spanning + blank-fill (the algorithm R32 currently mirrors).
+  - Soft-delete primitives for kfs and trs.
+
+  So **Option B (insert-and-consume) is composable from existing primitives** — `split-transition` handles the straddle-the-boundary case, soft-deletes handle the strictly-inside case, and `_handle_add_keyframe`'s wire-up handles the new endpoints. There's no single existing endpoint that does the whole compose, but every step exists.
+
+  Four candidate behaviors:
 
     - **A. Fit-and-remap (one new kf, no consume).** Insert one kf at drop position. Existing add-keyframe path creates blank transitions around it (or relinks a spanning transition). Subclip media attaches to one transition (per OQ-9). The transition's `duration_seconds` is the kf-to-kf gap; the subclip plays through the existing `remap` field's linear stretch/squish. No kfs deleted. No transitions split. Cheapest and reuses existing infrastructure exactly.
       - Trade-off: subclip plays at non-1.0 rate when its length doesn't match the slot. User has to add a manual kf later to give it a 1.0-rate slot.
 
-    - **B. Insert-and-consume (two new kfs, consume range, NLE-standard).** Insert two kfs at `(drop_pos, drop_pos + clip_duration)`. Delete any existing kfs strictly inside `(drop_pos, drop_pos + clip_duration)`. For transitions that straddle a boundary, **split** at the boundary (mirrors the existing `audio-clips/batch-ops` `"split"` op pattern). The new transition between the two new kfs carries the subclip with 1.0 remap (`trim_in` + `trim_out` matching the I/O markers verbatim).
-      - Trade-off: deletes user data without a confirmation. Could be irreversible feeling unless wrapped in a single undo group with a clear summary.
+    - **B. Insert-and-consume (two new kfs, consume range, NLE-standard).** Composes existing primitives:
+        1. For any transition straddling the **left boundary** (`drop_pos`), call `split-transition` at `drop_pos`. Reuses the existing `_handle_split_transition` machinery.
+        2. For any transition straddling the **right boundary** (`drop_pos + clip_duration`), call `split-transition` at `drop_pos + clip_duration`.
+        3. After both splits, the timeline has clean boundaries at the consumed-range endpoints. Soft-delete every kf strictly inside `(drop_pos, drop_pos + clip_duration)` and every transition between consecutive deleted-or-boundary kfs.
+        4. Insert two new kfs at the boundaries (use the post-split kfs from step 1+2 if they happen to land exactly at the boundaries; otherwise insert fresh).
+        5. Create a new transition between the two new kfs with `selected = source.poolSegmentId`, `trim_in = inSeconds`, `trim_out = outSeconds`, `remap = {"method": "linear", "target_duration": clip_duration}`.
 
-    - **C. Insert-no-consume-reject-collisions.** Insert two kfs as in B, but if any existing kfs fall in the consumed range, REJECT the drop with a "clear timeline space first" error. Conservative, never destroys data.
-      - Trade-off: annoying when the user is intentionally replacing a section.
+      Wrap the entire sequence in a single `undo_begin(project_dir, "Drop subclip at <time>")` so the user can `Ctrl+Z` it back to one operation. NLE-standard semantics; the subclip plays at native 1.0 rate.
+      - Trade-off: deletes user data. Mitigated by the single-undo-group wrap, but a modal confirmation when the consumed range contains any "interesting" content (named labels, non-blank transitions) might still be warranted.
+
+    - **C. Skip-on-collision (mirrors paste-group exactly).** Insert one or two new kfs as appropriate. If their connecting transition's time range would overlap any existing transition on the target track, silently SKIP creating that transition (paste-group's policy applied to a single-clip drop). Existing rows are never mutated.
+      - Trade-off: orphan kfs + lost subclip media reference when the target area is busy. User has no signal that the drop "did less than they expected." Probably surprising.
 
     - **D. Hybrid: A by default, B when user holds a modifier (Shift / Alt).** Default = fit-and-remap. Modified drop = insert-and-consume.
       - Trade-off: discoverability — modifier behavior needs a UI hint.
 
-  V1 recommendation: **A** for simplicity and zero data loss. Promote to D in a later milestone once the panel has bedded in. B is the most NLE-standard but requires the consume + split + undo-group machinery, which is a milestone of its own.
+  V1 recommendation: **B**, since `split-transition` already exists and the compose is mechanical. The consume step is the only new bit, and it's wrapped in a single undo group so it's reversible. Treats the drop the way users expect from Premiere/Avid.
+
+  Fallback recommendation: **D** if the consume step feels too aggressive — defaults to A (safe, no data loss) and unlocks B with a modifier for power users. But this introduces a discoverability issue: users won't know about the modifier without docs/tooltip.
+
+  **A** is the lowest-effort path but ships a deliberately wrong NLE behavior (clip plays squished/stretched instead of at native rate). Avoid unless we're willing to ship a known UX corner.
 
 ---
 
