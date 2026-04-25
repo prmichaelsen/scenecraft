@@ -137,22 +137,22 @@ Fade envelopes multiply the **final intensity** only (per Q 3.1) — color, pan,
 
 ### Part 4: Three action-dispatched MCP tools
 
-**`scenes`** — library CRUD + catalog discovery.
+**`scenes`** — library CRUD + catalog discovery + filtered/paginated list.
 
 | Action | Args | Behavior |
 |---|---|---|
-| `list` | — | Returns all scenes. |
-| `list_primitives` | — | Returns `primitives_catalog.yaml` verbatim: `{primitives: [{id, label, description, params_schema}]}`. |
-| `set` | `scenes: [{id, label?, type?, params?}, ...]` | Bulk partial upsert by id. Unknown ids create new scenes. Omitted fields preserve existing values. |
-| `remove` | `ids: [...]` | Delete by id. **Rejects** if any target scene has placements OR is held by the live override; returns list of blocking references. |
+| `list` | `filter?: {ids?, type?, label_query?}, limit? (default 50, max 500), offset?, order_by? (default "updated_at"), order? (default "desc")` | Returns `{scenes, total, has_more}` after filtering and paginating. Substring matching (`label_query`) is `LOWER(label) LIKE '%q%'` at MVP — forward-compatible upgrade path to FTS5 trigram in a later phase. |
+| `list_primitives` | — | Returns parsed `primitives_catalog.yaml`: `{primitives: [{id, label, description, params_schema}]}`. |
+| `set` | `scenes: [{id, label?, type?, params?}, ...]` | Bulk partial upsert by id. Unknown ids create new scenes. Omitted fields preserve existing values. **Returns only the upserted rows**, not the full library. |
+| `remove` | `ids: [...]` | Delete by id. **Rejects** if any target has placements or is held by the live override; returns list of blocking references. **Returns only deleted rows on success** (pre-deletion state); missing ids silently skipped. |
 
-**`scene_timeline`** — placements CRUD.
+**`scene_timeline`** — placements CRUD with filter/pagination.
 
 | Action | Args | Behavior |
 |---|---|---|
-| `list` | — | Returns all placements. |
-| `set` | `placements: [{id?, scene_id, start_time, end_time, display_order?, fade_in_sec?, fade_out_sec?}, ...]` | Bulk partial upsert. Missing `id` → insert (auto-UUID). Existing `id` → merge fields. |
-| `remove` | `ids: [...]` | Delete by id. No reference checks needed (placements have no inbound refs). |
+| `list` | `filter?: {ids?, scene_id?, time_range?: {start, end}}, limit? (default 100, max 1000), offset?, order_by? (default "start_time"), order? (default "asc")` | Returns `{placements, total, has_more}`. `time_range` filter returns placements whose `[start_time, end_time]` overlaps the window. |
+| `set` | `placements: [{id?, scene_id, start_time, end_time, display_order?, fade_in_sec?, fade_out_sec?}, ...]` | Bulk partial upsert. Missing `id` → insert (auto-UUID). Existing `id` → merge fields. **Returns only upserted rows** (auto-generated ids included). |
+| `remove` | `ids: [...]` | Delete by id. **Returns only deleted rows** (pre-deletion state); missing ids silently skipped. |
 
 **`scene_live`** — single-slot live override.
 
@@ -442,6 +442,11 @@ Deferred per clarification-14:
 - **Merge modes on overlapping placements** — HTP, additive, multiply, min.
 - **Waveform `shape` param** on `rotating_head` (triangle / sawtooth / pulse).
 - **More primitives** — `strobe`, `chase`, `fade`, `breathe`, `circle`, `figure_eight`, etc.
+- **Search upgrade path** — `label_query` semantics start as `LOWER(label) LIKE '%q%'` (sufficient up to a few thousand scenes). Forward-compatible to:
+  - **Phase 2: FTS5 with trigram tokenizer** — virtual table on `(id, label, type)`, BM25 ranking, sync triggers. ~1 day of work; same `label_query` API. Vanilla SQLite 3.34+; no new dependencies.
+  - **Phase 3: typo-tolerant** — `spellfix1` extension or post-fetch `rapidfuzz`. Practical only if typos become common.
+  - **Phase 4: semantic / embedding search** — `sqlite-vec` / `sqlite-vss` if labels become free-text. Big lift; only worth it if scene labels evolve toward descriptive prose.
+  None of these change the `scenes.list` MCP tool surface — only the storage backend behind `label_query` changes.
 - **Per-project vs. global scene library** — MVP is per-project; global/shared library deferred.
 - **Scene library export / import** — relevant when MVR adoption lands (from broader M17 design).
 - **Priority stack for live overrides** — multi-cue layering with stack-based precedence.

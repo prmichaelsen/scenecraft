@@ -63,21 +63,37 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 ### `scenes` MCP tool
 
 - **R4.** `scenes.list_primitives` MUST return the parsed contents of `primitives_catalog.yaml` (YAML → JSON via `yaml.safe_load`) wrapped as `{primitives: [...]}` over the wire. The structural content of the response MUST be byte-for-byte equivalent to the parsed YAML — no field reordering, omission, or transformation.
-- **R5.** `scenes.list` MUST return all scenes as `{scenes: [{id, label, type, params, created_at, updated_at}]}` with `params` deserialized from `params_json`.
-- **R6.** `scenes.set` MUST accept `{scenes: [...]}` and upsert by `id` with partial-state semantics: for existing ids, omitted fields preserve current values; for new ids, a new row is inserted with the provided fields, using primitive catalog defaults for any unspecified `params`.
+- **R5.** `scenes.list` MUST return scenes as `{scenes: [...], total: number, has_more: boolean}` where `scenes[]` rows have shape `{id, label, type, params, created_at, updated_at}` (params deserialized from `params_json`). It MUST accept optional args:
+  - `filter.ids: [string]` — exact id lookup; missing ids are silently absent from results
+  - `filter.type: string` — exact primitive type match (e.g. `"rotating_head"`)
+  - `filter.label_query: string` — case-insensitive substring on label (`LOWER(label) LIKE '%' || LOWER(query) || '%'` semantics)
+  - `limit: number` — default 50, maximum 500 (values > 500 clamped to 500)
+  - `offset: number` — default 0
+  - `order_by: string` — one of `"created_at" | "updated_at" | "label"`; default `"updated_at"`
+  - `order: string` — one of `"asc" | "desc"`; default `"desc"`
+  Filter conditions combine with AND. `total` is the count after filtering, before pagination. `has_more` is `offset + scenes.length < total`.
+- **R6.** `scenes.set` MUST accept `{scenes: [...]}` and upsert by `id` with partial-state semantics: for existing ids, omitted fields preserve current values; for new ids, a new row is inserted with the provided fields, using primitive catalog defaults for any unspecified `params`. Returns `{scenes: [...]}` containing **only the upserted rows** (post-merge state), NOT the full library. Order matches the input array.
 - **R7.** `scenes.set` MUST reject entries missing `id`, returning `{error: "upsert_light_show_scenes: each scene must have an id"}`.
 - **R8.** `scenes.set` MUST reject entries with unknown `type` values (not present in the catalog), returning `{error: "unknown primitive type: <type>"}`.
-- **R9.** `scenes.remove` MUST accept `{ids: [...]}` and reject deletion of any scene currently referenced by one or more placements, returning `{error: "scene(s) still referenced", blocked: [{scene_id, placement_ids}, ...]}` and performing NO deletions when any are blocked (atomic all-or-nothing).
+- **R9.** `scenes.remove` MUST accept `{ids: [...]}` and reject deletion of any scene currently referenced by one or more placements, returning `{error: "scene(s) still referenced", blocked: [{scene_id, placement_ids}, ...]}` and performing NO deletions when any are blocked (atomic all-or-nothing). On success returns `{scenes: [...]}` containing only the **deleted** rows (pre-deletion state); silently skips missing ids without error.
 - **R10.** `scenes.remove` MUST reject deletion of a scene currently held by the live override, returning `{error: "scene held by live override; deactivate first", blocked_by_live: scene_id}` and performing NO deletions when blocked.
 - **R11.** `scenes` MUST reject unknown actions with `{error: "unknown action <action>; expected one of list/list_primitives/set/remove"}`.
 
 ### `scene_timeline` MCP tool
 
-- **R12.** `scene_timeline.list` MUST return all placements as `{placements: [{id, scene_id, start_time, end_time, display_order, fade_in_sec, fade_out_sec, created_at, updated_at}]}` ordered by `start_time` ascending.
-- **R13.** `scene_timeline.set` MUST accept `{placements: [...]}` and bulk upsert. Entries without `id` MUST be inserted with an auto-generated UUID (backend-assigned). Entries with an existing `id` MUST merge the provided fields.
+- **R12.** `scene_timeline.list` MUST return placements as `{placements: [...], total: number, has_more: boolean}` where rows have shape `{id, scene_id, start_time, end_time, display_order, fade_in_sec, fade_out_sec, created_at, updated_at}`. It MUST accept optional args:
+  - `filter.ids: [string]` — exact id lookup
+  - `filter.scene_id: string` — placements of a specific scene
+  - `filter.time_range: {start: number, end: number}` — placements that **overlap** the window (i.e., `placement.start_time <= range.end AND placement.end_time >= range.start`)
+  - `limit: number` — default 100, maximum 1000
+  - `offset: number` — default 0
+  - `order_by: string` — one of `"start_time" | "created_at"`; default `"start_time"`
+  - `order: string` — one of `"asc" | "desc"`; default `"asc"` (chronological)
+  Filter conditions combine with AND. `total` and `has_more` follow same semantics as R5.
+- **R13.** `scene_timeline.set` MUST accept `{placements: [...]}` and bulk upsert. Entries without `id` MUST be inserted with an auto-generated UUID (backend-assigned). Entries with an existing `id` MUST merge the provided fields. Returns `{placements: [...]}` containing **only the upserted rows** (post-merge state), NOT all placements. Order matches the input array; auto-generated ids appear on the corresponding output entries.
 - **R14.** `scene_timeline.set` MUST reject entries where `end_time <= start_time`, returning `{error: "placement end_time must be greater than start_time"}` and performing NO writes when any entry is invalid (atomic all-or-nothing).
 - **R15.** `scene_timeline.set` MUST reject entries with `scene_id` not present in `light_show__scenes`, returning `{error: "unknown scene_id: <id>"}` and performing NO writes (atomic).
-- **R16.** `scene_timeline.remove` MUST accept `{ids: [...]}`, delete matching placements, and silently ignore missing ids. Returns the remaining placements.
+- **R16.** `scene_timeline.remove` MUST accept `{ids: [...]}`, delete matching placements, and silently ignore missing ids. Returns `{placements: [...]}` containing only the **deleted** rows (with their pre-deletion state) — NOT the full remaining list.
 - **R17.** `scene_timeline` MUST reject unknown actions with `{error: "unknown action <action>; expected one of list/set/remove"}`.
 
 ### `scene_live` MCP tool
@@ -215,17 +231,18 @@ The catalog is **static config that ships with the plugin code** — same shape 
 ```yaml
 - id: scenes
   description: |
-    Scene library CRUD + primitive catalog discovery. Actions:
-      - "list": return the current scene library.
+    Scene library CRUD + primitive catalog discovery + filtered/paginated list. Actions:
+      - "list": return scenes (filtered + paginated). Defaults: 50 most recently updated.
       - "list_primitives": return the primitive catalog (JSON-schema per primitive).
-      - "set": bulk partial upsert by id.
-      - "remove": delete scenes by id (rejects if referenced by placements or live override).
+      - "set": bulk partial upsert by id; returns only upserted rows.
+      - "remove": delete scenes by id (rejects if referenced by placements or live override); returns only deleted rows.
   handler: "backend:tools_scenes"
   input_schema:
     type: object
     required: [action]
     properties:
       action: { type: string, enum: [list, list_primitives, set, remove] }
+      # set
       scenes:
         type: array
         items:
@@ -236,22 +253,35 @@ The catalog is **static config that ships with the plugin code** — same shape 
             label:  { type: string }
             type:   { type: string }
             params: { type: object }
+      # remove
       ids:
         type: array
         items: { type: string }
+      # list — pagination + filter
+      filter:
+        type: object
+        properties:
+          ids:         { type: array, items: { type: string } }
+          type:        { type: string, description: "Exact primitive type match" }
+          label_query: { type: string, description: "Case-insensitive substring on label" }
+      limit:    { type: integer, minimum: 1, maximum: 500, default: 50 }
+      offset:   { type: integer, minimum: 0, default: 0 }
+      order_by: { type: string, enum: [created_at, updated_at, label], default: updated_at }
+      order:    { type: string, enum: [asc, desc], default: desc }
 
 - id: scene_timeline
   description: |
-    Timeline placement CRUD. Actions:
-      - "list": return all placements ordered by start_time.
-      - "set": bulk partial upsert (missing id → new UUID).
-      - "remove": delete by ids.
+    Timeline placement CRUD with filter/pagination. Actions:
+      - "list": return placements (filtered + paginated). Defaults: 100 placements, chronological.
+      - "set": bulk partial upsert (missing id → new UUID); returns only upserted rows.
+      - "remove": delete by ids; returns only deleted rows.
   handler: "backend:tools_scene_timeline"
   input_schema:
     type: object
     required: [action]
     properties:
       action: { type: string, enum: [list, set, remove] }
+      # set
       placements:
         type: array
         items:
@@ -265,9 +295,27 @@ The catalog is **static config that ships with the plugin code** — same shape 
             display_order: { type: integer }
             fade_in_sec:   { type: number, minimum: 0 }
             fade_out_sec:  { type: number, minimum: 0 }
+      # remove
       ids:
         type: array
         items: { type: string }
+      # list — pagination + filter
+      filter:
+        type: object
+        properties:
+          ids:      { type: array, items: { type: string } }
+          scene_id: { type: string, description: "Placements of a specific scene" }
+          time_range:
+            type: object
+            required: [start, end]
+            description: "Placements that overlap the [start, end] window (seconds)"
+            properties:
+              start: { type: number }
+              end:   { type: number }
+      limit:    { type: integer, minimum: 1, maximum: 1000, default: 100 }
+      offset:   { type: integer, minimum: 0, default: 0 }
+      order_by: { type: string, enum: [start_time, created_at], default: start_time }
+      order:    { type: string, enum: [asc, desc], default: asc }
 
 - id: scene_live
   description: |
@@ -461,7 +509,9 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 **When**: Chat calls `tools_scenes({action: "set", scenes: [{id: "rh_slow", label: "Slow Rotating Head", type: "rotating_head", params: {period_sec: 6}}]}, ctx)`.
 
 **Then** (assertions):
-- **row-inserted**: subsequent `list` call returns one scene with `id: "rh_slow"`.
+- **set-returns-upserted-only**: response is `{scenes: [...]}` with exactly one entry — the just-inserted `"rh_slow"` (NOT the full library).
+- **set-response-not-full-list**: response does NOT include unrelated rows (verified by also having an unrelated scene in DB before the call and confirming it does not appear in the response).
+- **row-persisted**: a subsequent `list` call returns the new scene.
 - **label-persisted**: returned scene has `label: "Slow Rotating Head"`.
 - **params-merged-with-defaults**: returned `params` includes `period_sec: 6` AND all other rotating_head defaults (e.g., `pan_amplitude_rad: π/4`).
 - **created-at-set**: `created_at` field is a valid ISO8601 timestamp within last 5 seconds.
@@ -534,6 +584,81 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 - **blocked-by-live-field**: response has `blocked_by_live: "rh_slow"`.
 - **scene-still-exists**: `list` call still includes `"rh_slow"`.
 
+#### Test: scenes-list-default-pagination (covers R5)
+
+**Given**: 75 scenes exist; the most recently `updated_at` are `s_75`, `s_74`, ... `s_1` in descending update order.
+
+**When**: Chat calls `tools_scenes({action: "list"}, ctx)` with no other args.
+
+**Then** (assertions):
+- **default-limit-50**: `scenes.length == 50`.
+- **total-is-75**: `total == 75`.
+- **has-more-true**: `has_more == true`.
+- **default-order-updated-desc**: first element is `s_75`, last element is `s_26`.
+
+#### Test: scenes-list-pagination-second-page (covers R5)
+
+**Given**: Same 75-scene fixture as above.
+
+**When**: Chat calls `tools_scenes({action: "list", offset: 50, limit: 50}, ctx)`.
+
+**Then** (assertions):
+- **page-2-length**: `scenes.length == 25` (75 − 50).
+- **total-still-75**: `total == 75`.
+- **has-more-false**: `has_more == false`.
+- **page-2-first-is-s25**: first element id is `s_25`.
+
+#### Test: scenes-list-filter-by-type (covers R5)
+
+**Given**: 10 scenes, 4 of `type: "rotating_head"`, 6 of `type: "static_color"`.
+
+**When**: Chat calls `tools_scenes({action: "list", filter: {type: "rotating_head"}}, ctx)`.
+
+**Then** (assertions):
+- **only-matching-type**: every returned scene has `type == "rotating_head"`.
+- **count-matches**: `scenes.length == 4`, `total == 4`, `has_more == false`.
+
+#### Test: scenes-list-filter-by-label-query-substring-case-insensitive (covers R5)
+
+**Given**: Scenes with labels `"Slow Rotating Head"`, `"Fast rotating Head"`, `"Static Red"`.
+
+**When**: Chat calls `tools_scenes({action: "list", filter: {label_query: "ROTATING"}}, ctx)`.
+
+**Then** (assertions):
+- **case-insensitive-match**: both rotating-head scenes are returned (case insensitive).
+- **non-matching-excluded**: the static_red scene is NOT in the response.
+- **total-2**: `total == 2`.
+
+#### Test: scenes-list-filter-by-ids (covers R5)
+
+**Given**: Scenes `"a"`, `"b"`, `"c"` exist; `"x"` does NOT exist.
+
+**When**: Chat calls `tools_scenes({action: "list", filter: {ids: ["a", "x", "c"]}}, ctx)`.
+
+**Then** (assertions):
+- **returns-existing-only**: `scenes.length == 2`, ids are `"a"` and `"c"` (in `updated_at desc` order or as DB returns).
+- **missing-silently-skipped**: no error, no entry for `"x"`.
+
+#### Test: scenes-list-order-by-label-asc (covers R5)
+
+**Given**: Scenes with labels `"Apple"`, `"banana"`, `"Cherry"`.
+
+**When**: Chat calls `tools_scenes({action: "list", order_by: "label", order: "asc"}, ctx)`.
+
+**Then** (assertions):
+- **alphabetical**: response order is `"Apple"`, `"banana"`, `"Cherry"` (case-insensitive collation OR documented case-sensitive — assertion matches whichever the implementation chose, but is deterministic across runs).
+
+#### Test: scenes-list-limit-clamped-to-max (covers R5)
+
+**Given**: 600 scenes exist.
+
+**When**: Chat calls `tools_scenes({action: "list", limit: 9999}, ctx)`.
+
+**Then** (assertions):
+- **limit-clamped-to-500**: `scenes.length == 500` (max).
+- **total-is-600**: `total == 600`.
+- **has-more-true**: `has_more == true`.
+
 #### Test: scene-timeline-set-inserts-with-auto-uuid (covers R12, R13)
 
 **Given**: Scene `"rh_slow"` exists; placements table empty.
@@ -566,6 +691,74 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 **Then** (assertions):
 - **error-returned**: response has `error` matching `/unknown scene_id/i`.
 - **no-rows-inserted**: placements table empty.
+
+#### Test: scene-timeline-list-default-chronological (covers R12)
+
+**Given**: 5 placements at `start_time` 0, 5, 10, 15, 20.
+
+**When**: Chat calls `tools_scene_timeline({action: "list"}, ctx)`.
+
+**Then** (assertions):
+- **chronological-ascending**: response `placements` are ordered by `start_time` ascending (0, 5, 10, 15, 20).
+- **total-is-5**: `total == 5`, `has_more == false`.
+
+#### Test: scene-timeline-list-filter-time-range (covers R12)
+
+**Given**: Placements:
+- A: `[0, 5]`
+- B: `[5, 10]` (boundary touch — overlaps `[7, 12]` window)
+- C: `[8, 12]` (overlaps)
+- D: `[15, 20]` (no overlap)
+
+**When**: Chat calls `tools_scene_timeline({action: "list", filter: {time_range: {start: 7, end: 12}}}, ctx)`.
+
+**Then** (assertions):
+- **overlapping-included**: B and C are in the response.
+- **non-overlapping-excluded**: D is NOT in the response.
+- **boundary-touch-included**: B is included even though only `start_time=5` to `end_time=10` and the query starts at 7 (overlap is 7-10, non-empty).
+
+#### Test: scene-timeline-list-filter-by-scene-id (covers R12)
+
+**Given**: 6 placements: 4 reference scene `"rh_slow"`, 2 reference `"static_blue"`.
+
+**When**: Chat calls `tools_scene_timeline({action: "list", filter: {scene_id: "rh_slow"}}, ctx)`.
+
+**Then** (assertions):
+- **only-rh-slow**: every returned placement has `scene_id == "rh_slow"`.
+- **count**: `scenes.length == 4`, `total == 4`.
+
+#### Test: scene-timeline-set-returns-upserted-only (covers R13)
+
+**Given**: 5 placements exist; chat upserts 1 new placement.
+
+**When**: Chat calls `tools_scene_timeline({action: "set", placements: [{scene_id: "rh_slow", start_time: 30, end_time: 40}]}, ctx)`.
+
+**Then** (assertions):
+- **set-returns-only-new**: response `placements.length == 1`.
+- **set-response-not-full-list**: response does NOT include the 5 prior placements.
+- **list-still-shows-all-6**: subsequent `list` returns 6 placements.
+
+#### Test: scenes-remove-returns-deleted-rows (covers R9)
+
+**Given**: Scenes `"a"`, `"b"`, `"c"` exist; none referenced.
+
+**When**: Chat calls `tools_scenes({action: "remove", ids: ["a", "x", "c"]}, ctx)` (`"x"` does not exist).
+
+**Then** (assertions):
+- **returns-only-deleted**: response `scenes` has exactly 2 entries — the deleted `"a"` and `"c"` (with their pre-deletion data).
+- **missing-id-silently-skipped**: no error for `"x"`.
+- **scene-b-remains**: subsequent `list` shows `"b"` still present.
+
+#### Test: scene-timeline-remove-returns-deleted-rows (covers R16)
+
+**Given**: 3 placements exist with ids `p1`, `p2`, `p3`.
+
+**When**: Chat calls `tools_scene_timeline({action: "remove", ids: ["p1", "p3", "ghost"]}, ctx)` (`"ghost"` does not exist).
+
+**Then** (assertions):
+- **returns-only-deleted**: response `placements` has exactly 2 entries — `p1` and `p3` with their pre-deletion data (start_time, end_time, etc.).
+- **p2-remains**: `list` shows only `p2`.
+- **no-error**: no error for missing `"ghost"`.
 
 #### Test: scene-live-activate-by-scene-id (covers R18, R19, R21, R26)
 
@@ -946,6 +1139,7 @@ Boundaries, concurrency, idempotency, ordering, resource exhaustion. Every edge 
 - **Real DMX output protocols (OLA, Art-Net, sACN).** Sim-only in the 3D preview.
 - **Priority stack for live overrides.** Single slot; activate replaces silently.
 - **Global scene library / cross-project sharing.** Per-project only.
+- **Fuzzy / FTS / semantic search on `label_query`.** MVP uses `LOWER(label) LIKE '%q%'` substring matching only. The forward-compatible upgrade path (FTS5 trigram → spellfix1 → embeddings) does not change the tool surface — only the storage backend behind `label_query` evolves.
 - **Scene library export / import.**
 - **Backend Python port of the evaluator.** TS frontend only.
 
