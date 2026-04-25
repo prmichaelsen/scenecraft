@@ -55,6 +55,21 @@ CREATE TABLE light_show__scenes (
 
 A scene is pure data: `{type, params}`. Animation flexibility equals what its primitive supports.
 
+**Param storage is sparse with null-delete semantics (RFC 7396 JSON Merge Patch):**
+
+- `params_json` stores ONLY keys explicitly set by the user. Catalog defaults are NOT written into the row at insert time — they're merged at evaluator time.
+- Updates via `scenes.set` follow merge-patch:
+  - `params: {key: value}` → set that key
+  - `params: {key: null}` → DELETE that key from stored params (revert to whatever the catalog default supplies at evaluator time)
+  - `params: {key: undefined}` (key absent) → preserve existing value
+  - `params: {}` → preserve all params as-is
+  - `params: null` → rejected (use `{}` to preserve or `{key: null}` to delete)
+- Top-level fields (`label`, `type`) are NOT NULL columns; null on those is rejected.
+
+**Why sparse storage**: `list` → modify → `set` round-trips don't accidentally promote defaults to explicit overrides. Future catalog default updates flow forward to existing scenes that didn't explicitly override the changed key. The evaluator merges sparse stored params with catalog defaults transiently — the merge is never written back.
+
+**`scenes.list` returns sparse params** — the `params` field on each row contains only the user's overrides. Chat can fetch the catalog separately via `scenes.list_primitives` and merge client-side if it needs to display the resolved values. This keeps the merge logic in one place (the evaluator) and prevents accidental write-amplification through fetch-modify-write loops.
+
 **Timeline placements** (`light_show__scene_placements`): time-bound activations on the main scenecraft timeline.
 
 ```sql
@@ -427,8 +442,13 @@ Sourced from [clarification-14](../clarifications/clarification-14-light-show-sc
 | WS broadcast granularity | Expand existing `kind` field | Matches existing pattern; single subscription on frontend. |
 | ID format | Scenes: chat-chosen; Placements: auto-UUID | Scenes are named references; placements are positional handles. |
 | `clear` action | Dropped | No real user story for "delete every scene simultaneously". |
-| Partial upsert on `set` | Yes | Matches `screens` / `fixtures` pattern. |
+| Partial upsert on `set` | Yes (RFC 7396 merge-patch) | Matches `screens` / `fixtures` pattern; null = delete on params keys. |
 | Bulk `set` | Yes (arrays) | Consistent with existing tools. |
+| `list` filter + pagination | Yes | Scene bank can grow large; default 50 sorted by `updated_at desc`. |
+| `set` / `remove` return shape | Only affected rows | Avoid pulling full table back; matches large-bank scale. |
+| Param storage shape | Sparse (only explicit overrides) | Round-trip safe; catalog default updates flow forward; merge happens at evaluator time only. |
+| `null` semantics on `params` keys | Delete the key | Standard JSON Merge Patch; only realistic delete case is e.g. removing role filter to revert to "applies to all fixtures". |
+| `params` returned on list | Sparse (not merged) | Prevents fetch-modify-write from promoting defaults to explicit overrides. |
 
 ---
 

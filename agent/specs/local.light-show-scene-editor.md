@@ -63,7 +63,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 ### `scenes` MCP tool
 
 - **R4.** `scenes.list_primitives` MUST return the parsed contents of `primitives_catalog.yaml` (YAML → JSON via `yaml.safe_load`) wrapped as `{primitives: [...]}` over the wire. The structural content of the response MUST be byte-for-byte equivalent to the parsed YAML — no field reordering, omission, or transformation.
-- **R5.** `scenes.list` MUST return scenes as `{scenes: [...], total: number, has_more: boolean}` where `scenes[]` rows have shape `{id, label, type, params, created_at, updated_at}` (params deserialized from `params_json`). It MUST accept optional args:
+- **R5.** `scenes.list` MUST return scenes as `{scenes: [...], total: number, has_more: boolean}` where `scenes[]` rows have shape `{id, label, type, params, created_at, updated_at}`. The `params` field MUST be the **sparse stored value** (only keys explicitly overridden by the user) — NOT merged with catalog defaults. Catalog defaults are resolved at evaluator time, not at list time, so list → set round-trips do not promote defaults to explicit overrides. It MUST accept optional args:
   - `filter.ids: [string]` — exact id lookup; missing ids are silently absent from results
   - `filter.type: string` — exact primitive type match (e.g. `"rotating_head"`)
   - `filter.label_query: string` — case-insensitive substring on label (`LOWER(label) LIKE '%' || LOWER(query) || '%'` semantics)
@@ -72,7 +72,19 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
   - `order_by: string` — one of `"created_at" | "updated_at" | "label"`; default `"updated_at"`
   - `order: string` — one of `"asc" | "desc"`; default `"desc"`
   Filter conditions combine with AND. `total` is the count after filtering, before pagination. `has_more` is `offset + scenes.length < total`.
-- **R6.** `scenes.set` MUST accept `{scenes: [...]}` and upsert by `id` with partial-state semantics: for existing ids, omitted fields preserve current values; for new ids, a new row is inserted with the provided fields, using primitive catalog defaults for any unspecified `params`. Returns `{scenes: [...]}` containing **only the upserted rows** (post-merge state), NOT the full library. Order matches the input array.
+- **R6.** `scenes.set` MUST accept `{scenes: [...]}` and upsert by `id` with the following semantics (RFC 7396 JSON Merge Patch — partial-update with null-delete):
+  - **Top-level fields** (`label`, `type`):
+    - omitted → preserve existing value (or use input default for new rows; e.g. inserts require `type`)
+    - `<value>` → set to value
+    - `null` → MUST be rejected with `{error: "cannot null required column: <field>"}` (these columns are NOT NULL)
+  - **`params` object** (per-key partial update):
+    - omitted → preserve all stored params as-is
+    - `null` → reject with `{error: "params object cannot be null; use {} to preserve or {key: null} to delete a key"}`
+    - `{key: <value>}` → set that key in stored params
+    - `{key: null}` → DELETE that key from stored params (revert to whatever the catalog default supplies at evaluator time)
+    - `{key: undefined}` (key absent from object) → preserve existing value for that key
+  - **Storage is sparse.** params_json contains ONLY explicitly-set keys; catalog defaults are merged at evaluator time, not at insert/update. New scene with `params: {period_sec: 6}` stores exactly `{"period_sec": 6}` — no other keys.
+  - Returns `{scenes: [...]}` containing **only the upserted rows** (post-merge state, sparse), NOT the full library. Order matches the input array.
 - **R7.** `scenes.set` MUST reject entries missing `id`, returning `{error: "upsert_light_show_scenes: each scene must have an id"}`.
 - **R8.** `scenes.set` MUST reject entries with unknown `type` values (not present in the catalog), returning `{error: "unknown primitive type: <type>"}`.
 - **R9.** `scenes.remove` MUST accept `{ids: [...]}` and reject deletion of any scene currently referenced by one or more placements, returning `{error: "scene(s) still referenced", blocked: [{scene_id, placement_ids}, ...]}` and performing NO deletions when any are blocked (atomic all-or-nothing). On success returns `{scenes: [...]}` containing only the **deleted** rows (pre-deletion state); silently skips missing ids without error.
@@ -140,8 +152,9 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ### Layered evaluator (`evaluateLayeredScene`)
 
-- **R39.** When `liveOverride` is set, the evaluator MUST resolve the scene (from `scene_id` lookup or inline fields), compute `sceneTime = (wallClock_ms - activated_at_ms) / 1000`, call the corresponding `PRIMITIVE_REGISTRY[type](sceneTime, states, params, context)`, apply fade envelopes, and return `{activeLayer: 'live', label}`.
-- **R40.** When no live override is set but one or more placements have `start_time <= playheadTime <= end_time`, the evaluator MUST pick the one with the highest `display_order` (ties broken by `created_at` ascending), compute `sceneTime = playheadTime - start_time`, apply the primitive, apply placement fade envelopes, and return `{activeLayer: 'timeline', label}`.
+- **R39.** When `liveOverride` is set, the evaluator MUST resolve the scene (from `scene_id` lookup or inline fields), merge the sparse stored params with the primitive's catalog defaults (stored values win per-key), compute `sceneTime = (wallClock_ms - activated_at_ms) / 1000`, call the corresponding `PRIMITIVE_REGISTRY[type](sceneTime, states, mergedParams, context)`, apply fade envelopes, and return `{activeLayer: 'live', label}`.
+- **R40.** When no live override is set but one or more placements have `start_time <= playheadTime <= end_time`, the evaluator MUST pick the one with the highest `display_order` (ties broken by `created_at` ascending), merge the scene's sparse stored params with the primitive's catalog defaults (stored wins per-key), compute `sceneTime = playheadTime - start_time`, apply the primitive with the merged params, apply placement fade envelopes, and return `{activeLayer: 'timeline', label}`.
+- **R40a.** Param merge resolution rule: for each key declared in the primitive's `params_schema`, if the key is present in stored params (including being explicitly set to a non-null value), use the stored value; otherwise use the catalog `default`. If a key has no catalog default and is absent from stored params, the value passed to `apply()` is `undefined` (which the primitive interprets per its own contract — e.g., `role: undefined` → all fixtures per Q 4.1).
 - **R41.** When neither live override nor placement is active, the evaluator MUST delegate to `fallbackScene.apply(playheadTime, states, context)` if provided, returning `{activeLayer: 'fallback', label}`, else return `{activeLayer: 'none'}`.
 - **R42.** Fade envelopes MUST multiply the final `state.intensity` only. `state.color`, `state.pan`, and `state.tilt` MUST pass through without modification by the fade.
 - **R43.** Placement fade-in envelope: for `sceneTime` in `[0, fade_in_sec)`, intensity is multiplied by `sceneTime / fade_in_sec`. At `sceneTime >= fade_in_sec`, multiplier is 1.
@@ -513,7 +526,7 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 - **set-response-not-full-list**: response does NOT include unrelated rows (verified by also having an unrelated scene in DB before the call and confirming it does not appear in the response).
 - **row-persisted**: a subsequent `list` call returns the new scene.
 - **label-persisted**: returned scene has `label: "Slow Rotating Head"`.
-- **params-merged-with-defaults**: returned `params` includes `period_sec: 6` AND all other rotating_head defaults (e.g., `pan_amplitude_rad: π/4`).
+- **params-stored-sparse**: returned `params` is exactly `{period_sec: 6}` — only the explicitly-set key. Other rotating_head defaults (`pan_amplitude_rad`, `tilt_center_rad`, etc.) MUST NOT be present in the response or in `params_json`.
 - **created-at-set**: `created_at` field is a valid ISO8601 timestamp within last 5 seconds.
 - **ws-broadcast-scenes**: a `light_show__changed` event with `kind: "scenes"` was broadcast.
 
@@ -529,6 +542,49 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 - **label-preserved**: returned `label == "Slow"`.
 - **updated-at-advances**: `updated_at` timestamp is newer than prior value.
 - **no-new-row-inserted**: count of scenes is still 1.
+
+#### Test: scenes-set-null-deletes-param-key (covers R6)
+
+**Given**: Scene `"rh_slow"` exists with `params_json = '{"period_sec": 6, "role": "moving_head"}'`.
+
+**When**: Chat calls `tools_scenes({action: "set", scenes: [{id: "rh_slow", params: {role: null}}]}, ctx)`.
+
+**Then** (assertions):
+- **role-key-removed**: stored `params_json` no longer contains a `role` key.
+- **period-preserved**: stored `params_json.period_sec == 6` (untouched).
+- **response-shows-sparse**: response `scenes[0].params` is exactly `{period_sec: 6}` — no `role`, no other defaults.
+
+#### Test: scenes-set-rejects-null-on-top-level (covers R6)
+
+**Given**: Scene `"rh_slow"` exists.
+
+**When**: Chat calls `tools_scenes({action: "set", scenes: [{id: "rh_slow", label: null}]}, ctx)`.
+
+**Then** (assertions):
+- **error-returned**: response has `error` matching `/cannot null required column: label/i`.
+- **no-mutation**: stored row's `label` is unchanged.
+
+#### Test: scenes-set-rejects-null-params-object (covers R6)
+
+**Given**: Any state.
+
+**When**: Chat calls `tools_scenes({action: "set", scenes: [{id: "rh_slow", params: null}]}, ctx)`.
+
+**Then** (assertions):
+- **error-returned**: response has `error` matching `/params object cannot be null/i`.
+- **no-mutation**: existing row (if any) is untouched.
+
+#### Test: scenes-roundtrip-list-set-preserves-sparse (covers R5, R6)
+
+**Given**: Scene `"rh_slow"` was created with `params: {period_sec: 6}` (sparse — only one key).
+
+**When**:
+- Chat calls `tools_scenes({action: "list", filter: {ids: ["rh_slow"]}}, ctx)` → receives the scene.
+- Chat passes the received scene back via `tools_scenes({action: "set", scenes: [<received>]}, ctx)` unchanged.
+
+**Then** (assertions):
+- **stored-params-still-sparse**: stored `params_json` after the round-trip is still exactly `{"period_sec": 6}` — no defaults promoted to explicit storage.
+- **future-default-changes-flow-through**: if catalog default for `tilt_center_rad` were updated post-roundtrip, the evaluator would pick up the new default for this scene (verified by reading sparse params and observing `tilt_center_rad` is NOT in `params_json`).
 
 #### Test: scenes-set-rejects-missing-id (covers R7)
 
@@ -858,6 +914,33 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 **Then** (assertions):
 - **mover-updated**: moving_head fixture's state reflects the primitive's writes.
 - **par-untouched**: par fixture's state is byte-for-byte unchanged from its pre-call value.
+
+#### Test: evaluator-merges-sparse-params-with-catalog-defaults (covers R39, R40, R40a)
+
+**Given**:
+- Scene `"rh_partial"` with sparse stored `params_json = '{"period_sec": 6}'` (only one key).
+- Catalog defaults for `rotating_head` include `pan_amplitude_rad: 0.785, tilt_center_rad: -0.3, role: "moving_head", intensity: 1, color: [1,1,1], tilt_amplitude_rad: 0.2, tilt_period_sec: 4`.
+- One placement `[0, 10]` references this scene.
+- Evaluator runs at `playheadTime = 0`.
+
+**When**: Evaluator resolves params and calls `applyRotatingHead`.
+
+**Then** (assertions):
+- **period-from-stored**: the `params` arg to `applyRotatingHead` has `period_sec == 6` (stored override).
+- **other-keys-from-catalog**: `pan_amplitude_rad ≈ 0.785`, `tilt_center_rad == -0.3`, `intensity == 1`, `color == [1, 1, 1]`, `role == "moving_head"`.
+- **stored-not-mutated**: after the evaluator call, `params_json` for the scene is still exactly `{"period_sec": 6}` (the merge happens transiently, never written back).
+
+#### Test: evaluator-uses-undefined-when-no-default-and-not-stored (covers R40a)
+
+**Given**:
+- A primitive whose `params_schema` declares `role` with NO default value (i.e. `role` is "optional, no fallback").
+- Scene with sparse params that omits `role`.
+
+**When**: Evaluator resolves params for this scene.
+
+**Then** (assertions):
+- **role-is-undefined**: `params.role === undefined` (or equivalent absence) in the args passed to `apply()`.
+- **primitive-handles-undefined**: per Q 4.1, primitive applies to all fixtures (specifically tested in `apply-rotating-head-respects-role-filter` for the rotating_head case).
 
 #### Test: evaluator-live-wins (covers R39)
 
