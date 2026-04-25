@@ -82,12 +82,17 @@
   ```ts
   {
     kind: 'video' | 'audio',
-    path: string,                         // project-relative (starts with "pool/")
+    path: string,                         // project-relative; canonical locations below
     label: string,
     poolSegmentId?: string,
     metadata?: Record<string, unknown>,
   }
   ```
+  Canonical `path` locations (per project conventions):
+  - `pool/segments/<uuid>.<ext>` — the authoritative location for **all** pool video files AND most pool audio (music gen, isolate vocals, imports). `db.py:251` documents this as "the authoritative record of every video file."
+  - `pool/bounces/<composite_hash>.wav` — **audio bounces only.** Never video.
+  - `selected_transitions/<tr_id>_slot_0.mp4` — runtime cache of a transition's selected video; not a pool path. Acceptable for source-monitor previews of timeline clips (R46), but the underlying `pool/segments/<uuid>.<ext>` is preferred when known.
+  - `finalizations/<id>/range.mp4` — finalize-range rendered preview (per `local.finalize-range.md`); valid video source.
 
 ### Media rendering
 
@@ -315,7 +320,7 @@ effectAllowed                         →  "copy"
 **Video subclip drag:**
 
 ```
-application/x-scenecraft-video-subclip  →  '{"path":"pool/bounces/<id>.mp4","inSeconds":12.0,"outSeconds":45.5,"label":"range 32-48s v2"}'
+application/x-scenecraft-video-subclip  →  '{"path":"pool/segments/<uuid>.mp4","inSeconds":12.0,"outSeconds":45.5,"label":"range 32-48s v2"}'
 effectAllowed                            →  "copy"
 ```
 
@@ -444,9 +449,9 @@ The core behavior contract — happy path, common bad paths, primary positive an
 
 #### Test: loads-video-source-renders-player (covers R8)
 
-**Given**: No source loaded; a video file at `pool/bounces/foo.mp4` exists
+**Given**: No source loaded; a video file at `pool/segments/foo.mp4` exists
 
-**When**: `setSource({ kind: 'video', path: 'pool/bounces/foo.mp4', label: 'range 32-48s v2' })`
+**When**: `setSource({ kind: 'video', path: 'pool/segments/foo.mp4', label: 'range 32-48s v2' })`
 
 **Then** (assertions):
 - **video-element-mounted**: an `HTMLVideoElement` with the correct src URL is present
@@ -582,19 +587,19 @@ The core behavior contract — happy path, common bad paths, primary positive an
 #### Test: video-drag-emits-subclip-payload (covers R31)
 
 **Given**:
-- A video source is loaded: `path = 'pool/bounces/foo.mp4'`, `label = 'range 32-48s v2'`
+- A video source is loaded: `path = 'pool/segments/foo.mp4'`, `label = 'range 32-48s v2'`
 - `inPoint = 0`, `outPoint = 16`
 
 **When**: `dragstart` is dispatched on the drag handle
 
 **Then** (assertions):
-- **subclip-payload-shape**: `JSON.parse(dataTransfer.getData('application/x-scenecraft-video-subclip'))` equals `{ path: 'pool/bounces/foo.mp4', inSeconds: 0, outSeconds: 16, label: 'range 32-48s v2' }`
+- **subclip-payload-shape**: `JSON.parse(dataTransfer.getData('application/x-scenecraft-video-subclip'))` equals `{ path: 'pool/segments/foo.mp4', inSeconds: 0, outSeconds: 16, label: 'range 32-48s v2' }`
 
 #### Test: video-drop-splits-on-partial-coverage (covers R32)
 
 **Given**:
 - A target video track has kfs at t=30 and t=60 connected by a single transition `tr_existing` (`selected = ps_old`, `trim_in = 5`, `trim_out = 20`, `source_video_duration = 30`)
-- Source monitor has a 15s subclip loaded: `path = 'pool/bounces/foo.mp4'`, `poolSegmentId = ps_new`, `inPoint = 10`, `outPoint = 25` (clip_duration = 15)
+- Source monitor has a 15s subclip loaded: `path = 'pool/segments/foo.mp4'`, `poolSegmentId = ps_new`, `inPoint = 10`, `outPoint = 25` (clip_duration = 15)
 
 **When**: The drop lands at t = 40 on that track (so consumed range is `[40, 55]`, both boundaries straddle `tr_existing`)
 
