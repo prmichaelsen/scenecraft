@@ -6,6 +6,7 @@
  * that generate or transform audio:
  *   - 'music'    — M16 generate_music (purple)
  *   - 'lipsync'  — M13 audio-sync (teal) — reserved, lands with M13
+ *   - 'foley'    — M18 generate_foley (orange)
  *
  * Styling lives off the variant kind (not the drop path) so the same
  * color fires whether a clip was created by drag-drop, chat tool, or
@@ -31,6 +32,12 @@ const VARIANT_KIND_COLORS: Record<string, ClipColors> = {
     bgHover: 'hover:bg-teal-900/50',
     borderDefault: 'border-teal-700/60',
     borderSelected: 'border-teal-300',
+  },
+  foley: {
+    bg: 'bg-orange-900/30',
+    bgHover: 'hover:bg-orange-900/50',
+    borderDefault: 'border-orange-700/60',
+    borderSelected: 'border-orange-300',
   },
 }
 

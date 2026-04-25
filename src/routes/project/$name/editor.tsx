@@ -48,6 +48,7 @@ import { PluginHost } from '@/lib/plugin-host'
 import * as isolateVocals from '@/plugins/isolate_vocals'
 import * as lightShow from '@/plugins/light_show'
 import * as generateMusic from '@/plugins/generate-music'
+import * as generateFoley from '@/plugins/generate_foley'
 
 // First-party plugin registration — mirrors the backend's
 // `PluginHost.register(...)` calls at startup. Dynamic loading can
@@ -55,6 +56,7 @@ import * as generateMusic from '@/plugins/generate-music'
 PluginHost.register(isolateVocals, 'isolate_vocals')
 PluginHost.register(lightShow, 'light_show')
 PluginHost.register(generateMusic, 'generate_music')
+PluginHost.register(generateFoley, 'generate_foley')
 
 // HMR: on module re-evaluation, deactivate each plugin so its
 // Disposables fire and the registry is clean before the new module
@@ -65,6 +67,7 @@ if (import.meta.hot) {
     void PluginHost.deactivate('isolate_vocals')
     void PluginHost.deactivate('light_show')
     void PluginHost.deactivate('generate_music')
+    void PluginHost.deactivate('generate_foley')
   })
 }
 

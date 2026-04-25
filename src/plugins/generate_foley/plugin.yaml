@@ -1,0 +1,32 @@
+id: generate-foley
+name: Foley Generator
+version: 0.1.0
+description: >
+  Generate foley sound effects from text prompts (t2fx) or video clips (v2fx)
+  using MMAudio via Replicate.
+
+license:
+  plugin: MIT
+  upstream_models:
+    - name: MMAudio
+      license: CC-BY-NC 4.0
+      url: https://github.com/hkchengrex/MMAudio
+
+providers:
+  - replicate
+
+contributes:
+  panels:
+    - id: foley-generations
+      title: Foley
+      component: FoleyGenerationsPanel
+      registry: PanelRegistry
+  chatTools:
+    - generate_foley
+  variantKinds:
+    - name: foley
+      color: orange
+
+invariants:
+  - no-raw-db-access: true
+  - survives-ws-disconnect: true
