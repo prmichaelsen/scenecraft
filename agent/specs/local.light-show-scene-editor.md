@@ -168,7 +168,11 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ### Frontend panel integration
 
-- **R49.** `LightShow3DPanel` MUST fetch scenes, placements, and live override on mount; poll every `POLL_INTERVAL_MS` (2000ms); AND subscribe to `light_show__changed` events filtering on `kind: 'scenes' | 'placements' | 'live'` for instant refresh.
+- **R49.** `LightShow3DPanel` MUST fetch scenes, placements, and live override on mount and refresh on the following triggers (no periodic polling):
+  - **WS event**: subscribe to `light_show__changed` filtering on `kind: 'scenes' | 'placements' | 'live'`; refetch the corresponding entity on each event.
+  - **WS reconnect**: when `useScenecraftSocket().connected` transitions from `false` to `true`, refetch all three entities (catches mutations broadcast during the disconnect window when the WS subscription was inactive).
+  - **Project switch**: re-fetch on `projectName` change.
+  Periodic polling is explicitly NOT in the design — the WS event + reconnect-refetch combo covers the same correctness guarantees at far lower steady-state cost.
 - **R50.** The diagnostic bar MUST display an active-layer label: `"LIVE: <scene label>"` when a live override is driving output, `"TIMELINE: <scene label>"` when a placement is driving output, `"FALLBACK: <scene label>"` when neither is active and the dropdown scene runs.
 
 ---
@@ -1238,6 +1242,22 @@ Boundaries, concurrency, idempotency, ordering, resource exhaustion. Every edge 
 **Then** (assertions):
 - **error-returned**: response has `error` key listing the valid actions for that tool.
 - **no-exception-propagated**: no uncaught exception escapes the tool handler.
+
+#### Test: panel-refetches-on-ws-reconnect (covers R49)
+
+**Given**:
+- `LightShow3DPanel` is mounted; initial fetch + WS subscription succeed.
+- Test framework controls the WS connection state via the `useScenecraftSocket` mock.
+
+**When**:
+- Backend WS connection drops; `useScenecraftSocket().connected` flips from `true` to `false`.
+- (Backend side, observable separately) Chat creates a new scene during the disconnect window. WS broadcast is emitted but the panel's subscription does not deliver it.
+- WS reconnects; `useScenecraftSocket().connected` flips from `false` to `true`.
+
+**Then** (assertions):
+- **refetch-on-reconnect**: a fresh GET to `/scenes`, `/placements`, AND `/live` is observed within the next render cycle of the false→true transition.
+- **state-includes-disconnect-mutations**: the panel's scene list now includes the scene created during the disconnect window.
+- **no-periodic-poll**: across the test duration (e.g. 10s), no additional HTTP fetches are observed beyond mount-fetch, the reconnect-refetch, and any explicit WS-event-driven refetches. Specifically, no fetches at the historical 2000ms interval.
 
 #### Test: ws-broadcast-kind-on-each-mutation (covers R29)
 
