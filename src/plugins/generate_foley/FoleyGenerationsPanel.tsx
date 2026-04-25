@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type DragEvent } from 'react'
+import { useState, useEffect, useCallback, type DragEvent } from 'react'
 import { useEditorState } from '@/components/editor/EditorStateContext'
 import { useCurrentTime } from '@/components/editor/CurrentTimeContext'
 import {
@@ -21,16 +21,23 @@ const DURATION_PRESETS = [
 
 type DurationPreset = typeof DURATION_PRESETS[number]['label'] | 'Custom'
 
-export function FoleyGenerationsPanel() {
-  const { selectedTransition, selectedAudioClipId, projectName } = useEditorState()
+type PanelProps = {
+  projectName?: string
+}
+
+export function FoleyGenerationsPanel({ projectName }: PanelProps) {
+  const { selectedTransition } = useEditorState()
   const { currentTime } = useCurrentTime()
 
-  // Derive selected candidate (first tr_candidate for the transition)
-  const selectedCandidate = selectedTransition?.candidates?.[0] ?? null
+  // Selected candidate = the transition's selected pool_segment_id (string|number|null).
+  // Cast to string for our REST API; null means "no candidate selected".
+  const selectedCandidateId: string | null = selectedTransition?.selected != null
+    ? String(selectedTransition.selected)
+    : null
 
   // Mode inference
-  const mode: FoleyMode = selectedTransition && selectedCandidate ? 'v2fx' : 't2fx'
-  const showAmbiguityBanner = !!selectedTransition && !selectedCandidate
+  const mode: FoleyMode = selectedTransition && selectedCandidateId ? 'v2fx' : 't2fx'
+  const showAmbiguityBanner = !!selectedTransition && !selectedCandidateId
 
   // Form state
   const [prompt, setPrompt] = useState('')
@@ -51,7 +58,7 @@ export function FoleyGenerationsPanel() {
   useEffect(() => {
     setInSeconds(null)
     setOutSeconds(null)
-  }, [selectedTransition?.id, selectedCandidate?.id])
+  }, [selectedTransition?.id, selectedCandidateId])
 
   // Fetch generations on mount + selection change
   const fetchGenerations = useCallback(async () => {
@@ -137,7 +144,7 @@ export function FoleyGenerationsPanel() {
       if (mode === 't2fx') {
         request.duration_seconds = durationSlider
       } else {
-        request.source_candidate_id = selectedCandidate!.id
+        request.source_candidate_id = selectedCandidateId!
         request.source_in_seconds = inSeconds!
         request.source_out_seconds = outSeconds!
         request.entity_type = 'transition'
@@ -151,11 +158,9 @@ export function FoleyGenerationsPanel() {
       }
 
       // Subscribe to job events for live status updates
-      const unsub = subscribeFoleyJob(projectName, result.job_id, (event) => {
-        if (event.type === 'job_completed' || event.type === 'job_failed') {
-          fetchGenerations()
-          unsub()
-        }
+      const unsub = subscribeFoleyJob(result.job_id, {
+        onCompleted: () => { fetchGenerations(); unsub() },
+        onFailed: () => { fetchGenerations(); unsub() },
       })
 
       // Optimistic: add pending generation to list
@@ -173,11 +178,9 @@ export function FoleyGenerationsPanel() {
     try {
       const result = await retryFoleyGeneration(projectName, generationId)
       if (!result.error) {
-        const unsub = subscribeFoleyJob(projectName, result.job_id, (event) => {
-          if (event.type === 'job_completed' || event.type === 'job_failed') {
-            fetchGenerations()
-            unsub()
-          }
+        const unsub = subscribeFoleyJob(result.job_id, {
+          onCompleted: () => { fetchGenerations(); unsub() },
+          onFailed: () => { fetchGenerations(); unsub() },
         })
       }
       fetchGenerations()

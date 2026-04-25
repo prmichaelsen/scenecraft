@@ -8,7 +8,7 @@
  *   WS: /ws/jobs (subscribe with job_id)
  */
 
-import { getSubscribeJob } from '@/lib/plugin-api'
+import { getSubscribeJob, type JobSubscribeCallbacks } from '@/lib/plugin-api'
 
 import type {
   GenerateFoleyRequest,
@@ -68,12 +68,9 @@ export async function retryFoleyGeneration(
 // --- WS ──────────────────────────────────────────────────────────────────
 
 export function subscribeFoleyJob(
-  projectName: string,
   jobId: string,
-  handler: (event: {
-    type: 'job_started' | 'job_progress' | 'job_completed' | 'job_failed'
-    [key: string]: unknown
-  }) => void,
+  callbacks: JobSubscribeCallbacks,
 ): () => void {
-  return getSubscribeJob(projectName, jobId, handler)
+  const subscribe = getSubscribeJob()
+  return subscribe(jobId, callbacks)
 }
