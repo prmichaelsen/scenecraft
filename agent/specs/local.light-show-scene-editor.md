@@ -30,7 +30,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 - Three new SQLite tables in per-project `project.db`: `light_show__scenes`, `light_show__scene_placements`, `light_show__live_override`
 - Nine DB helper functions re-exported from `plugin_api.py`
 - One shared catalog file: `scenecraft-engine/src/scenecraft/plugins/light_show/primitives_catalog.yaml` (YAML; static config that ships with the plugin)
-- Ten REST endpoints under `/api/projects/:name/plugins/light_show/` (scenes, placements, live, primitives — GET/PUT/POST variants)
+- Conventional REST resource endpoints under `/api/projects/:name/plugins/light_show/`: `/scenes` and `/placements` collections (GET list / POST create / GET-PATCH-DELETE per id), `/live` singleton (GET/PUT/DELETE), `/primitives` (GET catalog)
 - Three new MCP tools declared in `plugin.yaml`: `scenes`, `scene_timeline`, `scene_live` — each action-dispatched
 - Two primitive apply functions in frontend `primitives.ts`: `applyRotatingHead`, `applyStaticColor`
 - Layered scene evaluator in frontend `scene-evaluator.ts` with live > placement > fallback precedence
@@ -56,7 +56,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ### Schema
 
-- **R1.** `light_show__scenes` table MUST exist after schema migration with columns: `id TEXT PRIMARY KEY`, `label TEXT NOT NULL`, `type TEXT NOT NULL`, `params_json TEXT NOT NULL`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL`.
+- **R1.** `light_show__scenes` table MUST exist after schema migration with columns: `id TEXT PRIMARY KEY` (server-generated UUID; chat cannot supply on create), `label TEXT NOT NULL` (human-readable, free-form, no uniqueness constraint), `type TEXT NOT NULL`, `params_json TEXT NOT NULL`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL`.
 - **R2.** `light_show__scene_placements` table MUST exist with columns: `id TEXT PRIMARY KEY`, `scene_id TEXT NOT NULL REFERENCES light_show__scenes(id)`, `start_time REAL NOT NULL`, `end_time REAL NOT NULL`, `display_order INTEGER NOT NULL DEFAULT 0`, `fade_in_sec REAL NOT NULL DEFAULT 0`, `fade_out_sec REAL NOT NULL DEFAULT 0`, `created_at`, `updated_at`. An index on `(start_time, end_time)` MUST exist.
 - **R3.** `light_show__live_override` table MUST exist with columns: `id TEXT PRIMARY KEY CHECK (id = 'current')`, `scene_id TEXT REFERENCES light_show__scenes(id)`, `inline_type TEXT`, `inline_params_json TEXT`, `label TEXT NOT NULL`, `fade_in_sec REAL NOT NULL DEFAULT 0`, `fade_out_sec REAL NOT NULL DEFAULT 0`, `activated_at TEXT NOT NULL`, `deactivation_started_at TEXT`. A CHECK constraint MUST enforce exactly one of (`scene_id` set) OR (`inline_type` AND `inline_params_json` both set).
 
@@ -72,21 +72,23 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
   - `order_by: string` — one of `"created_at" | "updated_at" | "label"`; default `"updated_at"`
   - `order: string` — one of `"asc" | "desc"`; default `"desc"`
   Filter conditions combine with AND. `total` is the count after filtering, before pagination. `has_more` is `offset + scenes.length < total`.
-- **R6.** `scenes.set` MUST accept `{scenes: [...]}` and upsert by `id` with the following semantics (RFC 7396 JSON Merge Patch — partial-update with null-delete):
-  - **Top-level fields** (`label`, `type`):
-    - omitted → preserve existing value (or use input default for new rows; e.g. inserts require `type`)
-    - `<value>` → set to value
-    - `null` → MUST be rejected with `{error: "cannot null required column: <field>"}` (these columns are NOT NULL)
-  - **`params` object** (per-key partial update):
-    - omitted → preserve all stored params as-is
-    - `null` → reject with `{error: "params object cannot be null; use {} to preserve or {key: null} to delete a key"}`
-    - `{key: <value>}` → set that key in stored params
-    - `{key: null}` → DELETE that key from stored params (revert to whatever the catalog default supplies at evaluator time)
-    - `{key: undefined}` (key absent from object) → preserve existing value for that key
+- **R6.** `scenes.set` MUST accept `{scenes: [...]}` and dispatch by id-presence:
+  - **No `id` on entry** → CREATE with a server-generated UUID. `label` and `type` MUST be present (these columns are NOT NULL); otherwise reject with `{error: "label and type required to create scene"}`. `params` is optional (defaults to `{}` — sparse empty).
+  - **`id` present on entry** → UPDATE existing row, partial-merge per RFC 7396 JSON Merge Patch:
+    - **Top-level fields** (`label`, `type`):
+      - omitted → preserve existing value
+      - `<value>` → set to value
+      - `null` → reject with `{error: "cannot null required column: <field>"}`
+    - **`params` object** (per-key partial update):
+      - omitted → preserve all stored params as-is
+      - `null` → reject with `{error: "params object cannot be null; use {} to preserve or {key: null} to delete a key"}`
+      - `{key: <value>}` → set that key in stored params
+      - `{key: null}` → DELETE that key from stored params (revert to whatever the catalog default supplies at evaluator time)
+      - `{key: undefined}` (key absent from object) → preserve existing value for that key
   - **Storage is sparse.** params_json contains ONLY explicitly-set keys; catalog defaults are merged at evaluator time, not at insert/update. New scene with `params: {period_sec: 6}` stores exactly `{"period_sec": 6}` — no other keys.
-  - Returns `{scenes: [...]}` containing **only the upserted rows** (post-merge state, sparse), NOT the full library. Order matches the input array.
-- **R7.** `scenes.set` MUST reject entries missing `id`, returning `{error: "upsert_light_show_scenes: each scene must have an id"}`.
-- **R8.** `scenes.set` MUST reject entries with unknown `type` values (not present in the catalog), returning `{error: "unknown primitive type: <type>"}`.
+  - Returns `{scenes: [...]}` containing **only the upserted rows** (each with the server-assigned `id` for fresh creates, sparse params), NOT the full library. Order matches the input array — caller can correlate auto-uuids by position.
+- **R7.** `scenes.set` MUST reject UPDATE entries (those with `id` present) where the id does not exist in `light_show__scenes`, returning `{error: "unknown scene id: <id>"}` and performing NO writes (atomic all-or-nothing across the batch).
+- **R8.** `scenes.set` MUST reject entries with unknown `type` values (not present in the catalog), returning `{error: "unknown primitive type: <type>"}` (applies on both create and update paths).
 - **R9.** `scenes.remove` MUST accept `{ids: [...]}` and reject deletion of any scene currently referenced by one or more placements, returning `{error: "scene(s) still referenced", blocked: [{scene_id, placement_ids}, ...]}` and performing NO deletions when any are blocked (atomic all-or-nothing). On success returns `{scenes: [...]}` containing only the **deleted** rows (pre-deletion state); silently skips missing ids without error.
 - **R10.** `scenes.remove` MUST reject deletion of a scene currently held by the live override, returning `{error: "scene held by live override; deactivate first", blocked_by_live: scene_id}` and performing NO deletions when blocked.
 - **R11.** `scenes` MUST reject unknown actions with `{error: "unknown action <action>; expected one of list/list_primitives/set/remove"}`.
@@ -114,7 +116,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 - **R19.** `scene_live.activate` with `scene_id` MUST reject if the scene_id does not exist, with `{error: "unknown scene_id: <id>"}`.
 - **R20.** `scene_live.activate` with inline `scene` MUST reject if `scene.type` is not in the primitive catalog, with `{error: "unknown primitive type: <type>"}`.
 - **R21.** `scene_live.activate` MUST replace any existing live override silently (no error when one is already active). The previous override row is overwritten.
-- **R22.** `scene_live.activate` MUST accept optional `fade_in_sec` (default 0), `label` (default: scene's label or `"directive"` for inline), and `save_as: string` (inline only — when present, also inserts the inline scene into `light_show__scenes` with id = `save_as`).
+- **R22.** `scene_live.activate` MUST accept optional `fade_in_sec` (default 0), `label` (default: scene's label or `"directive"` for inline), and `save_as: string` (inline only — when present, persists the inline scene into `light_show__scenes` with `label = save_as` and a server-generated UUID `id`; the override then references the new scene by `scene_id`). The `activate` response MUST include the resulting `scene_id` (uuid) in the override status — chat needs this for any subsequent `scenes.set`/`remove`/`scene_timeline.set` referencing the saved scene.
 - **R23.** `scene_live.activate` with `save_as` but no inline `scene` (i.e., `scene_id` + `save_as`) MUST reject with `{error: "save_as requires inline scene"}`.
 - **R24.** `scene_live.deactivate` MUST accept optional `fade_out_sec` (default 0). Sets `deactivation_started_at = now` and updates `fade_out_sec` on the override row. The row is physically deleted by the evaluator when fade-out completes.
 - **R25.** `scene_live.deactivate` when no override is active MUST be a no-op (returns `{active: false}`).
@@ -131,7 +133,7 @@ Underlying decisions: [clarification-14-light-show-scene-editor-mvp.md](../clari
 
 ### REST endpoints
 
-- **R30.** All MCP tool behaviors (R4-R27) MUST be independently reachable via REST endpoints at `/api/projects/:name/plugins/light_show/{scenes|placements|live|primitives}`. See Interfaces section for exact paths and methods.
+- **R30.** REST endpoints MUST follow conventional REST design (resource-based paths, standard HTTP verbs, query-param filtering on list endpoints) — NOT collapsed action endpoints. The MCP tools (action-dispatched) call plugin_api / DB helpers directly, not REST; REST is the external HTTP surface for browsers / external clients. See Interfaces section for the resource map.
 
 ### Frontend primitive catalog
 
@@ -226,18 +228,47 @@ The catalog is **static config that ships with the plugin code** — same shape 
 
 ### REST endpoints
 
-| Method | Path | Request body | Response body |
+Conventional REST. Path prefix below shortened to `/api/projects/:name/plugins/light_show` for readability. List endpoints accept query params for filter/pagination. PATCH bodies follow RFC 7396 JSON Merge Patch (e.g. `{"params": {"role": null}}` deletes the `role` key).
+
+#### Catalog (read-only)
+
+| Method | Path | Request | Response |
 |---|---|---|---|
-| GET | `/api/projects/:name/plugins/light_show/primitives` | — | `{primitives: [...]}` (parsed YAML catalog, returned as JSON body) |
-| GET | `/api/projects/:name/plugins/light_show/scenes` | — | `{scenes: [...]}` |
-| PUT | `/api/projects/:name/plugins/light_show/scenes` | `{scenes: [...]}` | `{scenes: [...]}` |
-| POST | `/api/projects/:name/plugins/light_show/scenes/remove` | `{ids: [...]}` | `{scenes: [...]}` or `{error, blocked?}` |
-| GET | `/api/projects/:name/plugins/light_show/placements` | — | `{placements: [...]}` |
-| PUT | `/api/projects/:name/plugins/light_show/placements` | `{placements: [...]}` | `{placements: [...]}` or `{error}` |
-| POST | `/api/projects/:name/plugins/light_show/placements/remove` | `{ids: [...]}` | `{placements: [...]}` |
-| GET | `/api/projects/:name/plugins/light_show/live` | — | `{active: bool, ...}` |
-| POST | `/api/projects/:name/plugins/light_show/live/activate` | `{scene_id?, scene?, fade_in_sec?, label?, save_as?}` | `{active: true, ...}` or `{error}` |
-| POST | `/api/projects/:name/plugins/light_show/live/deactivate` | `{fade_out_sec?}` | `{active: false}` |
+| GET | `/primitives` | — | `{primitives: [...]}` (parsed YAML catalog as JSON) |
+
+#### Scenes
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/scenes` | query: `?type=&label_query=&ids=a&ids=b&limit=50&offset=0&order_by=updated_at&order=desc` | `{scenes: [...], total, has_more}` (sparse params) |
+| POST | `/scenes` | `{label, type, params?}` (no id; server assigns UUID) | `201 {scene: {id, label, type, params, ...}}` |
+| GET | `/scenes/:id` | — | `{scene: {...}}` or `404` |
+| PATCH | `/scenes/:id` | `{label?, type?, params?}` (merge-patch; null deletes per-key inside params) | `{scene: {...}}` |
+| DELETE | `/scenes/:id` | — | `{scene: {...}}` (deleted row, sparse) or `409 {error, blocked?, blocked_by_live?}` |
+
+#### Placements
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/placements` | query: `?scene_id=&time_start=&time_end=&ids=a&ids=b&limit=100&offset=0&order_by=start_time&order=asc` | `{placements: [...], total, has_more}` |
+| POST | `/placements` | `{scene_id, start_time, end_time, display_order?, fade_in_sec?, fade_out_sec?}` | `201 {placement: {id, ...}}` |
+| GET | `/placements/:id` | — | `{placement: {...}}` or `404` |
+| PATCH | `/placements/:id` | `{scene_id?, start_time?, end_time?, display_order?, fade_in_sec?, fade_out_sec?}` | `{placement: {...}}` |
+| DELETE | `/placements/:id` | — | `{placement: {...}}` (deleted row) or `404` |
+
+#### Live override (singleton resource)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/live` | — | `{active: false}` or `{active: true, scene_id, label, activated_at, fade_in_sec, fade_out_sec, deactivation_started_at}` |
+| PUT | `/live` | `{scene_id?, scene?, fade_in_sec?, label?, save_as?}` (replaces if active) | `{active: true, scene_id, ...}` (for `save_as`, `scene_id` is the new uuid) |
+| DELETE | `/live` | optional query: `?fade_out_sec=N` | `{active: false}` |
+
+**Notes:**
+- Bulk operations are NOT a REST concern. The MCP tools call plugin_api / DB helpers directly for bulk dispatch (atomic transaction). External REST clients that want bulk semantics issue parallel single-resource calls (`Promise.all` on the frontend).
+- 4xx error responses include `{error: "<message>"}` JSON body. `409 Conflict` is used when DELETE is blocked by references (placements / live override).
+- Query params for list filtering are flat (no `filter[type]` bracket nesting); array fields use repeated keys (`?ids=a&ids=b`).
+- Time-range filter on placements uses `time_start` and `time_end` query params (both required if used; selects placements that overlap `[time_start, time_end]`).
 
 ### MCP tool input schemas (plugin.yaml)
 
@@ -255,17 +286,18 @@ The catalog is **static config that ships with the plugin code** — same shape 
     required: [action]
     properties:
       action: { type: string, enum: [list, list_primitives, set, remove] }
-      # set
+      # set — id presence dispatches: missing → CREATE (server assigns uuid),
+      # present → UPDATE (id must reference existing scene). Create requires
+      # `label` and `type`. Update accepts merge-patch on params (null deletes).
       scenes:
         type: array
         items:
           type: object
-          required: [id]
           properties:
-            id:     { type: string }
+            id:     { type: string, description: "Omit to create with server-assigned UUID; present to update by id" }
             label:  { type: string }
             type:   { type: string }
-            params: { type: object }
+            params: { type: object, description: "Merge-patch: {key: null} deletes the key from sparse storage" }
       # remove
       ids:
         type: array
@@ -415,11 +447,11 @@ export type EvaluatorResult = {
 ### Scene authoring flow (chat-driven)
 
 1. Chat invokes `scenes.list_primitives` → receives catalog
-2. Chat invokes `scenes.set({scenes: [{id: "rh_slow", label: "Slow Rotating Head", type: "rotating_head", params: {period_sec: 6, pan_amplitude_rad: 0.5}}]})` → scene persisted with merged defaults
-3. Chat invokes `scene_timeline.set({placements: [{scene_id: "rh_slow", start_time: 5, end_time: 15, fade_in_sec: 1, fade_out_sec: 2}]})` → placement inserted with auto-UUID
+2. Chat invokes `scenes.set({scenes: [{label: "Slow Rotating Head", type: "rotating_head", params: {period_sec: 6, pan_amplitude_rad: 0.5}}]})` → server assigns uuid; response includes `{id: "<RH_UUID>", label, type, params: {period_sec: 6, pan_amplitude_rad: 0.5}}` (sparse). Chat captures `RH_UUID`.
+3. Chat invokes `scene_timeline.set({placements: [{scene_id: "<RH_UUID>", start_time: 5, end_time: 15, fade_in_sec: 1, fade_out_sec: 2}]})` → placement inserted with auto-UUID
 4. User presses play on main timeline → playhead advances 0 → 15 → 20s
 5. During 0 → 5s: fallback scene runs (dropdown-selected scene or existing default)
-6. At t=5s: placement becomes active; rotating_head primitive renders with `sceneTime=0`, fade-in begins
+6. At t=5s: placement becomes active; evaluator merges sparse params with rotating_head catalog defaults; primitive renders with `sceneTime=0`, fade-in begins
 7. At t=6s: fade-in complete, rotating_head at full intensity; pan/tilt animate per `sceneTime = playheadTime - 5`
 8. At t=13s: fade-out begins (`fade_out_sec=2`, `timeToEnd=2`)
 9. At t=15s: placement ends, intensity back to 0 → fallback resumes
@@ -436,11 +468,11 @@ export type EvaluatorResult = {
 ### Manual directive flow (inline scene)
 
 1. User says in chat: "give me a red static color"
-2. Chat agent invokes `scene_live.activate({scene: {type: "static_color", params: {color: [1, 0, 0]}}, label: "Red Wash"})` — no `save_as` passed; scene is ephemeral
-3. Override row created with `scene_id=NULL, inline_type="static_color", inline_params_json='{"color":[1,0,0]}'`
-4. User likes it; says "save this as 'emergency red'"
-5. Chat invokes `scenes.set({scenes: [{id: "emergency_red", label: "Emergency Red", type: "static_color", params: {color: [1, 0, 0]}}]})` → library entry created
-6. On subsequent chat session, user says "fire emergency red" → `scene_live.activate({scene_id: "emergency_red"})`
+2. Chat invokes `scene_live.activate({scene: {type: "static_color", params: {color: [1, 0, 0]}}, label: "Red Wash"})` — no `save_as` passed; scene is ephemeral
+3. Override row created with `scene_id=NULL, inline_type="static_color", inline_params_json='{"color":[1,0,0]}'`. Response: `{active: true, scene_id: null, label: "Red Wash", ...}` (no scene_id because it's inline).
+4. User likes it; says "save this as 'Emergency Red'"
+5. Chat re-fires `scene_live.activate({scene: {type: "static_color", params: {color: [1, 0, 0]}}, save_as: "Emergency Red"})` — `save_as` is the **label**; backend creates a new library scene with `label = "Emergency Red"` and a fresh uuid; the override now references that uuid. Response: `{active: true, scene_id: "<EMERGENCY_RED_UUID>", label: "Emergency Red", ...}`.
+6. On subsequent chat session, user says "fire emergency red" → chat calls `scenes.list({filter: {label_query: "emergency red"}})` to find the uuid, then `scene_live.activate({scene_id: "<EMERGENCY_RED_UUID>"})`.
 
 ### Scrub behavior
 
@@ -485,6 +517,8 @@ Same pattern for a scene held by the live override: `scene_live.deactivate` firs
 
 ## Tests
 
+**Test fixture convention**: where tests below refer to a scene id like `"rh_slow"`, that string is shorthand for the uuid created via `scenes.set` (or seeded via direct DB insert in test setup). Production code paths cannot supply chat-chosen ids on scene CREATE per R6 — the server assigns the UUID and returns it. Tests that exercise the create path explicitly use `Given: scene created with no id; received uuid as SCENE_RH_SLOW` style, then reference `SCENE_RH_SLOW` thereafter.
+
 ### Base Cases
 
 The core behavior contract: happy path, common bad paths, primary positive and negative assertions.
@@ -515,20 +549,41 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 - **includes-static-color**: one primitive has `id == "static_color"`.
 - **schema-shape-matches-file**: parsing the YAML file independently and comparing the resulting object structure to the response body (both as Python dicts / JS objects) yields equality — no fields added, removed, or reordered.
 
-#### Test: scenes-set-creates-new (covers R5, R6)
+#### Test: scenes-set-creates-new-with-server-uuid (covers R5, R6)
 
 **Given**: Empty `light_show__scenes` table.
 
-**When**: Chat calls `tools_scenes({action: "set", scenes: [{id: "rh_slow", label: "Slow Rotating Head", type: "rotating_head", params: {period_sec: 6}}]}, ctx)`.
+**When**: Chat calls `tools_scenes({action: "set", scenes: [{label: "Slow Rotating Head", type: "rotating_head", params: {period_sec: 6}}]}, ctx)` (no `id`).
 
 **Then** (assertions):
-- **set-returns-upserted-only**: response is `{scenes: [...]}` with exactly one entry — the just-inserted `"rh_slow"` (NOT the full library).
+- **set-returns-upserted-only**: response is `{scenes: [...]}` with exactly one entry (NOT the full library).
+- **id-is-server-uuid**: returned scene has an `id` field matching a UUIDv4 pattern; chat did not supply this id.
 - **set-response-not-full-list**: response does NOT include unrelated rows (verified by also having an unrelated scene in DB before the call and confirming it does not appear in the response).
-- **row-persisted**: a subsequent `list` call returns the new scene.
+- **row-persisted**: a subsequent `list` call returns the new scene with the server-assigned uuid.
 - **label-persisted**: returned scene has `label: "Slow Rotating Head"`.
 - **params-stored-sparse**: returned `params` is exactly `{period_sec: 6}` — only the explicitly-set key. Other rotating_head defaults (`pan_amplitude_rad`, `tilt_center_rad`, etc.) MUST NOT be present in the response or in `params_json`.
 - **created-at-set**: `created_at` field is a valid ISO8601 timestamp within last 5 seconds.
 - **ws-broadcast-scenes**: a `light_show__changed` event with `kind: "scenes"` was broadcast.
+
+#### Test: scenes-set-rejects-create-without-label-or-type (covers R6)
+
+**Given**: Empty scenes table.
+
+**When**: Chat calls `tools_scenes({action: "set", scenes: [{type: "rotating_head"}]}, ctx)` (no id, no label).
+
+**Then** (assertions):
+- **error-returned**: response has `error` matching `/label and type required/i`.
+- **no-rows-inserted**: scenes table row count is 0.
+
+#### Test: scenes-set-rejects-update-with-unknown-id (covers R7)
+
+**Given**: Scenes table contains a scene with id `"existing_uuid"` only.
+
+**When**: Chat calls `tools_scenes({action: "set", scenes: [{id: "ghost_uuid", params: {period_sec: 5}}]}, ctx)`.
+
+**Then** (assertions):
+- **error-returned**: response has `error` matching `/unknown scene id/i`.
+- **no-mutation**: `existing_uuid` is unchanged.
 
 #### Test: scenes-set-partial-update-preserves-omitted (covers R6)
 
@@ -585,17 +640,6 @@ The core behavior contract: happy path, common bad paths, primary positive and n
 **Then** (assertions):
 - **stored-params-still-sparse**: stored `params_json` after the round-trip is still exactly `{"period_sec": 6}` — no defaults promoted to explicit storage.
 - **future-default-changes-flow-through**: if catalog default for `tilt_center_rad` were updated post-roundtrip, the evaluator would pick up the new default for this scene (verified by reading sparse params and observing `tilt_center_rad` is NOT in `params_json`).
-
-#### Test: scenes-set-rejects-missing-id (covers R7)
-
-**Given**: Any state.
-
-**When**: Chat calls `tools_scenes({action: "set", scenes: [{label: "No ID"}]}, ctx)`.
-
-**Then** (assertions):
-- **error-returned**: response has `error` key matching `/must have an id/i`.
-- **no-rows-inserted**: scenes table row count is unchanged.
-- **no-ws-broadcast**: no `light_show__changed` event fired.
 
 #### Test: scenes-set-rejects-unknown-type (covers R8)
 
@@ -1160,7 +1204,7 @@ Boundaries, concurrency, idempotency, ordering, resource exhaustion. Every edge 
 
 #### Test: negative-no-broadcast-on-rejected-set (covers R7, R14, R15)
 
-**Given**: Any state; chat calls a `set` that is rejected (missing id, bad end_time, unknown scene_id).
+**Given**: Any state; chat calls a `set` that is rejected (unknown scene id on update path, bad end_time, unknown scene_id reference, etc.).
 
 **When**: The tool returns an error.
 

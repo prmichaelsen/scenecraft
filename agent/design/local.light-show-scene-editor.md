@@ -44,10 +44,10 @@ Consequences of not solving this:
 
 ```sql
 CREATE TABLE light_show__scenes (
-  id             TEXT PRIMARY KEY,            -- chat-chosen (e.g. "rh_slow")
-  label          TEXT NOT NULL,
+  id             TEXT PRIMARY KEY,            -- server-generated UUID (chat cannot supply on create)
+  label          TEXT NOT NULL,               -- human-readable, free-form, no uniqueness constraint
   type           TEXT NOT NULL,               -- keys primitive catalog (e.g. "rotating_head")
-  params_json    TEXT NOT NULL,               -- JSON of the primitive's params
+  params_json    TEXT NOT NULL,               -- sparse JSON: ONLY explicit param overrides (catalog defaults merged at evaluator time)
   created_at     TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -88,7 +88,7 @@ CREATE INDEX idx_light_show_scene_placements_time
   ON light_show__scene_placements(start_time, end_time);
 ```
 
-Placements are the "pre-programmed" layer: "play scene `rh_slow` from 5 to 15 seconds with a 1s fade in and 2s fade out". They reference library scenes by id; inline placements are not supported (two calls: `scenes.set` then `scene_timeline.set`).
+Placements are the "pre-programmed" layer: "play scene labeled 'Slow Rotating Head' (id `<uuid>`) from 5 to 15 seconds with a 1s fade in and 2s fade out". They reference library scenes by id; inline placements are not supported (two calls: `scenes.set` to create then `scene_timeline.set` to place).
 
 **Live override** (`light_show__live_override`): single-slot state for chat-triggered cues and manual directives.
 
@@ -179,20 +179,33 @@ Fade envelopes multiply the **final intensity** only (per Q 3.1) — color, pan,
 
 ### Part 5: REST endpoints + WS broadcasts
 
-Parallel to existing fixtures/overrides/screens endpoints:
+Conventional REST (resource-based paths, standard HTTP verbs, query-param filters on list endpoints). Existing fixtures/overrides/screens endpoints predate this convention and stay in their current shape; new resources follow REST proper. The MCP tools call plugin_api / DB helpers directly (not REST), so the REST surface is for browser / external HTTP clients only.
 
 ```
-GET  /api/projects/:name/plugins/light_show/scenes
-PUT  /api/projects/:name/plugins/light_show/scenes
-POST /api/projects/:name/plugins/light_show/scenes/remove
-GET  /api/projects/:name/plugins/light_show/placements
-PUT  /api/projects/:name/plugins/light_show/placements
-POST /api/projects/:name/plugins/light_show/placements/remove
-GET  /api/projects/:name/plugins/light_show/live
-POST /api/projects/:name/plugins/light_show/live/activate
-POST /api/projects/:name/plugins/light_show/live/deactivate
-GET  /api/projects/:name/plugins/light_show/primitives   # returns catalog JSON verbatim
+# Catalog (read-only)
+GET    /api/projects/:name/plugins/light_show/primitives          # parsed YAML catalog as JSON
+
+# Scenes (collection + item)
+GET    /api/projects/:name/plugins/light_show/scenes              # ?type=&label_query=&ids=&limit=&offset=&order_by=&order=
+POST   /api/projects/:name/plugins/light_show/scenes              # body: {label, type, params?} (no id; server assigns UUID)
+GET    /api/projects/:name/plugins/light_show/scenes/:id          # one by id
+PATCH  /api/projects/:name/plugins/light_show/scenes/:id          # RFC 7396 merge-patch on params (null deletes per-key)
+DELETE /api/projects/:name/plugins/light_show/scenes/:id          # 409 if blocked by placements / live override
+
+# Placements (collection + item)
+GET    /api/projects/:name/plugins/light_show/placements          # ?scene_id=&time_start=&time_end=&ids=&limit=&offset=&...
+POST   /api/projects/:name/plugins/light_show/placements          # body: {scene_id, start_time, end_time, ...}; server assigns UUID
+GET    /api/projects/:name/plugins/light_show/placements/:id
+PATCH  /api/projects/:name/plugins/light_show/placements/:id
+DELETE /api/projects/:name/plugins/light_show/placements/:id
+
+# Live override (singleton resource)
+GET    /api/projects/:name/plugins/light_show/live                # current state ({active: bool, ...})
+PUT    /api/projects/:name/plugins/light_show/live                # activate (replaces if active); body has scene_id | scene + save_as
+DELETE /api/projects/:name/plugins/light_show/live                # deactivate; ?fade_out_sec=N optional
 ```
+
+Bulk operations are not a REST concern — the MCP tools handle bulk via direct DB-helper calls in a single transaction. External clients that want bulk semantics issue parallel single-resource calls.
 
 WS broadcasts expand the existing `light_show__changed` event's `kind` field:
 
@@ -440,7 +453,7 @@ Sourced from [clarification-14](../clarifications/clarification-14-light-show-sc
 |---|---|---|
 | `list_primitives` return shape | Full JSON-schema per primitive | Chat introspects params without guessing; self-service LLM reference. |
 | WS broadcast granularity | Expand existing `kind` field | Matches existing pattern; single subscription on frontend. |
-| ID format | Scenes: chat-chosen; Placements: auto-UUID | Scenes are named references; placements are positional handles. |
+| ID format | Auto-UUID for both scenes AND placements (server-assigned) | Supersedes clarification-14 Q 6.3. `label` carries the human name; `id` is a stable machine reference. Lets users freely rename scenes without breaking placement / live-override references. Removes redundancy between "id" and "label" fields. |
 | `clear` action | Dropped | No real user story for "delete every scene simultaneously". |
 | Partial upsert on `set` | Yes (RFC 7396 merge-patch) | Matches `screens` / `fixtures` pattern; null = delete on params keys. |
 | Bulk `set` | Yes (arrays) | Consistent with existing tools. |
