@@ -110,3 +110,23 @@ local:
         (backend) and vitest (frontend). Read before implementing any
         scene editor task.
       applies: acp.proceed, acp.task-create
+
+    - path: agent/specs/local.source-monitor-panel.md
+      weight: 0.8
+      kind: spec
+      description: |
+        Implementation-ready contract for the source-monitor panel:
+        exact context API (useSourceMonitor + SourceMonitorSource shape),
+        kind-aware drag payloads (audio → audio_clips, video → kf+tr),
+        plugin contribution point (contributes.sourceMonitorProvider)
+        with imperative fallback, integration touchpoints (music gen,
+        Bin, isolate vocals, timeline video right-click), and
+        language-agnostic Given/When/Then tests covering happy/bad/
+        positive/negative dimensions across base + edge cases.
+      rationale: |
+        Primary source for source-monitor task execution. Every
+        requirement is covered by at least one test; tests translate
+        directly to vitest (frontend). Read before implementing any
+        source-monitor task or any feature that pushes media into the
+        panel via setSource.
+      applies: acp.proceed, acp.task-create
