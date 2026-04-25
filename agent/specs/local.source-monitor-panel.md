@@ -78,15 +78,23 @@
     clearMarks: () => void,
   }
   ```
-- **R7**: `SourceMonitorSource` has the exact shape:
+- **R7**: `SourceMonitorSource` is a discriminated union — `poolSegmentId` is REQUIRED for `kind: 'audio'` (the waveform path needs it to fetch peaks; no v1 caller pushes audio without one) and OPTIONAL for `kind: 'video'`:
   ```ts
-  {
-    kind: 'video' | 'audio',
-    path: string,                         // project-relative; canonical locations below
-    label: string,
-    poolSegmentId?: string,
-    metadata?: Record<string, unknown>,
-  }
+  type SourceMonitorSource =
+    | {
+        kind: 'audio',
+        path: string,                       // project-relative; canonical locations below
+        label: string,
+        poolSegmentId: string,              // REQUIRED for audio
+        metadata?: Record<string, unknown>,
+      }
+    | {
+        kind: 'video',
+        path: string,
+        label: string,
+        poolSegmentId?: string,             // optional for video (e.g., finalization MP4s with no pool_segment row)
+        metadata?: Record<string, unknown>,
+      }
   ```
   Canonical `path` locations (per project conventions):
   - `pool/segments/<uuid>.<ext>` — the authoritative location for **all** pool video files AND most pool audio (music gen, isolate vocals, imports). `db.py:251` documents this as "the authoritative record of every video file." This is the **only** canonical pool path callers should pass for sources representing pool segments.
@@ -98,7 +106,7 @@
 ### Media rendering
 
 - **R8**: When `source.kind === 'video'`, the panel renders an `HTMLVideoElement` whose `src` is the canonical scenecraft file URL: `${API_URL}/api/projects/${encodeURIComponent(projectName)}/files/${path.split('/').map(encodeURIComponent).join('/')}`.
-- **R9**: When `source.kind === 'audio'`, the panel renders (a) a hidden/offscreen `HTMLAudioElement` for playback and (b) a waveform view sourced from the existing `/api/projects/:name/pool/:seg_id/peaks` endpoint (when `poolSegmentId` is set) or a fallback scrubbable progress bar (when `poolSegmentId` is absent).
+- **R9**: When `source.kind === 'audio'`, the panel renders (a) a hidden/offscreen `HTMLAudioElement` for playback and (b) a waveform view sourced from the existing `/api/projects/:name/pool/:seg_id/peaks` endpoint using `source.poolSegmentId`. Per R7, `poolSegmentId` is required for audio sources, so there is no no-poolSegment fallback path.
 - **R10**: When `source === null`, the panel renders an empty-state message: "Select a media item to preview."
 - **R11**: When the media element fires `error` or `abort` with a file-not-found class failure, the panel renders a "source unavailable" state and does NOT clear `source` or auto-close the tab.
 
@@ -117,7 +125,7 @@
 - **R19**: Invariant: after `markIn`, if an existing `outPoint < inPoint`, `outPoint` is set to `null` (cleared) to avoid crossed markers. Symmetric rule for `markOut`.
 - **R20**: `clearMarks()` sets both `inPoint` and `outPoint` to `null`.
 - **R21**: Scrub bar displays `[I]` / `[O]` notches at `inPoint` / `outPoint` when set.
-- **R22**: `markIn` / `markOut` / `clearMarks` are no-ops when `source === null`.
+- **R22**: `markIn` / `markOut` / `clearMarks` are no-ops when `source === null` OR `duration <= 0` (covers the in-flight load case and zero-duration / malformed media).
 
 ### Recent sources
 
@@ -264,6 +272,18 @@
 - **R47**: `clearSource()` sets `source = null`. The panel returns to the empty state.
 - **R48**: No `source` state is persisted across browser sessions.
 
+### Keyboard, validation, and panel-system surface
+
+- **R49**: Pressing the `Space` key while the source-monitor panel has keyboard focus toggles `play`/`pause`. The handler MUST check that the source-monitor panel (or one of its descendants) is the active focus owner before acting; otherwise the spacebar passes through to the timeline / program monitor's existing play/pause shortcut. No other keyboard shortcuts are wired in v1 (JKL, I/O, etc. → Future).
+- **R50**: `setSource` MUST runtime-validate the `kind` discriminant. If `s !== null` and `s.kind` is not exactly `'audio'` or `'video'`, the call is a no-op: log a `console.warn` containing the bad value, do NOT mutate `source`, do NOT throw. (TypeScript catches this at build for in-codebase callers; the runtime guard catches JSON / plugin-deserialized sources where the type system can't help.)
+- **R51**: The source-monitor panel header's "Reveal properties" action calls a new `PanelLayoutHandle.revealPanel('properties')` method that handles three cases:
+    1. Properties panel is already a tab in some group AND is the active tab → no-op (already visible).
+    2. Properties panel is a tab in some group but NOT active → activate it within its group.
+    3. Properties panel is NOT in the layout at all → re-add it to a sensible default group (last-known group if remembered in workspace view, else the same group as the source-monitor), then activate it.
+  After case 3, the resulting layout is auto-saved (R47) so the re-added panel persists across reloads.
+- **R52**: The `PanelLayoutHandle` type gains a `revealPanel(panelId: string): void` method that implements the R51 logic. Used by R37/R38 (Reveal properties) and available to any future panel that wants the same "make me visible" affordance.
+- **R53**: The right-click "Open source in source monitor" menu entry (R34, R46) is wired via the existing `ContextMenuProvider` subscription pattern, NOT by extending `Timeline.tsx`'s `onContextMenu` handler inline. The provider matches against entity kind (`pool_segment`, `transition`, etc.); the source-monitor and any plugin contributing `sourceMonitorProvider` (R33) register entries against the matching kinds. This decouples the menu wiring from `Timeline.tsx` and gives all callers (Bin, music gen, isolate vocals, plugin-contributed entities) one path.
+
 ---
 
 ## Interfaces / Data Shapes
@@ -271,13 +291,21 @@
 ### `SourceMonitorSource`
 
 ```ts
-type SourceMonitorSource = {
-  kind: 'video' | 'audio'
-  path: string                         // project-relative; expected to start with "pool/"
-  label: string
-  poolSegmentId?: string
-  metadata?: Record<string, unknown>
-}
+type SourceMonitorSource =
+  | {
+      kind: 'audio'
+      path: string                       // project-relative; expected to start with "pool/"
+      label: string
+      poolSegmentId: string              // REQUIRED for audio (waveform path needs it)
+      metadata?: Record<string, unknown>
+    }
+  | {
+      kind: 'video'
+      path: string                       // project-relative; canonical locations under R7
+      label: string
+      poolSegmentId?: string             // optional — finalization MP4s may have no pool_segment row
+      metadata?: Record<string, unknown>
+    }
 ```
 
 ### `useSourceMonitor()` return
@@ -426,6 +454,10 @@ to:
 - [ ] Plugin manifest declaring `contributes.sourceMonitorProvider` produces a right-click menu entry on matching entities without further wiring
 - [ ] Plugin with no manifest declaration can still call `setSource` imperatively
 - [ ] No backend REST, WS, or schema changes were required
+- [ ] Spacebar (focus-scoped) toggles play/pause; doesn't fire when timeline owns focus
+- [ ] "Reveal properties" works in all three Properties-panel states (active / inactive tab / removed)
+- [ ] Right-click "Open source" wired via ContextMenuProvider (not extending Timeline.tsx inline)
+- [ ] Invalid `kind` values (runtime-deserialized) → no-op + warn, no throw, no source mutation
 - [ ] All tests in the Tests section pass
 
 ---
@@ -963,6 +995,65 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **no-user-facing-error**: no error modal or toast is shown for the peaks failure — waveform is a nicety, not a blocker
 - **transport-functional**: play/pause and scrub still work
 
+#### Test: spacebar-toggles-play-when-focused (covers R49)
+
+**Given**:
+- An audio source is loaded and not playing
+- The source-monitor panel (or one of its descendants) has keyboard focus
+
+**When**: The user presses `Space`
+
+**Then** (assertions):
+- **playing-true**: `useSourceMonitor().playing === true` after the keypress
+- **media-playing**: the underlying audio element is playing
+
+#### Test: spacebar-passes-through-when-unfocused (covers R49)
+
+**Given**:
+- An audio source is loaded and not playing in the source monitor
+- The user has clicked into the timeline (program monitor / timeline has focus, NOT the source monitor)
+
+**When**: The user presses `Space`
+
+**Then** (assertions):
+- **source-not-toggled**: `useSourceMonitor().playing === false` (unchanged)
+- **timeline-handler-fires**: the timeline's existing spacebar handler runs (pre-existing behavior preserved; verified by checking the timeline's play-state changed)
+
+#### Test: reveal-properties-redocks-when-removed (covers R51, R52)
+
+**Given**:
+- A source is loaded with `poolSegmentId = 'ps_1'`
+- The Properties panel has been removed from the layout entirely (not in any group)
+
+**When**: The user clicks "Reveal properties"
+
+**Then** (assertions):
+- **properties-readded**: the Properties panel is now a tab in the layout
+- **properties-active**: it is the active tab in its group
+- **layout-saved**: the post-reveal layout is persisted via `saveWorkspaceView` so the re-add survives reload
+
+#### Test: reveal-properties-activates-existing-tab (covers R51)
+
+**Given**:
+- The Properties panel exists in the layout but is not the active tab in its group
+- A source with `poolSegmentId` is loaded
+
+**When**: The user clicks "Reveal properties"
+
+**Then** (assertions):
+- **properties-active**: Properties is now the active tab in its group
+- **no-relocation**: Properties stayed in the same group it was already docked in (no re-add)
+
+#### Test: audio-source-without-pool-segment-id-rejected (covers R7, R50)
+
+**Given**: A caller attempts `setSource({ kind: 'audio', path: 'pool/segments/x.mp3', label: 'orphan' })` — `poolSegmentId` is missing for an audio source
+
+**When**: The call is made
+
+**Then** (assertions):
+- **compile-time-rejection**: TypeScript discriminated union rejects this at build (compile-time assertion via `// @ts-expect-error` or equivalent)
+- **runtime-rejection**: at runtime (e.g., from JSON-deserialized data), the call is a no-op: `source` unchanged, `console.warn` emitted, no throw
+
 #### Test: imperative-setsource-auto-activates (covers R3)
 
 **Given**: The `source-monitor` tab is NOT active; `program` preview is active
@@ -973,15 +1064,19 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 - **tab-activated**: the `source-monitor` tab is now active in its group
 - **program-tab-not-destroyed**: the `program` preview tab still exists in the group (activation, not closure)
 
-#### Test: invalid-kind-value-rejected (bad path — type safety)
+#### Test: invalid-kind-value-rejected (covers R50)
 
-**Given**: A caller attempts `setSource({ kind: 'image', path: 'pool/images/x.png', label: 'cover' })` — `kind` is not one of the allowed discriminants
+**Given**:
+- An existing source A is loaded
+- A caller attempts `setSource({ kind: 'image', path: 'pool/images/x.png', label: 'cover' })` — `kind` is not one of the allowed discriminants (e.g., from a JSON-deserialized payload that bypasses TypeScript)
 
 **When**: The call is made
 
 **Then** (assertions):
-- **runtime-rejected**: TypeScript compiler rejects at build time (compile-time assertion) OR runtime validator throws / rejects — spec implementer picks one; test asserts the call does NOT load `x.png` into the panel
-- **source-unchanged**: `source` remains at whatever value it had before the invalid call
+- **source-unchanged**: `useSourceMonitor().source === A` (the pre-call source); the invalid call does NOT mutate state
+- **no-throw**: the call completes without throwing (must not break unrelated callers)
+- **warn-emitted**: `console.warn` is called with a message containing the invalid kind value (`'image'`) so the bug is debuggable
+- **media-not-loaded**: no `<video>` or `<audio>` element with src `pool/images/x.png` is mounted in the panel
 
 #### Test: drop-without-marks-preserves-existing-behavior (covers R30) — regression guard
 
@@ -999,14 +1094,14 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 
 ## Open Questions
 
-- **OQ-1 — Max size of `recentSources` stack.** Spec picks `10`; needs user confirmation. Alternatives: 5, 20, unbounded. Resolution: user selects value during implementation kickoff or accepts default of 10.
-- **OQ-2 — Keyboard shortcuts in v1.** Design deferred to Future; spec defaults to no shortcuts. Should `Space` for play/pause be a v1 one-off exception? (Premiere/VLC users expect it.)
-- **OQ-3 — "Reveal properties" target when Properties panel is undocked.** Design says "defer to existing workspace-view logic" but that logic is vague. Open: does the action re-dock the panel, open it in a floating popover, or silently no-op with a toast?
-- **OQ-4 — `video-zero-duration-edge` behavior for `markIn` when `duration === 0`.** Spec test asserts one of two outcomes; implementer picks. Should spec pin this now?
-- **OQ-5 — `variant_kind` stamp on subclip-created entities.** Design calls this out as Future; should the drop handler copy `source.metadata.variant_kind` onto the new `audio_clips` / transition row so color coding propagates? Deferred per design.
-- **OQ-6 — Progress bar fallback when `poolSegmentId` is absent on audio source.** Spec says "scrubbable progress bar." Does this need waveform-like visual indication of position, or a plain `<input type="range">`?
-- **OQ-7 — Right-click menu wiring on timeline video clip (R46).** The exact mechanism (ContextMenuProvider subscription? extension of existing `onContextMenu` handler?) is unspecified; implementers pick based on current timeline architecture.
-- **OQ-8 — `invalid-kind-value-rejected` test outcome.** Spec lets implementer choose compile-time-only or runtime-guard. Should spec pin one? Compile-time-only is lighter but loses runtime safety for JSON-deserialized sources.
+- **OQ-1 — Max size of `recentSources` stack.** **Resolved (2026-04-25): cap = 10.** Premiere convention; 5 too few when comparing takes, 20+ adds dropdown noise.
+- **OQ-2 — Keyboard shortcuts in v1.** **Resolved (2026-04-25): `Space` only, focus-scoped.** Hyperstandard expectation; zero discoverability cost. Captured as R49. All other shortcuts (JKL, I/O markers, etc.) deferred to Future.
+- **OQ-3 — "Reveal properties" target when Properties panel is undocked.** **Resolved (2026-04-25): re-dock + activate.** New `PanelLayoutHandle.revealPanel(panelId)` method handles already-active / inactive-tab / not-in-layout cases. Captured as R51 + R52.
+- **OQ-4 — `video-zero-duration-edge` behavior for `markIn` when `duration === 0`.** **Resolved (2026-04-25): no-op, generalized as duration ≤ 0 case.** R22 extended to read `markIn` / `markOut` / `clearMarks` are no-ops when `source === null` OR `duration <= 0`. Avoids junk markers surviving a successful re-load.
+- **OQ-5 — `variant_kind` stamp on subclip-created entities.** **Resolved (2026-04-25): no copy needed.** The existing FK chain (`audio_clips.selected → pool_segments.variant_kind` for audio drops, `transitions.selected → pool_segments.variant_kind` for video drops) already propagates variant_kind for color rendering. Stamping a copy would create a denormalized cache that could go stale.
+- **OQ-6 — Progress bar fallback when `poolSegmentId` is absent on audio source.** **Resolved (2026-04-25): N/A — contract tightened.** Per R7, `poolSegmentId` is now REQUIRED for `kind: 'audio'` (zero v1 callers push audio without one). No fallback to spec; no rendering branch to specify. Future widening to support raw-URL audio is a v2 contract change.
+- **OQ-7 — Right-click menu wiring on timeline video clip (R46).** **Resolved (2026-04-25): ContextMenuProvider subscription.** Captured as R53. Decouples wiring from `Timeline.tsx`, gives all callers (Bin, music gen, isolate vocals, plugin-contributed entities) one path, aligns with the plugin contribution point (R33-R34).
+- **OQ-8 — `invalid-kind-value-rejected` test outcome.** **Resolved (2026-04-25): both — compile-time TS + runtime guard.** Captured as R50. TS catches in-codebase callers; runtime guard catches JSON / plugin-deserialized sources where the type system can't help. On invalid: `console.warn` + no-op (do NOT throw — would break unrelated callers).
 - **OQ-9 — Where does a dropped video subclip's media reference attach?** **Resolved: moot.** OQ-10 resolved to Option B (insert-and-consume), which inserts two boundary kfs and attaches the subclip to the single new transition between them. There's no ambiguity about which transition carries the media — there's only one new transition, and it carries the subclip at native 1.0 rate.
 
 - **OQ-10 — Video subclip drop semantics: fit-and-remap (A) vs. insert-and-consume (B)?** **Resolved: B (insert-and-consume).** The user identified consume-on-overlap as the project's canonical mental model (2026-04-25 chat); A would ship a knowingly-wrong NLE behavior (off-rate playback). R32 above is now the canonical algorithm. paste-group's skip-on-overlap policy is flagged as a separate bug to fix (see Related Artifacts).
@@ -1070,7 +1165,10 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 | Playback speed | 1x only for v1 | JKL / variable speed deferred. |
 | In/out markers | Yes, with crossed-marker invariant | Required for subclip extraction. |
 | Subclip drag → timeline | Yes, kind-aware | Video creates kf+tr with reconciliation; audio creates `audio_clips`. |
-| Recent sources | Premiere-style session-scoped stack, cap 10 | Flip back to a previous source without re-navigation. |
+| Recent sources | Premiere-style session-scoped stack, **cap 10** (OQ-1 resolved) | Flip back to a previous source without re-navigation. Premiere convention; 5 too few when comparing takes. |
+| Keyboard shortcuts in v1 | **Space only**, focus-scoped (OQ-2 resolved) | Hyperstandard play/pause expectation; zero discoverability cost. Other shortcuts deferred. |
+| Markers when source is null or duration ≤ 0 | **No-op** (OQ-4 resolved, R22 generalized) | Prevents junk markers from surviving a successful re-load. |
+| variant_kind on subclip-created entities | **No copy needed** (OQ-5 resolved) | Existing FK chain (`audio_clips.selected → pool_segments.variant_kind` and `transitions.selected → pool_segments.variant_kind`) already propagates color. Stamping would create stale denormalization. |
 | Missing file behavior | "Source unavailable" state, no auto-close | Matches NLE offline-media pattern. |
 | Persist source across reloads | No (always empty on reload) | Source monitor is ephemeral; avoids "unavailable after GC" on startup. |
 
@@ -1090,7 +1188,10 @@ Boundaries, unusual inputs, concurrency, idempotency, ordering, time-dependent b
 | Decision | Choice | Rationale |
 |---|---|---|
 | Hook shape | `useSourceMonitor()` → `{ source, setSource, clearSource, play, pause, seek, markIn, markOut, clearMarks, ... }` | Covers all v1 operations; clean surface. |
-| `setSource` payload | Discriminated union `{ kind: 'video'\|'audio', path, label, poolSegmentId?, metadata? }` | Caller knows the kind; explicit avoids unreliable extension sniffing. `poolSegmentId?` enables "Reveal properties"; `metadata?` is escape hatch. |
+| `setSource` payload | Discriminated union: `{ kind: 'audio', poolSegmentId: string, ... }` (REQUIRED) `\|` `{ kind: 'video', poolSegmentId?: string, ... }` (optional) (OQ-6 resolved) | Caller knows the kind; explicit avoids unreliable extension sniffing. Audio always has a pool_segment in v1 (waveform path needs it). Video may not (finalization MP4s). |
+| Invalid `kind` value handling | **TS compile-time + runtime guard** (OQ-8 resolved, R50) | Both — TS catches in-codebase bugs at build, runtime guard catches JSON / plugin-deserialized sources. On invalid: warn + no-op, do NOT throw. |
+| Right-click menu wiring | **ContextMenuProvider subscription** (OQ-7 resolved, R53) | Decouples from Timeline.tsx; one wiring path for Bin / music gen / isolate vocals / plugin-contributed entities. |
+| "Reveal properties" target | **Re-dock + activate via `revealPanel(panelId)`** (OQ-3 resolved, R51 + R52) | VSCode pattern — user clicked it, give them what they asked for. Works in all three Properties-panel states (already-active, inactive tab, removed). |
 | Plugin integration | Both paths — declarative contribution point with imperative fallback | Progressive enhancement. Plugins that declare `contributes.sourceMonitorProvider` get auto-wired menus; plugins that don't can still `setSource` directly. |
 | Caller authorization | Open contract (any plugin can push a source) | Keeps the surface flexible; no curation overhead. |
 
