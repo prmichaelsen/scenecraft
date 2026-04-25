@@ -89,10 +89,11 @@
   }
   ```
   Canonical `path` locations (per project conventions):
-  - `pool/segments/<uuid>.<ext>` — the authoritative location for **all** pool video files AND most pool audio (music gen, isolate vocals, imports). `db.py:251` documents this as "the authoritative record of every video file."
+  - `pool/segments/<uuid>.<ext>` — the authoritative location for **all** pool video files AND most pool audio (music gen, isolate vocals, imports). `db.py:251` documents this as "the authoritative record of every video file." This is the **only** canonical pool path callers should pass for sources representing pool segments.
   - `pool/bounces/<composite_hash>.wav` — **audio bounces only.** Never video.
-  - `selected_transitions/<tr_id>_slot_0.mp4` — runtime cache of a transition's selected video; not a pool path. Acceptable for source-monitor previews of timeline clips (R46), but the underlying `pool/segments/<uuid>.<ext>` is preferred when known.
-  - `finalizations/<id>/range.mp4` — finalize-range rendered preview (per `local.finalize-range.md`); valid video source.
+  - `finalizations/<id>/range.mp4` — finalize-range rendered preview (per `local.finalize-range.md`); valid video source for finalization rows.
+
+  **Do NOT** pass `selected_transitions/<tr_id>_slot_0.mp4` as a source path. That file is a runtime render cache, not a source of truth. Callers previewing a timeline transition (R46) MUST resolve through the data model: read `transition.selected` (a `pool_segment_id`, possibly an array — slot 0 is the displayed candidate), look up the corresponding `pool_segments` row, and pass its `pool_path` plus `id` as `poolSegmentId`. This keeps the preview tied to data instead of cached artifacts (cache may be stale, missing, or invalidated by a re-render).
 
 ### Media rendering
 
@@ -252,7 +253,11 @@
 - **R43**: Bin panel: existing hover-preview behavior in the program-preview panel is unchanged.
 - **R44**: Isolate vocals panel: single-click on a stem row calls `setSource` with `kind: 'audio'`.
 - **R45**: Isolate vocals panel: the existing inline `PoolAudioPlayButton` on each stem row **remains** (mirrors R41 for music gen — quick-listen via inline ▶ coexists with the source-monitor detail view via single-click). Clicking the inline ▶ does NOT load the row into the source monitor; only single-clicking the row body does.
-- **R46**: Timeline video clip (in the keyframe/transition surface): right-click menu gains an action labelled "Open source in source monitor" that calls `setSource({ kind: 'video', path: clip.source_path, label: clip.label, poolSegmentId: clip.pool_segment_id })`.
+- **R46**: Timeline video clip (in the keyframe/transition surface): right-click menu gains an action labelled "Open source in source monitor". The handler MUST resolve through the data model — never via the runtime cache at `selected_transitions/<tr_id>_slot_0.mp4`. Resolution:
+    1. Read the transition's `selected` field. It is a `pool_segment_id` (string) or a list of them (slot 0 = the displayed candidate).
+    2. Look up the corresponding `pool_segments` row by id.
+    3. Call `setSource({ kind: 'video', path: <pool_segment.pool_path>, label: <transition.label || pool_segment.label || basename(pool_path)>, poolSegmentId: <pool_segment.id>, metadata: { transitionId: <tr.id>, trim_in: <tr.trim_in>, trim_out: <tr.trim_out> } })`.
+  Trim metadata is informational only — the source monitor does NOT auto-apply `trim_in`/`trim_out` as in/out markers (the user can mark their own range from the source monitor's transport). If `transition.selected` is null/empty, the menu item is rendered disabled.
 
 ### Session behavior
 
@@ -715,13 +720,29 @@ The core behavior contract — happy path, common bad paths, primary positive an
 
 #### Test: timeline-video-clip-right-click-opens-source (covers R46)
 
-**Given**: A video clip exists in the timeline (keyframe + transition)
+**Given**:
+- A transition `tr_42` exists with `selected = "ps_99"`, `trim_in = 5`, `trim_out = 12`, `label = "intro"`
+- The matching `pool_segment` `ps_99` has `pool_path = "pool/segments/abc123.mp4"`, `label = "raw_intro"`
 
-**When**: User right-clicks the clip and selects "Open source in source monitor"
+**When**: The user right-clicks the clip and selects "Open source in source monitor"
 
 **Then** (assertions):
-- **setsource-called**: `source.kind === 'video'`, `source.path` matches the clip's source
+- **setsource-called**: `source.kind === 'video'`
+- **path-from-pool-segment**: `source.path === "pool/segments/abc123.mp4"` (resolved via `tr.selected → pool_segments.pool_path`, NOT via `selected_transitions/tr_42_slot_0.mp4`)
+- **pool-segment-id-set**: `source.poolSegmentId === "ps_99"` (enables Reveal Properties per R37)
+- **label-from-tr-or-pool**: `source.label === "intro"` (transition label preferred; falls back to pool_segment.label or basename)
+- **trim-in-metadata**: `source.metadata.trim_in === 5`, `source.metadata.trim_out === 12`, `source.metadata.transitionId === "tr_42"`
+- **markers-not-auto-set**: `useSourceMonitor().inPoint === null`, `useSourceMonitor().outPoint === null` (trim metadata is informational only; user marks their own range)
 - **tab-activated**: `source-monitor` tab is active
+
+#### Test: timeline-video-clip-no-selected-disables-menu (covers R46)
+
+**Given**: A transition `tr_43` with `selected = null` (no candidate chosen yet)
+
+**When**: The user right-clicks the clip
+
+**Then** (assertions):
+- **menu-item-disabled**: the "Open source in source monitor" menu item is rendered disabled (greyed out, non-interactive)
 
 #### Test: reveal-properties-opens-props-panel (covers R37, R38)
 
