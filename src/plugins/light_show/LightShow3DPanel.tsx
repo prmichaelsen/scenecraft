@@ -499,7 +499,7 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             </option>
           ))}
         </select>
-        {'serial' in navigator && (
+        {typeof navigator !== 'undefined' && 'serial' in navigator && (
           <button
             onClick={handleDmxToggle}
             className={`ml-2 px-2 py-0.5 text-xs rounded border ${
