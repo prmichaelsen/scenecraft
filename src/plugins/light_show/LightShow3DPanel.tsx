@@ -25,6 +25,7 @@ import { EffectComposer } from '@react-three/postprocessing'
 import { useCurrentTime, usePlaybackState } from '@/components/editor/CurrentTimeContext'
 import { useEditorData } from '@/components/editor/EditorDataContext'
 import { subscribePluginEvent } from '@/hooks/useScenecraftSocket'
+import { getActiveAudioMixer } from '@/lib/audio-mixer-ref'
 
 import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
 import { SCENES, getScene } from './scenes'
@@ -39,6 +40,8 @@ import {
   type Override,
   type ScreenRow,
 } from './light-show-client'
+import { EnttecPro, type DMXOutputState } from './enttec-pro'
+import { autoPatch, fixturesToDMX, type DMXPatch } from './dmx-mapper'
 
 /** Invisible component whose only job is to subscribe to the 20Hz playhead
  *  context and write it into a ref. Re-renders happen here (leaf, no DOM),
@@ -135,6 +138,85 @@ function Fixture({ def, stateRef }: { def: FixtureDef; stateRef: React.MutableRe
 
 export type Beat = { time: number; intensity: number }
 
+/**
+ * Per-frame master-bus sampler. Reads the AudioMixer's master AnalyserNode
+ * (L channel — stereo is roughly correlated for our purposes) each frame
+ * and computes:
+ *   - RMS of the full spectrum → ``masterLevelRef``
+ *   - RMS of the low-band (bins <= ~150Hz) → ``masterLowLevelRef``
+ *
+ * Both are smoothed with an asymmetric envelope (fast attack / slow release)
+ * so a kick snaps the level up instantly but the decay is gentle enough for
+ * scene animations to read. Attack ~8ms, release ~180ms.
+ *
+ * The mixer is fetched via audio-mixer-ref on every frame — no subscription —
+ * so we pick it up whenever Timeline mounts / swaps projects without any
+ * explicit re-init.
+ */
+function MasterBusSampler({
+  masterLevelRef,
+  masterLowLevelRef,
+}: {
+  masterLevelRef: React.MutableRefObject<number>
+  masterLowLevelRef: React.MutableRefObject<number>
+}) {
+  const freqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
+
+  useFrame(() => {
+    const mixer = getActiveAudioMixer()
+    const pair = mixer?.getMasterAnalysers() ?? null
+    if (!pair) {
+      // No audio playing / mixer disposed — bleed the envelope to zero.
+      masterLevelRef.current *= 0.9
+      masterLowLevelRef.current *= 0.9
+      return
+    }
+    const analyser = pair.left
+    const binCount = analyser.frequencyBinCount
+    if (!freqDataRef.current || freqDataRef.current.length !== binCount) {
+      // Allocate on a dedicated ArrayBuffer so the Uint8Array is typed as
+      // Uint8Array<ArrayBuffer> (what AnalyserNode.getByteFrequencyData
+      // expects under TS 5.7's tightened DOM typings).
+      freqDataRef.current = new Uint8Array(new ArrayBuffer(binCount))
+    }
+    const data = freqDataRef.current
+    analyser.getByteFrequencyData(data)
+
+    // Overall RMS (bytes are 0..255, normalize to 0..1).
+    let sum = 0
+    for (let i = 0; i < binCount; i++) {
+      const v = data[i] / 255
+      sum += v * v
+    }
+    const rms = Math.sqrt(sum / binCount)
+
+    // Low-band energy. FFT bin covers ``sampleRate / fftSize`` Hz. For a
+    // 44.1kHz context with fftSize=2048 → ~21.5Hz per bin → first ~7 bins
+    // cover 0-150Hz. Compute per-frame so it auto-adjusts to the mixer's
+    // actual sample rate / fft size.
+    const sampleRate = analyser.context.sampleRate
+    const binHz = sampleRate / (analyser.fftSize || 2048)
+    const lowBins = Math.max(2, Math.floor(150 / binHz))
+    let lowSum = 0
+    for (let i = 0; i < lowBins; i++) {
+      const v = data[i] / 255
+      lowSum += v * v
+    }
+    const lowRms = Math.sqrt(lowSum / lowBins)
+
+    // Asymmetric envelope: fast attack, slow release. Per-frame coefficients
+    // at 60fps — attack 8ms (α≈0.85), release 180ms (α≈0.08).
+    const apply = (prev: number, target: number) => {
+      const alpha = target > prev ? 0.85 : 0.08
+      return prev + (target - prev) * alpha
+    }
+    masterLevelRef.current = apply(masterLevelRef.current, rms)
+    masterLowLevelRef.current = apply(masterLowLevelRef.current, lowRms)
+  })
+
+  return null
+}
+
 /** Ticks the active scene every frame, writing into the shared state array.
  *  Builds a SceneContext from the playhead + beat refs each frame so
  *  audio-reactive scenes can consult them. After the scene runs, overrides
@@ -149,6 +231,10 @@ function SceneRunner({
   playheadRef,
   isPlayingRef,
   beatsRef,
+  masterLevelRef,
+  masterLowLevelRef,
+  dmxRef,
+  dmxPatchesRef,
 }: {
   activeSceneIdRef: React.MutableRefObject<string>
   stateRef: React.MutableRefObject<FixtureState[]>
@@ -158,6 +244,10 @@ function SceneRunner({
   playheadRef: React.MutableRefObject<number>
   isPlayingRef: React.MutableRefObject<boolean>
   beatsRef: React.MutableRefObject<Beat[]>
+  masterLevelRef: React.MutableRefObject<number>
+  masterLowLevelRef: React.MutableRefObject<number>
+  dmxRef: React.MutableRefObject<EnttecPro | null>
+  dmxPatchesRef: React.MutableRefObject<DMXPatch[]>
 }) {
   const tickRef = useRef(0)
   // Bookkeeping for beat tracking: which beat was the most recent fired,
@@ -184,11 +274,15 @@ function SceneRunner({
     const lastBeatIntensity = lastBeat ? lastBeat.intensity : 0
     const beatIndex = lastIdx + 1
 
+    const masterLevel = masterLevelRef.current
+    const masterLowLevel = masterLowLevelRef.current
+
     if (tickRef.current % 15 === 0 && diagDomRef.current) {
       const overrideCount = overridesRef.current.size
       const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
       const beatLabel = beats.length > 0 ? ` · beat ${beatIndex}/${beats.length}` : ''
-      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${beatLabel}${overrideLabel}`
+      const levelLabel = ` · L ${masterLevel.toFixed(2)} / Lo ${masterLowLevel.toFixed(2)}`
+      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${beatLabel}${levelLabel}${overrideLabel}`
     }
 
     const context: SceneContext = {
@@ -197,6 +291,8 @@ function SceneRunner({
       lastBeatIntensity,
       beatIndex,
       isPlaying: isPlayingRef.current,
+      masterLevel,
+      masterLowLevel,
     }
 
     const scene = getScene(activeSceneIdRef.current)
@@ -215,6 +311,14 @@ function SceneRunner({
         if (o.pan !== undefined) s.pan = o.pan
         if (o.tilt !== undefined) s.tilt = o.tilt
       }
+    }
+
+    // Send DMX frame to hardware if connected. Non-blocking — EnttecPro
+    // coalesces frames internally so 60fps useFrame won't stall on USB writes.
+    const dmx = dmxRef.current
+    if (dmx?.connected) {
+      const buf = fixturesToDMX(stateRef.current, dmxPatchesRef.current)
+      dmx.send(buf)
     }
   })
   return null
@@ -269,6 +373,46 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   const playheadRef = useRef<number>(0)
   const isPlayingRef = useRef<boolean>(false)
   const beatsRef = useRef<Beat[]>([])
+  // Smoothed master-bus energy sampled from the AudioMixer's analysers each
+  // frame. MasterBusSampler writes these; SceneRunner reads them into the
+  // SceneContext so audio-reactive scenes drive off live audio (not the
+  // pre-computed beat list, which is empty on modern audio-intelligence
+  // projects).
+  const masterLevelRef = useRef<number>(0)
+  const masterLowLevelRef = useRef<number>(0)
+
+  // WebSerial DMX output — ENTTEC DMX USB Pro.
+  const dmxRef = useRef<EnttecPro | null>(null)
+  const dmxPatchesRef = useRef<DMXPatch[]>([])
+  const [dmxState, setDmxState] = useState<DMXOutputState>('disconnected')
+
+  // Rebuild auto-patch whenever rig changes.
+  useEffect(() => {
+    dmxPatchesRef.current = autoPatch(
+      rig.map((f) => ({
+        id: f.id,
+        role: f.role,
+        intensity: 1,
+        color: [1, 1, 1],
+        pan: 0,
+        tilt: 0,
+      })),
+    )
+  }, [rig])
+
+  const handleDmxToggle = async () => {
+    if (dmxRef.current?.connected) {
+      await dmxRef.current.disconnect()
+      dmxRef.current = null
+      return
+    }
+    const pro = new EnttecPro({
+      onStateChange: setDmxState,
+      onError: (msg) => console.warn('[DMX]', msg),
+    })
+    dmxRef.current = pro
+    await pro.connect()
+  }
 
   // Beats come from scenecraft's audio intel loaded at editor mount.
   // Absent beats (non-audio project) just means audio-reactive scenes
@@ -355,6 +499,22 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             </option>
           ))}
         </select>
+        {'serial' in navigator && (
+          <button
+            onClick={handleDmxToggle}
+            className={`ml-2 px-2 py-0.5 text-xs rounded border ${
+              dmxState === 'connected'
+                ? 'bg-green-900 border-green-600 text-green-300'
+                : dmxState === 'connecting'
+                  ? 'bg-yellow-900 border-yellow-600 text-yellow-300'
+                  : dmxState === 'error'
+                    ? 'bg-red-900 border-red-600 text-red-300'
+                    : 'bg-gray-800 border-gray-600 text-gray-300 hover:border-purple-500'
+            }`}
+          >
+            {dmxState === 'connected' ? 'DMX: ON' : dmxState === 'connecting' ? 'DMX...' : 'DMX Output'}
+          </button>
+        )}
         <span className="ml-auto text-[10px] text-gray-600">
           {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'}
           {screens.length > 0 ? ` · ${screens.length} screen${screens.length === 1 ? '' : 's'}` : ''}
@@ -396,6 +556,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             fadeStrength={1}
             infiniteGrid={false}
           />
+          <MasterBusSampler
+            masterLevelRef={masterLevelRef}
+            masterLowLevelRef={masterLowLevelRef}
+          />
           <SceneRunner
             activeSceneIdRef={activeSceneIdRef}
             stateRef={stateRef}
@@ -405,6 +569,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             playheadRef={playheadRef}
             isPlayingRef={isPlayingRef}
             beatsRef={beatsRef}
+            masterLevelRef={masterLevelRef}
+            masterLowLevelRef={masterLowLevelRef}
+            dmxRef={dmxRef}
+            dmxPatchesRef={dmxPatchesRef}
           />
           {rig.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />

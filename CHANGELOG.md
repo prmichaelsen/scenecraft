@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.0] - 2026-04-25
+
+### Added
+- **Live audio-reactive lighting.** `light_show` scenes now drive off the live master-bus envelope sampled from the AudioMixer's master `AnalyserNode` instead of the pre-analyzed beat list. New `MasterBusSampler` r3f component reads the L-channel analyser each frame, computes full-spectrum RMS and low-band (≤150 Hz) RMS, and feeds both through an asymmetric envelope (~8 ms attack / ~180 ms release). `SceneContext` gains `masterLevel` and `masterLowLevel` (0..1, smoothed). `beat_strobe`, `beat_color_chase`, and `kick_pulse` rewritten to use these signals — they react to whatever's actually playing (generated music, imported clips, master-bus effects), not just pre-computed beats.
+- **WebSerial DMX output to ENTTEC DMX USB Pro.** New `enttec-pro.ts` driver implements the Widget API frame format (label 6, "Output Only Send DMX Packet") over `navigator.serial` filtered to FTDI VID 0x0403/PID 0x6001. `send(channels)` is non-blocking and coalesces stale frames so the 60 fps `useFrame` loop can't stall on USB writes. New `dmx-mapper.ts` maps `FixtureState[]` → 512-byte universe with `autoPatch()` (4 ch par / 6 ch moving head, sequential addressing) and `fixturesToDMX()` (dimmer + RGB + pan/tilt). `LightShow3DPanel` adds a "DMX Output" button next to the scene picker (only shown when `'serial' in navigator`); when connected, every scene-runner tick forwards the universe to the dongle. Adds `@types/w3c-web-serial` and enables it in `tsconfig.json` so the `Serial*` DOM globals are typed.
+- **Cross-panel mixer access via module-level singleton.** New `src/lib/audio-mixer-ref.ts` exposes `setActiveAudioMixer` / `getActiveAudioMixer` so dock panels that aren't descendants of the Timeline (notably `LightShow3DPanel`) can reach the master-bus analysers without prop-drilling through dockview layers. `useAudioMixer` registers/unregisters on mount/unmount, mirroring the window-event pattern already used for `MASTER_BUS_EFFECTS_CHANGED_EVENT`.
+- Research task `agent/tasks/unassigned/task-150-research-multi-channel-live-audio.md` for the next multi-channel live-audio investigation.
+
 ## [0.23.2] - 2026-04-24
 
 ### Changed

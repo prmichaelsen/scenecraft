@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createAudioMixer, type AudioMixer } from '@/lib/audio-mixer'
+import { setActiveAudioMixer } from '@/lib/audio-mixer-ref'
 import type { AudioTrack } from '@/lib/audio-client'
 import { fetchMasterBusEffects } from '@/lib/scenecraft-client'
 import type { TrackEffect } from '@/lib/audio-graph'
@@ -43,10 +44,15 @@ export function useAudioMixer(
       const m = createAudioMixer(projectName, tracks)
       mixerRef.current = m
       setMixer(m)
+      // Register as the active mixer so sibling dock panels (light_show etc.)
+      // can tap the master-bus analysers via audio-mixer-ref without
+      // prop-drilling through dockview layers.
+      setActiveAudioMixer(m)
     } catch (e) {
       console.error('[useAudioMixer] createAudioMixer failed:', e)
     }
     return () => {
+      setActiveAudioMixer(null)
       mixerRef.current?.dispose()
       mixerRef.current = null
       setMixer(null)

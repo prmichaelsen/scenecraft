@@ -23,6 +23,15 @@ export interface SceneContext {
   /** True if the scenecraft audio is currently playing. Scenes that want
    *  to pause animation when the timeline is paused can check this. */
   isPlaying: boolean
+  /** Smoothed RMS of the master bus, 0..1. Sampled from the AudioMixer's
+   *  master AnalyserNode each frame, then fed through a ~120ms exponential
+   *  envelope so it tracks audio energy without flickering. 0 when no
+   *  mixer is active or the audio is paused. */
+  masterLevel: number
+  /** Smoothed low-band (sub-bass ~20-150Hz) energy of the master bus,
+   *  0..1. Same envelope as masterLevel. Kicks / bass hits dominate this
+   *  band, so it's the natural signal for "kick pulse" scenes. */
+  masterLowLevel: number
 }
 
 export interface SceneDef {
