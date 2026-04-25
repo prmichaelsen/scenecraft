@@ -1476,6 +1476,65 @@ milestones:
         actual_hours: null
         notes: "Wire fetch + WS subscription + reconnect-refetch (NO polling). Replace SceneRunner scene resolution with evaluateLayeredScene. Diag bar shows LIVE/TIMELINE/FALLBACK label. Manual rotating-head E2E. tsc clean. Spec R49-R50."
 
+  - id: milestone_20
+    name: Source Monitor Panel
+    status: not_started
+    started: null
+    completed: null
+    file: agent/milestones/milestone-20-source-monitor-panel.md
+    tasks_total: 6
+    tasks_completed: 0
+    estimated_weeks: 1
+    tasks:
+      - id: task-163
+        name: Source monitor panel shell + context + revealPanel + Space + runtime guard
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-20-source-monitor-panel/task-163-source-monitor-panel-shell.md
+        estimated_hours: 6
+        actual_hours: null
+        notes: "Foundational task — all M20 tasks stack on this. SourceMonitorContext + Panel + EditorPanelLayout registration. PanelLayoutHandle.revealPanel(panelId) for OQ-3. Focus-scoped Space play/pause (R49). Runtime kind validation in setSource (R50). Spec R1-R28, R37-R39, R47-R52."
+      - id: task-164
+        name: Music gen panel single-click row → setSource (keep inline ▶)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-20-source-monitor-panel/task-164-music-gen-single-click.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "Wire RunCard track row click. Inline ▶ stays + stopPropagation. Spec R40-R41."
+      - id: task-165
+        name: Bin panel single-click pool item → setSource
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-20-source-monitor-panel/task-165-bin-single-click.md
+        estimated_hours: 2
+        actual_hours: null
+        notes: "Infer kind from extension. Click vs drag distinction (5px threshold). Hover-preview unchanged. Spec R42-R43."
+      - id: task-166
+        name: Isolate vocals single-click stem row → setSource (keep inline ▶)
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-20-source-monitor-panel/task-166-isolate-vocals-single-click.md
+        estimated_hours: 1
+        actual_hours: null
+        notes: "Wire stem row click. Inline ▶ STAYS (harmonized with music gen 2026-04-25). Spec R44-R45."
+      - id: task-167
+        name: Timeline video clip right-click → 'Open source in source monitor' via ContextMenuProvider
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-20-source-monitor-panel/task-167-timeline-video-clip-right-click.md
+        estimated_hours: 3
+        actual_hours: null
+        notes: "Resolves via tr.selected → pool_segments.pool_path (NOT through selected_transitions cache). Trim metadata informational only. Disabled when tr.selected null. Spec R46, R53."
+      - id: task-168
+        name: Plugin contributes.sourceMonitorProvider contribution point
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-20-source-monitor-panel/task-168-source-monitor-provider-contribution.md
+        estimated_hours: 4
+        actual_hours: null
+        notes: "Optional plugin manifest field — auto-wires right-click menu via ContextMenuProvider. Default resolver handles pool_segment / transition / audio_clip. Imperative setSource still works without declaration (progressive enhancement). Spec R29-R36."
+
 tasks:
   milestone_1:
     - id: task-1
