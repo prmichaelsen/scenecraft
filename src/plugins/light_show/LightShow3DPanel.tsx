@@ -69,6 +69,9 @@ function rowToDef(row: FixtureRow): FixtureDef {
     label: row.label,
     position: [row.position_x, row.position_y, row.position_z],
     rotation: [row.rotation_x, row.rotation_y, row.rotation_z],
+    dmxUniverse: row.dmx_universe,
+    dmxAddress: row.dmx_address,
+    dmxChannelCount: row.dmx_channel_count,
   }
 }
 
@@ -386,18 +389,11 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   const dmxPatchesRef = useRef<DMXPatch[]>([])
   const [dmxState, setDmxState] = useState<DMXOutputState>('disconnected')
 
-  // Rebuild auto-patch whenever rig changes.
+  // Rebuild auto-patch whenever rig changes. autoPatch now takes the
+  // FixtureDef list directly so it can honor explicit dmxAddress /
+  // dmxUniverse / dmxChannelCount fields and only auto-fill the gaps.
   useEffect(() => {
-    dmxPatchesRef.current = autoPatch(
-      rig.map((f) => ({
-        id: f.id,
-        role: f.role,
-        intensity: 1,
-        color: [1, 1, 1],
-        pan: 0,
-        tilt: 0,
-      })),
-    )
+    dmxPatchesRef.current = autoPatch(rig)
   }, [rig])
 
   const handleDmxToggle = async () => {

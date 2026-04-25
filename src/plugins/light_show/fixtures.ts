@@ -17,6 +17,11 @@ export interface FixtureDef {
   position: [number, number, number]
   /** Base rotation — the fixture's "home" aim before scene animation kicks in. */
   rotation: [number, number, number]
+  // DMX patch — null when unpatched. autoPatch honors non-null values
+  // and fills gaps for null fixtures.
+  dmxUniverse?: number | null
+  dmxAddress?: number | null
+  dmxChannelCount?: number | null
 }
 
 /** 4 moving heads on an upstage truss + 4 RGB wash pars along the downstage front. */

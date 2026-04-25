@@ -23,6 +23,10 @@ export type FixtureRow = {
   rotation_x: number
   rotation_y: number
   rotation_z: number
+  // DMX patch — null when fixture is unpatched (auto-patcher fills gaps).
+  dmx_universe: number | null
+  dmx_address: number | null
+  dmx_channel_count: number | null
 }
 
 export type FixtureUpsert = {
@@ -35,6 +39,10 @@ export type FixtureUpsert = {
   rotation_x?: number
   rotation_y?: number
   rotation_z?: number
+  // Pass null to explicitly clear back to auto-patch; omit to preserve.
+  dmx_universe?: number | null
+  dmx_address?: number | null
+  dmx_channel_count?: number | null
 }
 
 function projectPath(projectName: string) {

@@ -12,25 +12,105 @@
  * Channels per fixture: 6 for moving_head, 4 for par (no pan/tilt).
  */
 
-import type { FixtureState } from './fixtures'
+import type { FixtureDef, FixtureRole, FixtureState } from './fixtures'
 
 const DMX_CHANNELS = 512
 
 export interface DMXPatch {
   fixtureId: string
+  universe: number     // 1-based universe
   startAddress: number // 1-based DMX address
-  channelCount: number // 4 (par) or 6 (moving_head)
+  channelCount: number // 4 (par) / 6 (moving_head) / explicit override
 }
 
-export function autoPatch(fixtures: FixtureState[]): DMXPatch[] {
-  const patches: DMXPatch[] = []
-  let addr = 1
-  for (const f of fixtures) {
-    const count = f.role === 'moving_head' ? 6 : 4
-    if (addr + count - 1 > DMX_CHANNELS) break
-    patches.push({ fixtureId: f.id, startAddress: addr, channelCount: count })
-    addr += count
+function defaultChannelCount(role: FixtureRole): number {
+  return role === 'moving_head' ? 6 : 4
+}
+
+/**
+ * Build a DMX patch list for a rig.
+ *
+ * Two-pass algorithm honoring explicit pins:
+ *   1. Pin pass: fixtures with ``dmxAddress`` set are placed first at their
+ *      requested address. Their channel range is marked occupied so the
+ *      auto-fill pass routes around them.
+ *   2. Auto-fill pass: remaining fixtures get the next available run of
+ *      consecutive addresses starting from 1, skipping any range that
+ *      collides with a pinned fixture.
+ *
+ * Channel count comes from ``dmxChannelCount`` if set, else from the
+ * role default (6 for moving_head, 4 for par). Pass overlap and
+ * out-of-range pins are dropped silently — caller can spot them by
+ * comparing fixture count to patch count.
+ *
+ * Universe defaults to 1 if not specified. The current ``fixturesToDMX``
+ * + EnttecPro output path handles a single universe; multi-universe is
+ * a follow-up and the universe field on patches is forward-compatible
+ * for that.
+ */
+export function autoPatch(fixtures: readonly FixtureDef[]): DMXPatch[] {
+  // Track occupancy per universe so multiple universes don't collide
+  // with each other (and so that auto-fill correctly routes around pins).
+  const occupied = new Map<number, Set<number>>()
+  const reserve = (universe: number, start: number, count: number) => {
+    let set = occupied.get(universe)
+    if (!set) {
+      set = new Set<number>()
+      occupied.set(universe, set)
+    }
+    for (let i = 0; i < count; i++) set.add(start + i)
   }
+  const fits = (universe: number, start: number, count: number): boolean => {
+    if (start < 1 || start + count - 1 > DMX_CHANNELS) return false
+    const set = occupied.get(universe)
+    if (!set) return true
+    for (let i = 0; i < count; i++) {
+      if (set.has(start + i)) return false
+    }
+    return true
+  }
+
+  const patches: DMXPatch[] = []
+
+  // Pass 1: explicit pins.
+  for (const f of fixtures) {
+    if (f.dmxAddress == null) continue
+    const universe = f.dmxUniverse ?? 1
+    const count = f.dmxChannelCount ?? defaultChannelCount(f.role)
+    if (!fits(universe, f.dmxAddress, count)) {
+      // Collision with another pin or out of range — skip; caller can
+      // detect missing patch by comparing fixtures.length to patches.length.
+      continue
+    }
+    patches.push({ fixtureId: f.id, universe, startAddress: f.dmxAddress, channelCount: count })
+    reserve(universe, f.dmxAddress, count)
+  }
+
+  // Pass 2: auto-fill the unpinned fixtures into universe 1, walking
+  // from address 1 forward and skipping over occupied ranges.
+  let cursor = 1
+  for (const f of fixtures) {
+    if (f.dmxAddress != null) continue
+    const universe = 1
+    const count = f.dmxChannelCount ?? defaultChannelCount(f.role)
+    let placed = false
+    // Linear scan for the first range that fits. Cheap for our scale.
+    for (let start = cursor; start + count - 1 <= DMX_CHANNELS; start++) {
+      if (fits(universe, start, count)) {
+        patches.push({ fixtureId: f.id, universe, startAddress: start, channelCount: count })
+        reserve(universe, start, count)
+        cursor = start + count
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      // Universe 1 is full of pins — drop. Multi-universe support would
+      // overflow into universe 2 here.
+      continue
+    }
+  }
+
   return patches
 }
 
