@@ -100,7 +100,7 @@
 
 - **R12**: Clicking play starts playback; `playing` becomes `true`. Clicking pause (or play again while playing) pauses; `playing` becomes `false`.
 - **R13**: `seek(seconds)` updates `currentTime` and the underlying media element. Click/drag on the scrub bar invokes `seek`.
-- **R14**: Timecode is displayed in `M:SS / M:SS` format (e.g., `0:47 / 2:48`). Values are floored for current, rounded for total.
+- **R14**: Timecode is displayed in `M:SS.f / M:SS.f` format with **one decimal place of sub-second precision** (e.g., `0:47.2 / 2:48.3`). Mirrors the existing timeline view's `fmtTimestamp` helper (`Timeline.tsx`) so users see the same precision across surfaces. Seconds are zero-padded when < 10 (e.g., `1:09.4`, not `1:9.4`). Values are NOT rounded — `.toFixed(1)` is the canonical formatter.
 - **R15**: The source-monitor playhead is strictly independent of the program monitor playhead. No cross-wiring, no sync toggle.
 - **R16**: v1 plays at 1x only. No variable-speed controls are rendered.
 
@@ -416,15 +416,17 @@ The core behavior contract — happy path, common bad paths, primary positive an
 - **current-time-updated**: `currentTime ≈ 30`
 - **media-seeked**: the underlying `HTMLAudioElement.currentTime ≈ 30`
 
-#### Test: timecode-format-mss (covers R14)
+#### Test: timecode-format-mss-decimal (covers R14)
 
-**Given**: An audio source with `duration = 167.9` and `currentTime = 47`
+**Given**: An audio source with `duration = 167.9` and `currentTime = 47.25`
 
 **When**: The panel renders
 
 **Then** (assertions):
-- **current-format**: the current-time portion of the timecode is `0:47`
-- **total-format**: the total-time portion is `2:48` (ceil or round — pick one; rounding in this spec → `2:48`)
+- **current-format**: the current-time portion of the timecode is `0:47.2` (one decimal, no rounding-to-integer)
+- **total-format**: the total-time portion is `2:47.9`
+- **zero-pad-under-10**: when `currentTime = 9.4`, the rendered current portion is `0:09.4` (seconds zero-padded when < 10)
+- **mirrors-timeline**: the format string matches `${Math.floor(s/60)}:${(s%60) < 10 ? '0' : ''}${(s%60).toFixed(1)}` (the canonical helper used by `Timeline.tsx`)
 
 #### Test: mark-in-records-current-time (covers R17, R21)
 
