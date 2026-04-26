@@ -237,6 +237,69 @@ function MasterBusSampler({
   return null
 }
 
+/**
+ * Per-frame mic-input sampler. Same envelope + band-edge math as
+ * MasterBusSampler, but reads from a panel-owned AnalyserNode that's
+ * been connected to a getUserMedia({audio: true}) stream. The analyser
+ * ref is null until the user clicks "Mic In" and grants permission;
+ * while null, both level refs bleed to zero on a slow envelope so
+ * scenes that consult mic.* gracefully fade out instead of cliffing.
+ */
+function MicSampler({
+  micAnalyserRef,
+  micLevelRef,
+  micLowLevelRef,
+}: {
+  micAnalyserRef: React.MutableRefObject<AnalyserNode | null>
+  micLevelRef: React.MutableRefObject<number>
+  micLowLevelRef: React.MutableRefObject<number>
+}) {
+  const freqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
+
+  useFrame(() => {
+    const analyser = micAnalyserRef.current
+    if (!analyser) {
+      micLevelRef.current *= 0.9
+      micLowLevelRef.current *= 0.9
+      return
+    }
+    const binCount = analyser.frequencyBinCount
+    if (!freqDataRef.current || freqDataRef.current.length !== binCount) {
+      freqDataRef.current = new Uint8Array(new ArrayBuffer(binCount))
+    }
+    const data = freqDataRef.current
+    analyser.getByteFrequencyData(data)
+
+    let sum = 0
+    for (let i = 0; i < binCount; i++) {
+      const v = data[i] / 255
+      sum += v * v
+    }
+    const rms = Math.sqrt(sum / binCount)
+
+    const sampleRate = analyser.context.sampleRate
+    const binHz = sampleRate / (analyser.fftSize || 2048)
+    const lowBins = Math.max(2, Math.floor(150 / binHz))
+    let lowSum = 0
+    for (let i = 0; i < lowBins; i++) {
+      const v = data[i] / 255
+      lowSum += v * v
+    }
+    const lowRms = Math.sqrt(lowSum / lowBins)
+
+    const apply = (prev: number, target: number) => {
+      const alpha = target > prev ? 0.85 : 0.08
+      return prev + (target - prev) * alpha
+    }
+    micLevelRef.current = apply(micLevelRef.current, rms)
+    micLowLevelRef.current = apply(micLowLevelRef.current, lowRms)
+  })
+
+  return null
+}
+
+type MicState = 'disconnected' | 'connecting' | 'connected' | 'error'
+
 /** Ticks the active scene every frame, writing into the shared state array.
  *  Builds a SceneContext from the playhead + beat refs each frame so
  *  audio-reactive scenes can consult them. After the scene runs, overrides
@@ -253,6 +316,8 @@ function SceneRunner({
   beatsRef,
   masterLevelRef,
   masterLowLevelRef,
+  micLevelRef,
+  micLowLevelRef,
   dmxRef,
   dmxPatchesRef,
   scenesByIdRef,
@@ -272,6 +337,8 @@ function SceneRunner({
   beatsRef: React.MutableRefObject<Beat[]>
   masterLevelRef: React.MutableRefObject<number>
   masterLowLevelRef: React.MutableRefObject<number>
+  micLevelRef: React.MutableRefObject<number>
+  micLowLevelRef: React.MutableRefObject<number>
   dmxRef: React.MutableRefObject<EnttecPro | null>
   dmxPatchesRef: React.MutableRefObject<DMXPatch[]>
   scenesByIdRef: React.MutableRefObject<Map<string, SceneRow>>
@@ -331,6 +398,8 @@ function SceneRunner({
       isPlaying: isPlayingRef.current,
       masterLevel,
       masterLowLevel,
+      micLevel: micLevelRef.current,
+      micLowLevel: micLowLevelRef.current,
     }
 
     timeRef.current += delta
@@ -392,6 +461,16 @@ function SceneRunner({
 }
 
 export function LightShow3DPanel({ projectName }: { projectName?: string } = {}) {
+  // TEMPORARY DIAGNOSTIC — confirm whether the panel is still remounting
+  // after the dmx-ref singleton fix, and whether the Canvas inside it is
+  // recreating its default camera. Remove once camera-reset cause is known.
+  useEffect(() => {
+    console.log('[CAM-DIAG] LightShow3DPanel MOUNTED', { projectName })
+    return () => {
+      console.log('[CAM-DIAG] LightShow3DPanel UNMOUNTED', { projectName })
+    }
+  }, [projectName])
+
 
   const [activeSceneId, setActiveSceneId] = useState<string>(SCENES[0].id)
   // Ref mirror of activeSceneId so SceneRunner's useFrame picks up changes
@@ -448,6 +527,25 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // projects).
   const masterLevelRef = useRef<number>(0)
   const masterLowLevelRef = useRef<number>(0)
+
+  // Mic input — opt-in via the Mic In button. While disconnected, the
+  // analyser ref stays null and MicSampler bleeds the levels to zero.
+  // We hold the MediaStream + AudioContext separately so toggling off
+  // releases the mic permission cleanly (some browsers leave the tab
+  // indicator lit until the stream tracks are stopped).
+  const micLevelRef = useRef<number>(0)
+  const micLowLevelRef = useRef<number>(0)
+  const micAnalyserRef = useRef<AnalyserNode | null>(null)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micCtxRef = useRef<AudioContext | null>(null)
+  const [micState, setMicState] = useState<MicState>('disconnected')
+  const [micSupported, setMicSupported] = useState(false)
+  useEffect(() => {
+    setMicSupported(
+      typeof navigator !== 'undefined' &&
+        !!navigator.mediaDevices?.getUserMedia,
+    )
+  }, [])
 
   // M19 scene editor data. Library scenes (sparse params) + timeline
   // placements + the single live override row. Refs mirror state so the
@@ -533,6 +631,66 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
     })
     setActiveDmx(pro)
     await pro.connect()
+  }
+
+  // Cleanup the mic stream + audio context on unmount. If we don't stop
+  // the MediaStream tracks explicitly, the browser keeps the recording
+  // indicator lit and the mic LED on (Chrome) until the tab closes.
+  useEffect(() => {
+    return () => {
+      micStreamRef.current?.getTracks().forEach((t) => t.stop())
+      micCtxRef.current?.close().catch(() => {})
+      micAnalyserRef.current = null
+      micStreamRef.current = null
+      micCtxRef.current = null
+    }
+  }, [])
+
+  const handleMicToggle = async () => {
+    if (micState === 'connecting') return
+    // Toggle off: stop tracks, close context, clear refs.
+    if (micState === 'connected') {
+      micStreamRef.current?.getTracks().forEach((t) => t.stop())
+      try { await micCtxRef.current?.close() } catch { /* ignore */ }
+      micAnalyserRef.current = null
+      micStreamRef.current = null
+      micCtxRef.current = null
+      setMicState('disconnected')
+      return
+    }
+    // Toggle on: request permission, build the analyser graph.
+    setMicState('connecting')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          // Disable browser DSP so scenes get the raw signal — these
+          // defaults aim at speech intelligibility and squash the
+          // dynamic range we actually want for music reactivity.
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      })
+      const Ctor =
+        window.AudioContext ||
+        (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!Ctor) throw new Error('AudioContext unavailable')
+      const ctx = new Ctor()
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 2048
+      analyser.smoothingTimeConstant = 0.0  // we own the envelope
+      source.connect(analyser)
+      // NOTE: do not connect analyser to ctx.destination — we only sample
+      // the signal, never play it back (would create acoustic feedback).
+      micCtxRef.current = ctx
+      micStreamRef.current = stream
+      micAnalyserRef.current = analyser
+      setMicState('connected')
+    } catch (err) {
+      console.warn('[mic] connect failed:', err)
+      setMicState('error')
+    }
   }
 
   // Beats come from scenecraft's audio intel loaded at editor mount.
@@ -681,6 +839,36 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
         >
           <HelpCircle size={14} />
         </button>
+        <button
+          onClick={handleMicToggle}
+          disabled={!micSupported || micState === 'connecting'}
+          title={
+            micSupported
+              ? micState === 'connected'
+                ? 'Stop mic input — releases the browser mic permission for this tab'
+                : 'Use the microphone as a binding source. Scenes can read mic.level / mic.low_level. Captures whatever the room hears (including speaker output of the master bus).'
+              : 'getUserMedia unavailable — needs a modern browser on HTTPS or localhost'
+          }
+          className={`ml-2 px-2 py-0.5 text-xs rounded border ${
+            !micSupported
+              ? 'bg-gray-900 border-gray-700 text-gray-600 cursor-not-allowed'
+              : micState === 'connected'
+                ? 'bg-green-900 border-green-600 text-green-300'
+                : micState === 'connecting'
+                  ? 'bg-yellow-900 border-yellow-600 text-yellow-300'
+                  : micState === 'error'
+                    ? 'bg-red-900 border-red-600 text-red-300'
+                    : 'bg-gray-800 border-gray-600 text-gray-300 hover:border-purple-500'
+          }`}
+        >
+          {micState === 'connected'
+            ? 'Mic: ON'
+            : micState === 'connecting'
+              ? 'Mic...'
+              : micState === 'error'
+                ? 'Mic: error'
+                : 'Mic In'}
+        </button>
         <span className="ml-auto text-[10px] text-gray-600">
           {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'}
           {screens.length > 0 ? ` · ${screens.length} screen${screens.length === 1 ? '' : 's'}` : ''}
@@ -701,6 +889,9 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
           frameloop="always"
           camera={{ position: [0, 3, -8], fov: 50 }}
           shadows={false}
+          onCreated={(state) => {
+            console.log('[CAM-DIAG] Canvas onCreated — fresh camera at', state.camera.position.toArray())
+          }}
         >
           <color attach="background" args={['#050510']} />
           {/* Lighting for the fixture bodies (NOT the beams — beams are their
@@ -726,6 +917,11 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             masterLevelRef={masterLevelRef}
             masterLowLevelRef={masterLowLevelRef}
           />
+          <MicSampler
+            micAnalyserRef={micAnalyserRef}
+            micLevelRef={micLevelRef}
+            micLowLevelRef={micLowLevelRef}
+          />
           <SceneRunner
             activeSceneIdRef={activeSceneIdRef}
             stateRef={stateRef}
@@ -737,6 +933,8 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             beatsRef={beatsRef}
             masterLevelRef={masterLevelRef}
             masterLowLevelRef={masterLowLevelRef}
+            micLevelRef={micLevelRef}
+            micLowLevelRef={micLowLevelRef}
             dmxRef={dmxRef}
             dmxPatchesRef={dmxPatchesRef}
             scenesByIdRef={scenesByIdRef}

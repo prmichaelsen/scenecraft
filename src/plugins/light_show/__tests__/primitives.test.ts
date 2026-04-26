@@ -69,6 +69,8 @@ const ctx: SceneContext = {
   isPlaying: false,
   masterLevel: 0,
   masterLowLevel: 0,
+  micLevel: 0,
+  micLowLevel: 0,
 }
 
 function mkStates(): FixtureState[] {

@@ -58,6 +58,8 @@ export function isBinding(v: unknown): v is Binding {
 const SOURCES: Record<string, (ctx: SceneContext) => number> = {
   'master.level':     (c) => c.masterLevel,
   'master.low_level': (c) => c.masterLowLevel,
+  'mic.level':        (c) => c.micLevel,
+  'mic.low_level':    (c) => c.micLowLevel,
   'beat.age':         (c) => (c.beatAge === Infinity ? 0 : c.beatAge),
   'beat.intensity':   (c) => c.lastBeatIntensity,
   'beat.index':       (c) => c.beatIndex,

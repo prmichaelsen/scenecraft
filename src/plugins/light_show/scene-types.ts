@@ -32,6 +32,14 @@ export interface SceneContext {
    *  0..1. Same envelope as masterLevel. Kicks / bass hits dominate this
    *  band, so it's the natural signal for "kick pulse" scenes. */
   masterLowLevel: number
+  /** Smoothed RMS of the user's mic input, 0..1. Same envelope as
+   *  masterLevel. 0 when the mic is disconnected or permission is denied.
+   *  Useful for live performance — lights react to whatever the room is
+   *  hearing (which may include speaker output of the master bus). */
+  micLevel: number
+  /** Smoothed low-band energy of the mic input, 0..1. Same band-edge as
+   *  masterLowLevel. */
+  micLowLevel: number
 }
 
 export interface SceneDef {

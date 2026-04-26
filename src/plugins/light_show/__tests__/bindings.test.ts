@@ -26,6 +26,8 @@ const baseCtx: SceneContext = {
   isPlaying: false,
   masterLevel: 0,
   masterLowLevel: 0,
+  micLevel: 0,
+  micLowLevel: 0,
 }
 
 describe('isBinding', () => {
@@ -170,6 +172,8 @@ describe('listBindingSources', () => {
     for (const s of [
       'master.level',
       'master.low_level',
+      'mic.level',
+      'mic.low_level',
       'beat.age',
       'beat.intensity',
       'beat.index',
@@ -178,5 +182,23 @@ describe('listBindingSources', () => {
     ]) {
       expect(sources).toContain(s)
     }
+  })
+})
+
+describe('mic.* sources', () => {
+  it('mic.level reads SceneContext.micLevel', () => {
+    const ctx = { ...baseCtx, micLevel: 0.42 }
+    expect(resolveBinding({ source: 'mic.level' }, ctx)).toBeCloseTo(0.42, 6)
+  })
+
+  it('mic.low_level reads SceneContext.micLowLevel', () => {
+    const ctx = { ...baseCtx, micLowLevel: 0.81 }
+    expect(resolveBinding({ source: 'mic.low_level' }, ctx)).toBeCloseTo(0.81, 6)
+  })
+
+  it('mic and master are independent', () => {
+    const ctx = { ...baseCtx, masterLevel: 0.3, micLevel: 0.9 }
+    expect(resolveBinding({ source: 'master.level' }, ctx)).toBeCloseTo(0.3, 6)
+    expect(resolveBinding({ source: 'mic.level' }, ctx)).toBeCloseTo(0.9, 6)
   })
 })
