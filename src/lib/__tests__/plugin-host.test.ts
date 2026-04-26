@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import type { ComponentType } from 'react'
 import type { PluginModule } from '../plugin-host'
 import { PluginHost } from '../plugin-host'
+
+// Trivial renderer for track-type tests — we identify by reference, never mount.
+const NoopRenderer: ComponentType<unknown> = () => null
 
 // The PluginHost singleton is process-global, so each test must start from a
 // clean slate to avoid cross-pollution.
@@ -256,6 +260,57 @@ describe('PluginHost.listOperations', () => {
     expect(video).toEqual(['b', 'c'])
 
     expect(PluginHost.listOperations('pool_segment')).toEqual([])
+  })
+})
+
+describe('PluginHost.registerTrackType', () => {
+  it('registers + lists by sortHint + retrieves by id', () => {
+    const A = { id: 'a', label: 'A', Renderer: NoopRenderer as never, sortHint: 20 }
+    const B = { id: 'b', label: 'B', Renderer: NoopRenderer as never, sortHint: 10 }
+    PluginHost.registerTrackType(A)
+    PluginHost.registerTrackType(B)
+    // Sorted by sortHint ascending — B before A
+    expect(PluginHost.listTrackTypes().map((t) => t.id)).toEqual(['b', 'a'])
+    expect(PluginHost.getTrackType('a')).toBe(A)
+    expect(PluginHost.getTrackType('missing')).toBeUndefined()
+  })
+
+  it('rejects duplicate ids', () => {
+    PluginHost.registerTrackType({ id: 'a', label: 'A', Renderer: NoopRenderer as never })
+    expect(() =>
+      PluginHost.registerTrackType({ id: 'a', label: 'A2', Renderer: NoopRenderer as never }),
+    ).toThrow(/duplicate track type id/)
+  })
+
+  it('dispose removes the registration', async () => {
+    const d = PluginHost.registerTrackType({ id: 'a', label: 'A', Renderer: NoopRenderer as never })
+    expect(PluginHost.listTrackTypes()).toHaveLength(1)
+    await d.dispose()
+    expect(PluginHost.listTrackTypes()).toHaveLength(0)
+  })
+
+  it('subscribers fire on register and dispose', async () => {
+    let fires = 0
+    const unsub = PluginHost.subscribeTrackTypes(() => { fires += 1 })
+    const d = PluginHost.registerTrackType({ id: 'a', label: 'A', Renderer: NoopRenderer as never })
+    expect(fires).toBe(1)
+    await d.dispose()
+    expect(fires).toBe(2)
+    unsub()
+    PluginHost.registerTrackType({ id: 'b', label: 'B', Renderer: NoopRenderer as never })
+    expect(fires).toBe(2)  // unsubscribed
+  })
+
+  it('plugin-context auto-disposes on plugin deactivation', async () => {
+    const plugin: PluginModule = {
+      activate: (host, ctx) => {
+        host.registerTrackType({ id: 'plug', label: 'Plug', Renderer: NoopRenderer as never }, ctx)
+      },
+    }
+    PluginHost.register(plugin, 'plug')
+    expect(PluginHost.listTrackTypes()).toHaveLength(1)
+    await PluginHost.deactivate('plug')
+    expect(PluginHost.listTrackTypes()).toHaveLength(0)
   })
 })
 

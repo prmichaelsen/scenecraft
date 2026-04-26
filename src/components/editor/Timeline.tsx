@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo, useSyncExternalStore } from 'react'
+import { PluginHost } from '@/lib/plugin-host'
 import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
@@ -3109,6 +3110,23 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               onMouseDown={handleAudioDividerDown}
             />
 
+            {/* Plugin-contributed track lanes (M17 contribution point).
+                Each registered TrackTypeContribution gets its own row,
+                ordered by sortHint. The renderer is a plugin-supplied
+                React component that fetches its own data and paints
+                onto a track-shaped <div>. We don't refactor the existing
+                video/audio/transition/rules rows through this registry yet
+                — they stay hardcoded above for visual parity. Plugin
+                lanes render after the audio block so they appear in the
+                bottom half of the timeline. */}
+            <PluginTrackLanes
+              pxPerSec={pxPerSec}
+              scrollLeft={scrollLeft}
+              viewportWidth={viewportWidth}
+              currentTime={currentTime}
+              projectName={data.projectName}
+            />
+
             {/* Rules track */}
             {aiAudioRules.length > 0 && (
               <div className="relative shrink-0 border-t border-gray-800">
@@ -4267,3 +4285,61 @@ const TimeDisplay = memo(function TimeDisplay({ currentTime, duration, onSeek }:
     </div>
   )
 })
+
+/**
+ * Iterates ``PluginHost.listTrackTypes()`` and renders each registered
+ * track type as a separate row. Each row is shaped like the existing
+ * Rules / Audio rows (relative shrink-0, top border) so visual rhythm
+ * is consistent. Plugin renderers receive the timeline geometry plus
+ * project context and own everything inside their lane.
+ *
+ * Subscribed via ``useSyncExternalStore`` so register / dispose calls
+ * (HMR reloads, dynamic plugin add/remove) re-render the timeline
+ * immediately. SSR snapshot returns an empty array — plugins register
+ * client-side at editor mount, post-hydration.
+ */
+function PluginTrackLanes({
+  pxPerSec,
+  scrollLeft,
+  viewportWidth,
+  currentTime,
+  projectName,
+}: {
+  pxPerSec: number
+  scrollLeft: number
+  viewportWidth: number
+  currentTime: number
+  projectName: string
+}) {
+  const trackTypes = useSyncExternalStore(
+    (cb) => PluginHost.subscribeTrackTypes(cb),
+    () => PluginHost.listTrackTypes(),
+    () => [],
+  )
+  if (trackTypes.length === 0) return null
+  return (
+    <>
+      {trackTypes.map((tt) => {
+        const Renderer = tt.Renderer
+        return (
+          <div
+            key={tt.id}
+            className="relative shrink-0 border-t border-gray-800"
+            style={{ height: tt.defaultHeight ?? 48 }}
+          >
+            <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
+              {tt.label}
+            </div>
+            <Renderer
+              pxPerSec={pxPerSec}
+              scrollLeft={scrollLeft}
+              viewportWidth={viewportWidth}
+              currentTime={currentTime}
+              projectName={projectName}
+            />
+          </div>
+        )
+      })}
+    </>
+  )
+}
