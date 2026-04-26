@@ -490,7 +490,14 @@ function SceneRunner({
 
     if (tickRef.current % 15 === 0 && diagDomRef.current) {
       const overrideCount = overridesRef.current.size
-      const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
+      // When a scene is driving, pins are masked (don't affect output).
+      // Show that explicitly so it's obvious why a pin "isn't working."
+      const layerForOverrides = activeLayerRef.current.activeLayer
+      const overridesMasked =
+        overrideCount > 0 && (layerForOverrides === 'live' || layerForOverrides === 'timeline')
+      const overrideLabel = overrideCount > 0
+        ? ` · ${overrideCount} pin${overrideCount === 1 ? '' : 's'}${overridesMasked ? ' (masked)' : ''}`
+        : ''
       const beatLabel = usePrecomputed
         ? ` · beat ${beatIndex}/${beats.length}`
         : ` · live-beat ${beatIndex} (i=${lastBeatIntensity.toFixed(2)}, flux=${Math.max(masterLowFluxRef.current, micLowFluxRef.current).toFixed(3)} bl=${fluxBaselineRef.current.toFixed(3)})`
@@ -566,16 +573,25 @@ function SceneRunner({
       fallbackSceneDef.apply(timeRef.current, stateRef.current, context)
       activeLayerRef.current = { activeLayer: 'fallback', label: fallbackSceneDef.label }
     }
-    // Apply overrides after scene — they win per-channel until cleared.
-    const overrides = overridesRef.current
-    if (overrides.size > 0) {
-      for (const s of stateRef.current) {
-        const o = overrides.get(s.id)
-        if (!o) continue
-        if (o.intensity !== undefined) s.intensity = o.intensity
-        if (o.color !== undefined) s.color = [o.color[0], o.color[1], o.color[2]]
-        if (o.pan !== undefined) s.pan = o.pan
-        if (o.tilt !== undefined) s.tilt = o.tilt
+    // Pinned overrides are a fallback layer, not a stomp. Precedence:
+    //   live override > timeline placement > pins > fallback scene
+    // When a live or timeline scene is driving, pins step aside so the
+    // scene can express itself. When nothing is driving (fallback or none),
+    // pins apply on top of the fallback so "hold fixture_1 at red" still
+    // works as a manual maintenance / debugging tool.
+    const layer = activeLayerRef.current.activeLayer
+    const sceneActive = layer === 'live' || layer === 'timeline'
+    if (!sceneActive) {
+      const overrides = overridesRef.current
+      if (overrides.size > 0) {
+        for (const s of stateRef.current) {
+          const o = overrides.get(s.id)
+          if (!o) continue
+          if (o.intensity !== undefined) s.intensity = o.intensity
+          if (o.color !== undefined) s.color = [o.color[0], o.color[1], o.color[2]]
+          if (o.pan !== undefined) s.pan = o.pan
+          if (o.tilt !== undefined) s.tilt = o.tilt
+        }
       }
     }
 
