@@ -16,7 +16,7 @@
  * panel layout) gets a real SQL + DSL-backed replacement in M17 proper.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
@@ -26,7 +26,7 @@ import { Modal } from '@/components/ui/Modal'
 
 import { useCurrentTime, usePlaybackState } from '@/components/editor/CurrentTimeContext'
 import { useEditorData } from '@/components/editor/EditorDataContext'
-import { subscribePluginEvent } from '@/hooks/useScenecraftSocket'
+import { subscribePluginEvent, useScenecraftSocket } from '@/hooks/useScenecraftSocket'
 import { getActiveAudioMixer } from '@/lib/audio-mixer-ref'
 
 import { RIG, type FixtureDef, type FixtureState, type FixtureRole } from './fixtures'
@@ -38,12 +38,20 @@ import {
   fetchFixtures,
   fetchOverrides,
   fetchScreens,
+  fetchScenes,
+  fetchPlacements,
+  fetchLiveOverride,
   type FixtureRow,
   type Override,
   type ScreenRow,
+  type SceneRow,
+  type PlacementRow,
+  type LiveOverrideRow,
 } from './light-show-client'
 import { EnttecPro, type DMXOutputState } from './enttec-pro'
 import { autoPatch, fixturesToDMX, type DMXPatch } from './dmx-mapper'
+import { ensureCatalogLoaded } from './primitives'
+import { evaluateLayeredScene, type EvaluatorResult } from './scene-evaluator'
 
 /** Invisible component whose only job is to subscribe to the 20Hz playhead
  *  context and write it into a ref. Re-renders happen here (leaf, no DOM),
@@ -240,6 +248,12 @@ function SceneRunner({
   masterLowLevelRef,
   dmxRef,
   dmxPatchesRef,
+  scenesByIdRef,
+  placementsRef,
+  liveOverrideRef,
+  catalogReadyRef,
+  activeLayerRef,
+  projectName,
 }: {
   activeSceneIdRef: React.MutableRefObject<string>
   stateRef: React.MutableRefObject<FixtureState[]>
@@ -253,6 +267,12 @@ function SceneRunner({
   masterLowLevelRef: React.MutableRefObject<number>
   dmxRef: React.MutableRefObject<EnttecPro | null>
   dmxPatchesRef: React.MutableRefObject<DMXPatch[]>
+  scenesByIdRef: React.MutableRefObject<Map<string, SceneRow>>
+  placementsRef: React.MutableRefObject<readonly PlacementRow[]>
+  liveOverrideRef: React.MutableRefObject<LiveOverrideRow>
+  catalogReadyRef: React.MutableRefObject<boolean>
+  activeLayerRef: React.MutableRefObject<EvaluatorResult>
+  projectName: string | undefined
 }) {
   const tickRef = useRef(0)
   // Bookkeeping for beat tracking: which beat was the most recent fired,
@@ -287,7 +307,13 @@ function SceneRunner({
       const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
       const beatLabel = beats.length > 0 ? ` · beat ${beatIndex}/${beats.length}` : ''
       const levelLabel = ` · L ${masterLevel.toFixed(2)} / Lo ${masterLowLevel.toFixed(2)}`
-      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${beatLabel}${levelLabel}${overrideLabel}`
+      const layer = activeLayerRef.current
+      const layerLabel =
+        layer.activeLayer === 'live'     ? ` · LIVE: ${layer.label ?? ''}` :
+        layer.activeLayer === 'timeline' ? ` · TIMELINE: ${layer.label ?? ''}` :
+        layer.activeLayer === 'fallback' ? ` · FALLBACK: ${layer.label ?? ''}` :
+        ` · IDLE`
+      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${layerLabel}${beatLabel}${levelLabel}${overrideLabel}`
     }
 
     const context: SceneContext = {
@@ -300,10 +326,39 @@ function SceneRunner({
       masterLowLevel,
     }
 
-    const scene = getScene(activeSceneIdRef.current)
-    if (scene) {
-      timeRef.current += delta
-      scene.apply(timeRef.current, stateRef.current, context)
+    timeRef.current += delta
+
+    // M19: layered evaluator runs the scene editor stack (live override >
+    // timeline placement > fallback). Falls back to the dropdown-picked
+    // scene when no live or placement is active (R41 transitional). The
+    // evaluator only runs once the catalog has loaded — until then, skip
+    // to keep state clean (no visual flash from incomplete params).
+    const fallbackSceneDef = getScene(activeSceneIdRef.current)
+    const fallback = fallbackSceneDef
+      ? {
+          id: fallbackSceneDef.id,
+          label: fallbackSceneDef.label,
+          apply: (t: number, states: FixtureState[], ctx: SceneContext) =>
+            fallbackSceneDef.apply(t, states, ctx),
+        }
+      : null
+    if (catalogReadyRef.current && projectName) {
+      activeLayerRef.current = evaluateLayeredScene({
+        playheadTime,
+        wallClockMs: Date.now(),
+        scenesById: scenesByIdRef.current,
+        placements: placementsRef.current,
+        liveOverride: liveOverrideRef.current,
+        states: stateRef.current,
+        context,
+        fallbackScene: fallback,
+        projectName,
+      })
+    } else if (fallbackSceneDef) {
+      // Catalog not ready yet — run the dropdown scene directly (the
+      // pre-M19 path). Keeps the panel usable immediately on mount.
+      fallbackSceneDef.apply(timeRef.current, stateRef.current, context)
+      activeLayerRef.current = { activeLayer: 'fallback', label: fallbackSceneDef.label }
     }
     // Apply overrides after scene — they win per-channel until cleared.
     const overrides = overridesRef.current
@@ -386,6 +441,26 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   const masterLevelRef = useRef<number>(0)
   const masterLowLevelRef = useRef<number>(0)
 
+  // M19 scene editor data. Library scenes (sparse params) + timeline
+  // placements + the single live override row. Refs mirror state so the
+  // per-frame evaluator reads without depending on React render timing.
+  const [scenes, setScenes] = useState<SceneRow[]>([])
+  const [placements, setPlacements] = useState<readonly PlacementRow[]>([])
+  const [liveOverride, setLiveOverride] = useState<LiveOverrideRow>({ active: false })
+  const scenesById = useMemo(() => new Map(scenes.map((s) => [s.id, s])), [scenes])
+  const scenesByIdRef = useRef<Map<string, SceneRow>>(scenesById)
+  const placementsRef = useRef<readonly PlacementRow[]>(placements)
+  const liveOverrideRef = useRef<LiveOverrideRow>(liveOverride)
+  useEffect(() => { scenesByIdRef.current = scenesById }, [scenesById])
+  useEffect(() => { placementsRef.current = placements }, [placements])
+  useEffect(() => { liveOverrideRef.current = liveOverride }, [liveOverride])
+  // Catalog readiness gates the layered evaluator path. While false, the
+  // panel runs the pre-M19 dropdown scene directly so nothing flashes blank.
+  const catalogReadyRef = useRef<boolean>(false)
+  // Latest evaluator result — the diag bar reads .label/.activeLayer to
+  // surface what's actually playing right now (LIVE / TIMELINE / FALLBACK).
+  const activeLayerRef = useRef<EvaluatorResult>({ activeLayer: 'none' })
+
   // WebSerial DMX output — ENTTEC DMX USB Pro.
   const dmxRef = useRef<EnttecPro | null>(null)
   const dmxPatchesRef = useRef<DMXPatch[]>([])
@@ -432,19 +507,45 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
     beatsRef.current = (editorData.beats ?? []) as Beat[]
   }, [editorData.beats])
 
-  // Fetch fixtures + overrides from backend. Runs on mount, on WS
-  // 'light_show__changed' events, and on a 2s fallback poll (WS-less
-  // deployments / reconnect windows).
+  // Load primitive catalog once per project. Until this resolves, the
+  // evaluator is off and the dropdown scene runs directly (R49 — graceful
+  // fallback while the catalog is in-flight).
+  useEffect(() => {
+    if (!projectName) return
+    let cancelled = false
+    catalogReadyRef.current = false
+    ensureCatalogLoaded(projectName)
+      .then(() => {
+        if (!cancelled) catalogReadyRef.current = true
+      })
+      .catch((e) => {
+        console.warn('[light_show] failed to load primitive catalog:', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectName])
+
+  // Fetch fixtures + overrides + scenes + placements + live override from
+  // backend. Runs on mount, on WS 'light_show__changed' events, on a 2s
+  // fallback poll (WS-less deployments / reconnect windows), and on socket
+  // reconnect (R49 — refetch when WS comes back so we don't show stale rows
+  // through the gap).
+  const { connected: socketConnected } = useScenecraftSocket()
   useEffect(() => {
     if (!projectName) return
     let cancelled = false
     const tick = async () => {
       try {
-        const [rows, overrides, screenRows] = await Promise.all([
-          fetchFixtures(projectName),
-          fetchOverrides(projectName),
-          fetchScreens(projectName),
-        ])
+        const [rows, overrides, screenRows, sceneRows, placementRows, live] =
+          await Promise.all([
+            fetchFixtures(projectName),
+            fetchOverrides(projectName),
+            fetchScreens(projectName),
+            fetchScenes(projectName),
+            fetchPlacements(projectName),
+            fetchLiveOverride(projectName),
+          ])
         if (cancelled) return
         setFetchError(null)
 
@@ -471,6 +572,11 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
 
         // Screens — straight list; Screen components own per-fixture state.
         setScreens(screenRows)
+
+        // M19 scene editor data — refs are updated via the mirror-effects.
+        setScenes(sceneRows.scenes)
+        setPlacements(placementRows.placements)
+        setLiveOverride(live)
       } catch (e) {
         if (cancelled) return
         setFetchError((e as Error).message)
@@ -486,7 +592,7 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
       clearInterval(h)
       unsub()
     }
-  }, [projectName])
+  }, [projectName, socketConnected])
 
   const onPickScene = (id: string) => {
     timeRef.current = 0
@@ -597,6 +703,12 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             masterLowLevelRef={masterLowLevelRef}
             dmxRef={dmxRef}
             dmxPatchesRef={dmxPatchesRef}
+            scenesByIdRef={scenesByIdRef}
+            placementsRef={placementsRef}
+            liveOverrideRef={liveOverrideRef}
+            catalogReadyRef={catalogReadyRef}
+            activeLayerRef={activeLayerRef}
+            projectName={projectName}
           />
           {rig.map((def) => (
             <Fixture key={def.id} def={def} stateRef={stateRef} />
