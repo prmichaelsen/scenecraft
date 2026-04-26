@@ -1,4 +1,4 @@
-import { Component, useRef, useCallback, useEffect, forwardRef, useImperativeHandle, useState, type ErrorInfo, type ReactNode } from 'react'
+import { Component, useRef, useCallback, useEffect, useMemo, forwardRef, useImperativeHandle, useState, type ErrorInfo, type ReactNode } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData } from '@/routes/project/$name/editor'
 import { PanelLayout, validateLayout, type LayoutNode, type PanelRegistry, type PanelLayoutHandle } from '@/components/panel-layout'
@@ -275,8 +275,30 @@ class PluginPanelErrorBoundary extends Component<PluginPanelBoundaryProps, Plugi
 // Wrapped in a per-panel error boundary so plugin renders that throw don't
 // trigger the outer LayoutErrorBoundary's workspace reset — the user just
 // sees a "panel crashed" tile inline and other panels stay alive.
-function makePluginPanelComponent(panelId: string) {
-  return function PluginPanelComponent() {
+// Cache plugin panel component definitions by id. Without this, each call
+// to makePluginPanelComponent would return a fresh function literal, and
+// each call to buildPanelRegistry would yield a registry whose plugin
+// panel components have a different identity every time — which React
+// treats as a different component type → unmount + remount on every
+// parent re-render.
+//
+// The remount cycle was producing real bugs: long-lived state inside plugin
+// panels (WebSerial DMX connections, OrbitControls camera position, scene
+// selection, override count badges, etc.) reset on every audio-mixer
+// rebuild that cascaded into a parent re-render of the editor.
+//
+// Two layers of stability protect against this now:
+//   1. The cache below ensures every makePluginPanelComponent(id) call
+//      returns the SAME function reference for a given id.
+//   2. The caller useMemos buildPanelRegistry() so the outer registry
+//      object identity is also stable across re-renders.
+const PLUGIN_PANEL_COMPONENT_CACHE = new Map<string, React.ComponentType>()
+
+function makePluginPanelComponent(panelId: string): React.ComponentType {
+  const cached = PLUGIN_PANEL_COMPONENT_CACHE.get(panelId)
+  if (cached) return cached
+
+  function PluginPanelComponent() {
     const data = useEditorData()
     const { selectedAudioClipId } = useEditorState()
     const panel = PluginHost.getPanel(panelId)
@@ -309,6 +331,9 @@ function makePluginPanelComponent(panelId: string) {
       </PluginPanelErrorBoundary>
     )
   }
+  PluginPanelComponent.displayName = `PluginPanel(${panelId})`
+  PLUGIN_PANEL_COMPONENT_CACHE.set(panelId, PluginPanelComponent)
+  return PluginPanelComponent
 }
 
 // Auto-focus the Properties tab when anything becomes selected (kf / tr / track / audio).
@@ -456,6 +481,20 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
     },
   }), [data.projectName])
 
+  // Panel registry — built once on mount. Plugin panel components are
+  // additionally cached by id inside makePluginPanelComponent so both the
+  // registry object identity AND each plugin panel's component reference
+  // stay stable across parent re-renders. That stability is what prevents
+  // PanelLayout from unmount-remounting plugin panels on every parent
+  // re-render (e.g., audio-mixer rebuilds in Timeline).
+  //
+  // Trade-off: HMR-added plugins won't appear without a page reload. In
+  // practice plugins register at activation time (editor mount), so this
+  // is not a problem. If runtime plugin install becomes a feature, switch
+  // to a key derived from PluginHost.listPanels().length or a registration
+  // event subscription.
+  const panelRegistry = useMemo(() => buildPanelRegistry(), [])
+
   const handleLayoutChange = useCallback((layout: LayoutNode) => {
     layoutRef.current = layout
     // Debounced auto-save
@@ -491,7 +530,7 @@ export const EditorPanelLayout = forwardRef<EditorPanelLayoutHandle, EditorPanel
       <PanelLayout
         ref={panelLayoutRef}
         key={JSON.stringify(initialLayout)}
-        panels={buildPanelRegistry()}
+        panels={panelRegistry}
         defaultLayout={initialLayout}
         onLayoutChange={handleLayoutChange}
       />

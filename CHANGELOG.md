@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.25.3] - 2026-04-26
+
+### Fixed
+- **Plugin panels remounted on every parent re-render, wiping panel-local state.** `EditorPanelLayout` called `buildPanelRegistry()` fresh on every render and `makePluginPanelComponent(panelId)` returned a new function literal each call, so every plugin panel had a different component identity every render. React (correctly) treated each as a different component type and ran a full unmount-remount cycle — wiping panel-local state across the board: WebSerial DMX connections, OrbitControls camera position, active scene selection, override count badge, DMX help modal state, etc. The trigger most often observed was Timeline's audio mixer rebuilding when project tracks changed, which cascaded into a parent re-render of the editor. Two layers of stability now protect against this:
+  1. **`PLUGIN_PANEL_COMPONENT_CACHE`** in `EditorPanelLayout.tsx` — every `makePluginPanelComponent(id)` call returns the same function reference for a given id, regardless of how many times it's called.
+  2. **`useMemo`** wrapping `buildPanelRegistry()` so the outer registry object identity is also stable across re-renders.
+  Side benefit: the same fix also keeps the DMX singleton's value visible — the `dmx-ref.ts` singleton from `0.25.2` was paper-over-the-symptom, but is now structural defense-in-depth (the connection survives panel remounts AND any future remount triggers we haven't found yet).
+
+### Notes
+- HMR-added plugins won't appear without a page reload, since the registry is now memoized once on mount. In practice plugins register at activation (editor mount) and this isn't observable. If runtime plugin install becomes a feature, switch the memo's deps to a registration counter or event subscription.
+
 ## [0.25.2] - 2026-04-26
 
 ### Fixed

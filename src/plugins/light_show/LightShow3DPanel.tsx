@@ -537,17 +537,6 @@ function SceneRunner({
 }
 
 export function LightShow3DPanel({ projectName }: { projectName?: string } = {}) {
-  // TEMPORARY DIAGNOSTIC — confirm whether the panel is still remounting
-  // after the dmx-ref singleton fix, and whether the Canvas inside it is
-  // recreating its default camera. Remove once camera-reset cause is known.
-  useEffect(() => {
-    console.log('[CAM-DIAG] LightShow3DPanel MOUNTED', { projectName })
-    return () => {
-      console.log('[CAM-DIAG] LightShow3DPanel UNMOUNTED', { projectName })
-    }
-  }, [projectName])
-
-
   const [activeSceneId, setActiveSceneId] = useState<string>(SCENES[0].id)
   // Ref mirror of activeSceneId so SceneRunner's useFrame picks up changes
   // without needing to re-subscribe (avoids tearing down the tick).
@@ -965,9 +954,6 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
           frameloop="always"
           camera={{ position: [0, 3, -8], fov: 50 }}
           shadows={false}
-          onCreated={(state) => {
-            console.log('[CAM-DIAG] Canvas onCreated — fresh camera at', state.camera.position.toArray())
-          }}
         >
           <color attach="background" args={['#050510']} />
           {/* Lighting for the fixture bodies (NOT the beams — beams are their
