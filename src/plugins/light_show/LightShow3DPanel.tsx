@@ -176,11 +176,18 @@ export type Beat = { time: number; intensity: number }
 function MasterBusSampler({
   masterLevelRef,
   masterLowLevelRef,
+  masterLowFluxRef,
 }: {
   masterLevelRef: React.MutableRefObject<number>
   masterLowLevelRef: React.MutableRefObject<number>
+  masterLowFluxRef: React.MutableRefObject<number>
 }) {
   const freqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
+  // Previous frame's spectrum, kept for spectral-flux onset detection.
+  // Spectral flux is the rectified frame-to-frame change in low-band bins;
+  // unlike a smoothed level it spikes per kick even when steady-state
+  // energy is high, which is exactly what onset detection needs.
+  const prevSpecRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
 
   useFrame(() => {
     const mixer = getActiveAudioMixer()
@@ -189,6 +196,7 @@ function MasterBusSampler({
       // No audio playing / mixer disposed — bleed the envelope to zero.
       masterLevelRef.current *= 0.9
       masterLowLevelRef.current *= 0.9
+      masterLowFluxRef.current *= 0.5  // flux is already a derivative; bleed faster
       return
     }
     const analyser = pair.left
@@ -224,14 +232,35 @@ function MasterBusSampler({
     }
     const lowRms = Math.sqrt(lowSum / lowBins)
 
+    // Spectral flux (rectified) on the kick band. Sum positive bin-to-bin
+    // deltas vs last frame, normalize by lowBins * 255 → 0..1 range.
+    let prev = prevSpecRef.current
+    let flux = 0
+    if (prev && prev.length === binCount) {
+      for (let i = 0; i < lowBins; i++) {
+        const d = data[i] - prev[i]
+        if (d > 0) flux += d
+      }
+      flux /= lowBins * 255
+    }
+    if (!prev || prev.length !== binCount) {
+      prev = new Uint8Array(new ArrayBuffer(binCount))
+      prevSpecRef.current = prev
+    }
+    prev.set(data)
+
     // Asymmetric envelope: fast attack, slow release. Per-frame coefficients
     // at 60fps — attack 8ms (α≈0.85), release 180ms (α≈0.08).
-    const apply = (prev: number, target: number) => {
-      const alpha = target > prev ? 0.85 : 0.08
-      return prev + (target - prev) * alpha
+    const apply = (prevVal: number, target: number) => {
+      const alpha = target > prevVal ? 0.85 : 0.08
+      return prevVal + (target - prevVal) * alpha
     }
     masterLevelRef.current = apply(masterLevelRef.current, rms)
     masterLowLevelRef.current = apply(masterLowLevelRef.current, lowRms)
+    // Flux exposed unsmoothed — it's already a derivative; smoothing it
+    // would defeat the purpose. Onset detection in SceneRunner thresholds
+    // this raw signal.
+    masterLowFluxRef.current = flux
   })
 
   return null
@@ -249,18 +278,22 @@ function MicSampler({
   micAnalyserRef,
   micLevelRef,
   micLowLevelRef,
+  micLowFluxRef,
 }: {
   micAnalyserRef: React.MutableRefObject<AnalyserNode | null>
   micLevelRef: React.MutableRefObject<number>
   micLowLevelRef: React.MutableRefObject<number>
+  micLowFluxRef: React.MutableRefObject<number>
 }) {
   const freqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
+  const prevSpecRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
 
   useFrame(() => {
     const analyser = micAnalyserRef.current
     if (!analyser) {
       micLevelRef.current *= 0.9
       micLowLevelRef.current *= 0.9
+      micLowFluxRef.current *= 0.5
       return
     }
     const binCount = analyser.frequencyBinCount
@@ -287,12 +320,29 @@ function MicSampler({
     }
     const lowRms = Math.sqrt(lowSum / lowBins)
 
-    const apply = (prev: number, target: number) => {
-      const alpha = target > prev ? 0.85 : 0.08
-      return prev + (target - prev) * alpha
+    // Spectral flux on kick band — same algorithm as MasterBusSampler.
+    let prev = prevSpecRef.current
+    let flux = 0
+    if (prev && prev.length === binCount) {
+      for (let i = 0; i < lowBins; i++) {
+        const d = data[i] - prev[i]
+        if (d > 0) flux += d
+      }
+      flux /= lowBins * 255
+    }
+    if (!prev || prev.length !== binCount) {
+      prev = new Uint8Array(new ArrayBuffer(binCount))
+      prevSpecRef.current = prev
+    }
+    prev.set(data)
+
+    const apply = (prevVal: number, target: number) => {
+      const alpha = target > prevVal ? 0.85 : 0.08
+      return prevVal + (target - prevVal) * alpha
     }
     micLevelRef.current = apply(micLevelRef.current, rms)
     micLowLevelRef.current = apply(micLowLevelRef.current, lowRms)
+    micLowFluxRef.current = flux
   })
 
   return null
@@ -316,8 +366,10 @@ function SceneRunner({
   beatsRef,
   masterLevelRef,
   masterLowLevelRef,
+  masterLowFluxRef,
   micLevelRef,
   micLowLevelRef,
+  micLowFluxRef,
   dmxRef,
   dmxPatchesRef,
   scenesByIdRef,
@@ -337,8 +389,10 @@ function SceneRunner({
   beatsRef: React.MutableRefObject<Beat[]>
   masterLevelRef: React.MutableRefObject<number>
   masterLowLevelRef: React.MutableRefObject<number>
+  masterLowFluxRef: React.MutableRefObject<number>
   micLevelRef: React.MutableRefObject<number>
   micLowLevelRef: React.MutableRefObject<number>
+  micLowFluxRef: React.MutableRefObject<number>
   dmxRef: React.MutableRefObject<EnttecPro | null>
   dmxPatchesRef: React.MutableRefObject<DMXPatch[]>
   scenesByIdRef: React.MutableRefObject<Map<string, SceneRow>>
@@ -354,18 +408,24 @@ function SceneRunner({
   const lastBeatIdxRef = useRef<number>(-1)
 
   // Live onset detection — the fallback when no precomputed beats exist.
-  // Slow-EMA baseline of the low-band level; an onset fires when the
-  // current low-band exceeds baseline * THRESHOLD with a debounce window.
-  // This makes beat.toggle / beat.intensity / beat.index react to whatever
-  // is currently playing on master OR mic, without requiring an audio-
-  // intelligence pass on the loaded track.
-  const liveBaselineRef = useRef(0)
+  //
+  // Driven by SPECTRAL FLUX on the kick band (max of master + mic), not
+  // smoothed level. Flux is the rectified frame-to-frame derivative of
+  // low-band FFT bins — it spikes per kick even when steady-state energy
+  // is high. A simple-EMA baseline tracking the smoothed level saturates
+  // during sustained music (baseline → current, ratio collapses to 1) and
+  // stops firing; flux doesn't have that failure mode.
+  //
+  // Detection rule: flux > (baseline + THRESHOLD_OFFSET) AND flux > FLOOR,
+  // debounced. Additive offset rather than multiplicative ratio so tiny
+  // baselines (quiet rooms) don't make every micro-tick fire.
+  const fluxBaselineRef = useRef(0)
   const liveBeatIndexRef = useRef(0)
   const lastLiveBeatMsRef = useRef(0)
   const liveBeatIntensityRef = useRef(0)
-  const ONSET_THRESHOLD = 1.4   // current must exceed baseline * THRESHOLD
-  const ONSET_FLOOR = 0.04      // and exceed an absolute floor (kill silence)
-  const ONSET_DEBOUNCE_MS = 130 // ~7.5 onsets/sec max ≈ 460 BPM ceiling
+  const ONSET_FLUX_FLOOR = 0.008    // typical flux floor for music (~3px/255)
+  const ONSET_FLUX_OFFSET = 0.012   // must exceed baseline by this much
+  const ONSET_DEBOUNCE_MS = 130     // ~7.5 onsets/sec max ≈ 460 BPM ceiling
 
   useFrame((_, delta) => {
     tickRef.current++
@@ -395,29 +455,23 @@ function SceneRunner({
     // so swapping into a project with intelligence doesn't need to flush
     // detector state.
     const nowMs = performance.now()
-    // Source: max of master and mic low-bands. Whichever is louder drives.
-    // A user with master playing music gets master-driven beats; a user
-    // running a venue mic gets mic-driven; both running gives whichever
-    // peaks higher in any given frame.
-    const liveLow = Math.max(masterLowLevel, micLowLevelRef.current)
-    // Baseline: slow EMA, ~1s time constant at 60fps. Tracks the rolling
-    // "quiet level" so onset detection adapts to mix changes (loud bridge
-    // → louder baseline → only louder kicks register).
-    liveBaselineRef.current += (liveLow - liveBaselineRef.current) * 0.02
-    const baseline = liveBaselineRef.current
+    // Source: max of master + mic spectral flux. Whichever has the bigger
+    // kick spike this frame drives detection.
+    const flux = Math.max(masterLowFluxRef.current, micLowFluxRef.current)
+    // Baseline: medium-fast EMA of flux. ~250ms τ at 60fps. Tracks the
+    // ambient flux floor (steady tones, room noise) so threshold adapts.
+    fluxBaselineRef.current += (flux - fluxBaselineRef.current) * 0.08
+    const baseline = fluxBaselineRef.current
     const sinceLast = nowMs - lastLiveBeatMsRef.current
     if (
-      liveLow > ONSET_FLOOR &&
-      liveLow > baseline * ONSET_THRESHOLD &&
+      flux > ONSET_FLUX_FLOOR &&
+      flux > baseline + ONSET_FLUX_OFFSET &&
       sinceLast > ONSET_DEBOUNCE_MS
     ) {
       liveBeatIndexRef.current++
-      // Onset intensity: how far above baseline we spiked, normalized 0..1.
-      // Baseline ~0 → use the raw value (early frames, no history yet).
-      liveBeatIntensityRef.current = Math.min(
-        1,
-        baseline > 0.001 ? (liveLow - baseline) / Math.max(baseline, 0.05) : liveLow,
-      )
+      // Onset intensity: spike-above-baseline, scaled so a typical kick
+      // (~0.05 flux) reads near 1.0. Cap at 1.
+      liveBeatIntensityRef.current = Math.min(1, (flux - baseline) * 25)
       lastLiveBeatMsRef.current = nowMs
     }
 
@@ -439,7 +493,7 @@ function SceneRunner({
       const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
       const beatLabel = usePrecomputed
         ? ` · beat ${beatIndex}/${beats.length}`
-        : ` · live-beat ${beatIndex} (i=${lastBeatIntensity.toFixed(2)})`
+        : ` · live-beat ${beatIndex} (i=${lastBeatIntensity.toFixed(2)}, flux=${Math.max(masterLowFluxRef.current, micLowFluxRef.current).toFixed(3)} bl=${fluxBaselineRef.current.toFixed(3)})`
       const levelLabel = ` · L ${masterLevel.toFixed(2)} / Lo ${masterLowLevel.toFixed(2)}`
       const layer = activeLayerRef.current
       const layerLabel =
@@ -592,6 +646,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // projects).
   const masterLevelRef = useRef<number>(0)
   const masterLowLevelRef = useRef<number>(0)
+  // Spectral flux on the kick band — derivative signal for onset detection.
+  // Written each frame by MasterBusSampler; consumed by SceneRunner's live
+  // onset detector. Unsmoothed (smoothing a derivative is counterproductive).
+  const masterLowFluxRef = useRef<number>(0)
 
   // Mic input — opt-in via the Mic In button. While disconnected, the
   // analyser ref stays null and MicSampler bleeds the levels to zero.
@@ -600,6 +658,7 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // indicator lit until the stream tracks are stopped).
   const micLevelRef = useRef<number>(0)
   const micLowLevelRef = useRef<number>(0)
+  const micLowFluxRef = useRef<number>(0)
   const micAnalyserRef = useRef<AnalyserNode | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
   const micCtxRef = useRef<AudioContext | null>(null)
@@ -978,11 +1037,13 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
           <MasterBusSampler
             masterLevelRef={masterLevelRef}
             masterLowLevelRef={masterLowLevelRef}
+            masterLowFluxRef={masterLowFluxRef}
           />
           <MicSampler
             micAnalyserRef={micAnalyserRef}
             micLevelRef={micLevelRef}
             micLowLevelRef={micLowLevelRef}
+            micLowFluxRef={micLowFluxRef}
           />
           <SceneRunner
             activeSceneIdRef={activeSceneIdRef}
@@ -995,8 +1056,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             beatsRef={beatsRef}
             masterLevelRef={masterLevelRef}
             masterLowLevelRef={masterLowLevelRef}
+            masterLowFluxRef={masterLowFluxRef}
             micLevelRef={micLevelRef}
             micLowLevelRef={micLowLevelRef}
+            micLowFluxRef={micLowFluxRef}
             dmxRef={dmxRef}
             dmxPatchesRef={dmxPatchesRef}
             scenesByIdRef={scenesByIdRef}
