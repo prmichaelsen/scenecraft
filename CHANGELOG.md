@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.25.1] - 2026-04-26
+
+### Changed
+- **Vite host-check allowlist for `.scenecraft.online`.** `vite.config.ts` now sets `server.allowedHosts` and `preview.allowedHosts` to `['.scenecraft.online']` — the leading-dot is Vite's subdomain-wildcard syntax, covering `patrycllc.scenecraft.online`, future per-tenant `*.scenecraft.online` hosts, and deeper `api.<tenant>.scenecraft.online` patterns. Without this Vite's anti-DNS-rebinding check returns "Blocked request" for any tenant subdomain reaching the dev/preview server through the Cloudflare Tunnel. Restricted to `.scenecraft.online` rather than disabled outright (`allowedHosts: true`) so local-dev rebinding from arbitrary external domains is still blocked.
+
 ## [0.25.0] - 2026-04-26
 
 ### Added
