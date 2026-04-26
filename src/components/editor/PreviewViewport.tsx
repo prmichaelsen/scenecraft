@@ -5,9 +5,11 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { fetchScrubFrame, ScrubFetchError } from '@/lib/preview-client'
 import { useMSEPlayback } from '@/hooks/useMSEPlayback'
+import { getVideoBlocked, subscribeVideoBlocked } from '@/lib/playback-sync-ref'
 
 type PreviewViewportProps = {
   projectName: string
@@ -33,6 +35,14 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [scrubState, setScrubState] = useState<ScrubState>('idle')
     const [errorText, setErrorText] = useState<string | null>(null)
+    // True while useMSEPlayback is mid-seek, between issuing the seek and
+    // the first fresh fragment landing. Drives the "Rendering…" overlay
+    // and the freeze-last-frame path below.
+    const videoBlocked = useSyncExternalStore(
+      subscribeVideoBlocked,
+      getVideoBlocked,
+      () => false,
+    )
     // Paint gate: every scrub fires a request unless the frame is already
     // cached locally (see frameCacheRef). If a fetch does go out, we only
     // paint when the response matches the current scrub position.
@@ -53,8 +63,11 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     useImperativeHandle(ref, () => ({
       getCanvas: () => canvasRef.current,
       getVideo: () => videoRef.current,
-      getActiveSurface: () => (playing ? videoRef.current : canvasRef.current),
-    }), [playing])
+      // While videoBlocked, the canvas holds the last good frame and is
+      // on top — return it so captureStream consumers see what the user
+      // sees instead of the (currently-loading) video element.
+      getActiveSurface: () => (playing && !videoBlocked ? videoRef.current : canvasRef.current),
+    }), [playing, videoBlocked])
 
     // ── Scrub path: fetch JPEG and blit to canvas when paused ────
     // paintBitmap does NOT close the bitmap — the cache owns bitmap
@@ -94,6 +107,27 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
       }
       wasPlayingRef.current = playing
     }, [playing])
+
+    // When videoBlocked rises during playback, copy the current video frame
+    // to the canvas so the canvas has a real "last good frame" to show
+    // when it gets raised above the (loading) video element. Without this
+    // the canvas would show whatever stale scrub frame was last painted.
+    const wasBlockedRef = useRef(videoBlocked)
+    useEffect(() => {
+      if (videoBlocked && !wasBlockedRef.current && playing) {
+        const video = videoRef.current
+        const canvas = canvasRef.current
+        if (video && canvas && video.videoWidth > 0) {
+          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            canvas.width = video.videoWidth
+            canvas.height = video.videoHeight
+          }
+          const ctx = canvas.getContext('2d')
+          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
+        }
+      }
+      wasBlockedRef.current = videoBlocked
+    }, [videoBlocked, playing])
 
     // Touch the cache on access to mark as most-recently-used (Map iteration
     // order = insertion, so delete+set moves to end).
@@ -244,22 +278,26 @@ export const PreviewViewport = forwardRef<PreviewViewportHandle, PreviewViewport
     // ── Layout ─────────────────────────────────────────────────────
     // Both surfaces render full-size; z-index toggled by play state.
     // pointer-events-none prevents the backgrounded surface from eating clicks.
+    // During playback the video is on top; while videoBlocked, raise the
+    // canvas instead so the user sees the last good frame instead of the
+    // loading-into-blackness video element.
+    const showCanvasOnTop = !playing || videoBlocked
     return (
       <div className={`relative w-full h-full ${className ?? ''}`}>
         <video
           ref={videoRef}
           className="absolute inset-0 w-full h-full object-contain bg-black"
-          style={{ zIndex: playing ? 2 : 1, pointerEvents: playing ? 'auto' : 'none' }}
+          style={{ zIndex: showCanvasOnTop ? 1 : 2, pointerEvents: showCanvasOnTop ? 'none' : 'auto' }}
           playsInline
           muted
         />
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full object-contain bg-black"
-          style={{ zIndex: playing ? 1 : 2, pointerEvents: playing ? 'none' : 'auto' }}
+          style={{ zIndex: showCanvasOnTop ? 2 : 1, pointerEvents: showCanvasOnTop ? 'auto' : 'none' }}
         />
 
-        {!playing && scrubState === 'loading' && (
+        {((!playing && scrubState === 'loading') || (playing && videoBlocked)) && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="text-white/60 text-xs bg-black/40 px-2 py-0.5 rounded">
               Rendering…
