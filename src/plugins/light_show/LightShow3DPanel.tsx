@@ -21,6 +21,8 @@ import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
 import { EffectComposer } from '@react-three/postprocessing'
+import { HelpCircle } from 'lucide-react'
+import { Modal } from '@/components/ui/Modal'
 
 import { useCurrentTime, usePlaybackState } from '@/components/editor/CurrentTimeContext'
 import { useEditorData } from '@/components/editor/EditorDataContext'
@@ -388,6 +390,18 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   const dmxRef = useRef<EnttecPro | null>(null)
   const dmxPatchesRef = useRef<DMXPatch[]>([])
   const [dmxState, setDmxState] = useState<DMXOutputState>('disconnected')
+  const [dmxHelpOpen, setDmxHelpOpen] = useState(false)
+  // Detect WebSerial after mount, never during SSR — `'serial' in navigator`
+  // is always false during server render (Node has no Web Serial API), and a
+  // const-evaluated check would cause the SSR'd HTML to ship with the button
+  // disabled, then never re-evaluate post-hydration. The useEffect runs
+  // client-side only, flipping the flag once we're in the browser.
+  const [webSerialSupported, setWebSerialSupported] = useState(false)
+  useEffect(() => {
+    setWebSerialSupported(
+      typeof navigator !== 'undefined' && 'serial' in navigator,
+    )
+  }, [])
 
   // Rebuild auto-patch whenever rig changes. autoPatch now takes the
   // FixtureDef list directly so it can honor explicit dmxAddress /
@@ -495,22 +509,36 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
             </option>
           ))}
         </select>
-        {typeof navigator !== 'undefined' && 'serial' in navigator && (
-          <button
-            onClick={handleDmxToggle}
-            className={`ml-2 px-2 py-0.5 text-xs rounded border ${
-              dmxState === 'connected'
+        <button
+          onClick={handleDmxToggle}
+          disabled={!webSerialSupported}
+          title={
+            webSerialSupported
+              ? undefined
+              : 'WebSerial unavailable in this browser — click (?) for setup details'
+          }
+          className={`ml-2 px-2 py-0.5 text-xs rounded border ${
+            !webSerialSupported
+              ? 'bg-gray-900 border-gray-700 text-gray-600 cursor-not-allowed'
+              : dmxState === 'connected'
                 ? 'bg-green-900 border-green-600 text-green-300'
                 : dmxState === 'connecting'
                   ? 'bg-yellow-900 border-yellow-600 text-yellow-300'
                   : dmxState === 'error'
                     ? 'bg-red-900 border-red-600 text-red-300'
                     : 'bg-gray-800 border-gray-600 text-gray-300 hover:border-purple-500'
-            }`}
-          >
-            {dmxState === 'connected' ? 'DMX: ON' : dmxState === 'connecting' ? 'DMX...' : 'DMX Output'}
-          </button>
-        )}
+          }`}
+        >
+          {dmxState === 'connected' ? 'DMX: ON' : dmxState === 'connecting' ? 'DMX...' : 'DMX Output'}
+        </button>
+        <button
+          onClick={() => setDmxHelpOpen(true)}
+          aria-label="DMX setup help"
+          title="DMX setup help"
+          className="ml-1 p-0.5 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-500"
+        >
+          <HelpCircle size={14} />
+        </button>
         <span className="ml-auto text-[10px] text-gray-600">
           {rig.length} fixtures{fetchError ? ' (fetch failed)' : projectName ? ' (live)' : ' (hardcoded)'}
           {screens.length > 0 ? ` · ${screens.length} screen${screens.length === 1 ? '' : 's'}` : ''}
@@ -580,15 +608,180 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
 
           {/* Phase C — ray-marched volumetric fog. Beams illuminate
               atmospheric haze in 3D space; crossing beams brighten on
-              intersection. Stacks on top of the existing additive cones
-              for the "physical beam body + atmospheric shaft" look. */}
-          <EffectComposer>
-            {/* Phase C default tuning. Bump fogDensity up for smokier
-                look, stepCount up for less banding at the cost of GPU. */}
+              intersection. This is currently the *only* visible-beam
+              renderer (Phase A additive cones were removed in 5cc35cb),
+              so disabling it leaves the scene without illumination.
+
+              Perf: render the fog at half resolution and bilinearly
+              upsample. Fog is inherently low-frequency so the visual
+              cost is barely perceptible (slightly softer edges) while
+              giving us roughly a 4x speedup. multisampling=0 because
+              MSAA on a purely additive low-frequency pass is wasted
+              GPU work. */}
+          <EffectComposer resolutionScale={0.5} multisampling={0}>
             <VolumetricFog rigRef={rigRef} stateRef={stateRef} fogDensity={0.25} />
           </EffectComposer>
         </Canvas>
       </div>
+      <DmxHelpModal
+        open={dmxHelpOpen}
+        onClose={() => setDmxHelpOpen(false)}
+        webSerialSupported={webSerialSupported}
+      />
     </div>
+  )
+}
+
+function DmxHelpModal({
+  open,
+  onClose,
+  webSerialSupported,
+}: {
+  open: boolean
+  onClose: () => void
+  webSerialSupported: boolean
+}) {
+  return (
+    <Modal isOpen={open} onClose={onClose} title="DMX Output Setup" maxWidth="2xl">
+      <div className="text-sm text-gray-200 space-y-5">
+        {!webSerialSupported && (
+          <div className="rounded border border-red-700 bg-red-950/40 px-3 py-2 text-red-200">
+            <strong>WebSerial isn't available in this browser.</strong> The DMX
+            Output button is disabled. WebSerial is a Chromium-only API —
+            scenecraft talks directly to the dongle from the browser, no
+            server-side proxy. <strong>Open this page in Chrome or Edge</strong>
+            {' '}on a desktop OS (Windows / macOS / Linux) to enable it. Firefox,
+            Safari, and most mobile browsers don't implement the API.
+          </div>
+        )}
+
+        <section>
+          <h3 className="font-semibold mb-1">1. Hardware</h3>
+          <ul className="list-disc list-inside text-gray-300 space-y-0.5">
+            <li>
+              <strong>ENTTEC DMX USB Pro</strong> (FTDI vendor 0x0403, product
+              0x6001). Other Widget-API-compatible dongles may work but aren't
+              tested.
+            </li>
+            <li>
+              A 3-pin or 5-pin XLR DMX cable from the dongle's <em>output</em>
+              {' '}to the first fixture's <em>input</em>.
+            </li>
+            <li>
+              For multiple fixtures, daisy-chain: each fixture's output goes
+              into the next fixture's input. Terminate the last fixture if your
+              run is long (&gt;30m) or noisy.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h3 className="font-semibold mb-1">2. Fixture setup</h3>
+          <ul className="list-disc list-inside text-gray-300 space-y-0.5">
+            <li>
+              Set each fixture's <strong>DMX address</strong> via its front
+              panel. scenecraft auto-patches starting at address 1 and walks
+              forward; the first par in the rig gets address 1, the next par
+              gets the address after the previous fixture's channel block, and
+              so on.
+            </li>
+            <li>
+              Set the fixture's <strong>DMX mode</strong> to match the channel
+              count scenecraft sends. Default expectation: <strong>6 channels</strong>
+              {' '}per par (Master / R / G / B / Effects / Speed) and{' '}
+              <strong>6 channels</strong> per moving head (Dimmer / R / G / B /
+              Pan / Tilt, 8-bit). For the Rockville RockPar 50, that's the{' '}
+              <code>6CH</code> mode.
+            </li>
+            <li>
+              If your fixture's channel order doesn't match (e.g.{' '}
+              <code>R / G / B / Dim</code> instead of <code>Dim / R / G / B</code>),
+              colors will respond but be wrong. Per-fixture profile import is on
+              the roadmap; until then, fixtures need to use the layouts above.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h3 className="font-semibold mb-1">3. Browser requirements</h3>
+          <ul className="list-disc list-inside text-gray-300 space-y-0.5">
+            <li>
+              <strong>Chrome or Edge</strong> on desktop. WebSerial is not
+              available in Firefox, Safari, or most mobile browsers.
+            </li>
+            <li>
+              Page must be served over <strong>HTTPS</strong> (or{' '}
+              <code>http://localhost</code>). scenecraft already meets this in
+              production.
+            </li>
+            <li>
+              The first time you click <strong>DMX Output</strong>, Chrome shows
+              a serial-port picker. Pick the FTDI USB-serial entry. Permission
+              persists per origin until you revoke it.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h3 className="font-semibold mb-1">4. Connecting</h3>
+          <ol className="list-decimal list-inside text-gray-300 space-y-0.5">
+            <li>Plug the dongle into USB and power on your fixtures.</li>
+            <li>
+              Click <strong>DMX Output</strong>. Chrome's serial picker will
+              appear; pick the FTDI device.
+            </li>
+            <li>
+              The button turns green when connected. Pick a scene (try{' '}
+              <code>solid</code> first as a smoke test) — fixtures should
+              respond immediately.
+            </li>
+            <li>
+              Click the button again to disconnect cleanly. Closing the tab
+              also disconnects, but the dongle holds the last frame for ~9
+              seconds before going dark.
+            </li>
+          </ol>
+        </section>
+
+        <section>
+          <h3 className="font-semibold mb-1">5. Troubleshooting</h3>
+          <ul className="list-disc list-inside text-gray-300 space-y-0.5">
+            <li>
+              <strong>Button stays disabled:</strong> WebSerial isn't available
+              — switch to Chrome or Edge.
+            </li>
+            <li>
+              <strong>FTDI device doesn't appear in the picker:</strong> dongle
+              isn't plugged in, or another app (QLC+, etc.) has the port open.
+              Close other DMX software and replug.
+            </li>
+            <li>
+              <strong>Connects but fixture doesn't respond:</strong> check DMX
+              cable seating at both ends, fixture address, and that the fixture
+              is in DMX mode (not standalone / sound-active).
+            </li>
+            <li>
+              <strong>Wrong colors:</strong> fixture's channel order doesn't
+              match scenecraft's expectation — see #2 above.
+            </li>
+            <li>
+              <strong>Auto-effects firing on RockPar-style pars:</strong>{' '}
+              scenecraft holds the Effects channel at 0 (no auto-effect). If
+              you see chases/flashes scenecraft didn't request, the fixture may
+              be in a different mode than expected.
+            </li>
+          </ul>
+        </section>
+
+        <div className="pt-2 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-3 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
   )
 }

@@ -1,15 +1,28 @@
 /**
  * Maps FixtureState[] to a 512-byte DMX universe buffer.
  *
- * MVP channel layout per fixture (contiguous, starting at baseAddress):
- *   ch+0: Dimmer (intensity * 255)
- *   ch+1: Red    (color[0] * 255)
- *   ch+2: Green  (color[1] * 255)
- *   ch+3: Blue   (color[2] * 255)
- *   ch+4: Pan    (radians → 0-255, mapped from -π..π → 0..255)
- *   ch+5: Tilt   (radians → 0-255, mapped from -π/2..π/2 → 0..255)
+ * MVP channel layouts per fixture role (contiguous, starting at baseAddress):
  *
- * Channels per fixture: 6 for moving_head, 4 for par (no pan/tilt).
+ *   role='par'   (6 channels — Rockville RockPar 50 6-ch mode and similar
+ *                "Master/RGB/FX/Speed" pars; very common layout):
+ *     ch+0: Master Dimmer (intensity * 255)
+ *     ch+1: Red    (color[0] * 255)
+ *     ch+2: Green  (color[1] * 255)
+ *     ch+3: Blue   (color[2] * 255)
+ *     ch+4: Effects macro — held at 0 (no auto-effect)
+ *     ch+5: Speed         — held at 0 (irrelevant when Effects=0)
+ *
+ *   role='moving_head' (6 channels — guess MVP layout, real movers vary):
+ *     ch+0: Dimmer
+ *     ch+1: Red
+ *     ch+2: Green
+ *     ch+3: Blue
+ *     ch+4: Pan  (radians → 0-255, mapped from -π..π → 0..255, 8-bit only)
+ *     ch+5: Tilt (radians → 0-255, mapped from -π/2..π/2 → 0..255, 8-bit only)
+ *
+ * Pinning per-fixture profiles (to support fixtures that don't match these
+ * defaults) lands with the OFL importer; this file is the smoke-test
+ * shape and intentionally narrow.
  */
 
 import type { FixtureDef, FixtureRole, FixtureState } from './fixtures'
@@ -18,13 +31,17 @@ const DMX_CHANNELS = 512
 
 export interface DMXPatch {
   fixtureId: string
+  role: FixtureRole    // determines channel-slot semantics in fixturesToDMX
   universe: number     // 1-based universe
   startAddress: number // 1-based DMX address
-  channelCount: number // 4 (par) / 6 (moving_head) / explicit override
+  channelCount: number // 6 for both par and moving_head by default; explicit override allowed
 }
 
 function defaultChannelCount(role: FixtureRole): number {
-  return role === 'moving_head' ? 6 : 4
+  // Both pars and moving_heads default to 6 channels with the layouts
+  // documented at the top of this file. Override per-fixture via
+  // FixtureDef.dmxChannelCount when a specific fixture takes more or fewer.
+  return 6
 }
 
 /**
@@ -82,7 +99,7 @@ export function autoPatch(fixtures: readonly FixtureDef[]): DMXPatch[] {
       // detect missing patch by comparing fixtures.length to patches.length.
       continue
     }
-    patches.push({ fixtureId: f.id, universe, startAddress: f.dmxAddress, channelCount: count })
+    patches.push({ fixtureId: f.id, role: f.role, universe, startAddress: f.dmxAddress, channelCount: count })
     reserve(universe, f.dmxAddress, count)
   }
 
@@ -97,7 +114,7 @@ export function autoPatch(fixtures: readonly FixtureDef[]): DMXPatch[] {
     // Linear scan for the first range that fits. Cheap for our scale.
     for (let start = cursor; start + count - 1 <= DMX_CHANNELS; start++) {
       if (fits(universe, start, count)) {
-        patches.push({ fixtureId: f.id, universe, startAddress: start, channelCount: count })
+        patches.push({ fixtureId: f.id, role: f.role, universe, startAddress: start, channelCount: count })
         reserve(universe, start, count)
         cursor = start + count
         placed = true
@@ -143,8 +160,18 @@ export function fixturesToDMX(
     buf[base + 3] = Math.round(clamp(s.color[2], 0, 1) * 255)
 
     if (patch.channelCount >= 6) {
-      buf[base + 4] = radiansTo255(s.pan, -Math.PI, Math.PI)
-      buf[base + 5] = radiansTo255(s.tilt, -Math.PI / 2, Math.PI / 2)
+      if (patch.role === 'moving_head') {
+        // Moving head: slots 4-5 are 8-bit Pan/Tilt.
+        buf[base + 4] = radiansTo255(s.pan, -Math.PI, Math.PI)
+        buf[base + 5] = radiansTo255(s.tilt, -Math.PI / 2, Math.PI / 2)
+      } else {
+        // Par with 6+ channels: slots 4-5 are Effects macro / Speed
+        // on every common 6-ch RGB par we've encountered. Hold both at
+        // 0 so the fixture stays in normal (non-auto-effect) mode and
+        // responds only to the dimmer + RGB we control directly.
+        buf[base + 4] = 0
+        buf[base + 5] = 0
+      }
     }
   }
 

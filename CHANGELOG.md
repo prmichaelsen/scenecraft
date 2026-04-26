@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.25.0] - 2026-04-26
+
+### Added
+- **DMX Output setup help modal.** New `(?)` icon next to the DMX Output button opens a 5-section in-app guide (Hardware, Fixture setup, Browser requirements, Connecting, Troubleshooting). When `navigator.serial` isn't available the modal opens with a red callout banner explaining browser requirements, replacing the previous "button hidden when WebSerial absent" behavior with "button shown but disabled, help reachable always."
+- **Audio-reactive scene smoke-test fixture.** None added in this release; the routing/profile/sensitivity feature is queued as task-169 and not yet implemented.
+
+### Changed
+- **6-channel par DMX layout.** `dmx-mapper.ts` now defaults pars to 6 channels (was 4) matching the canonical "Master / R / G / B / Effects / Speed" layout used by Rockville RockPar 50 and most similar 6-ch RGB pars. `DMXPatch` carries a `role` field; `fixturesToDMX` writes 0 to slots 5+6 for pars (Effects=0 holds the fixture out of auto-effect mode) while moving heads still get their pan/tilt write to slots 4-5.
+- **WebSerial detection moved to post-mount.** `'serial' in navigator` is now evaluated in a `useEffect` instead of at render-time, fixing a hydration race where SSR's missing-`navigator` made the DMX Output button ship disabled and never recover post-hydration. Chrome/Edge users now see the button enable correctly without a refresh.
+- **Volumetric fog perf — ~6× faster, same look.** `<EffectComposer>` now renders the fog at half resolution and bilinearly upsamples (`resolutionScale={0.5}`); `multisampling={0}` drops MSAA on the additive fog pass; default `stepCount` lowered from 48 to 32. Fog is inherently low-frequency so the visual cost is minimal — beam edges read very slightly softer, often improvement.
+- **Volumetric fog dither — IGN + temporal jitter.** Replaced the per-pixel `hash21` white-noise jitter (which read as chunky pixel speckle) with Interleaved Gradient Noise driven by a per-frame `uTime` uniform. Same ALU cost, blue-noise-ish distribution, and the per-frame pattern shift means the eye temporally averages remaining banding away. Default `maxDistance` lowered from 40 m to 25 m so the same step count covers a tighter volume — finer integration without raising compute.
+
+### Fixed
+- **DMX Output button no longer hidden in non-WebSerial browsers.** Was conditionally rendered with `{'serial' in navigator && ...}`; now always rendered, disabled when unavailable, with a tooltip directing users to the new help modal. Discoverability of the feature improves regardless of browser.
+
 ## [0.24.0] - 2026-04-25
 
 ### Added

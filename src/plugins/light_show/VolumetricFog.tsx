@@ -91,12 +91,21 @@ uniform float uFixtureHalfAngles[${MAX_FIXTURES}];
 uniform float uFogDensity;
 uniform float uMaxDistance;
 uniform int uStepCount;
+uniform float uTime;
 
-// Hash for dithered step offset — breaks up banding bands from finite step count.
-float hash21(vec2 p) {
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
+// Interleaved Gradient Noise (Jiminez) — produces a blue-noise-ish pattern
+// with the same ALU cost as a plain hash. Looks dramatically smoother than
+// per-pixel white noise (hash21) for ray-march dither: the high-frequency
+// error distributes more uniformly and reads as fine grain instead of
+// chunky pixel speckle. Used as the standard ray-march dither in modern
+// AAA volumetrics.
+//
+// uTime offsets the lattice each frame so the dither pattern shifts;
+// the eye temporally averages and any remaining banding/grain washes out
+// to perceptually-smooth fog.
+float ign(vec2 p) {
+  p += uTime * 5.588238;       // arbitrary irrational; large prime works too
+  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
 void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
@@ -120,8 +129,9 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   float dt = maxDist / float(steps);
 
   // Dither the starting offset per pixel so undersampled banding breaks
-  // into grain instead of concentric rings. Noise scaled by one step.
-  float jitter = hash21(gl_FragCoord.xy);
+  // into smooth grain instead of concentric rings. IGN gives blue-noise-ish
+  // distribution; uTime shifts the pattern each frame for temporal averaging.
+  float jitter = ign(gl_FragCoord.xy);
 
   vec3 accum = vec3(0.0);
 
@@ -194,8 +204,9 @@ class VolumetricFogEffectImpl extends Effect {
       ['uFixtureLengths', new THREE.Uniform(new Float32Array(MAX_FIXTURES))],
       ['uFixtureHalfAngles', new THREE.Uniform(new Float32Array(MAX_FIXTURES))],
       ['uFogDensity', new THREE.Uniform(0.05)],
-      ['uMaxDistance', new THREE.Uniform(40)],
-      ['uStepCount', new THREE.Uniform(48)],
+      ['uMaxDistance', new THREE.Uniform(25)],
+      ['uStepCount', new THREE.Uniform(32)],
+      ['uTime', new THREE.Uniform(0)],
     ])
 
     super('VolumetricFog', FRAGMENT_SHADER, {
@@ -214,13 +225,20 @@ class VolumetricFogEffectImpl extends Effect {
    *  Fixture uniforms are not updated here — they're updated via
    *  ``updateFixtures`` below, called from the React layer's useFrame so
    *  we stay in sync with the rest of the r3f render loop. */
-  override update(_renderer: THREE.WebGLRenderer, _inputBuffer: THREE.WebGLRenderTarget, _dt: number) {
+  override update(_renderer: THREE.WebGLRenderer, _inputBuffer: THREE.WebGLRenderTarget, dt: number) {
     const camera = this.cameraRef.current
     if (!camera) return
     const cameraPos = (this.uniforms.get('uCameraPos') as THREE.Uniform).value as THREE.Vector3
     cameraPos.setFromMatrixPosition(camera.matrixWorld)
     const invVP = (this.uniforms.get('uInvViewProj') as THREE.Uniform).value as THREE.Matrix4
     invVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).invert()
+
+    // Advance time so the per-frame IGN dither pattern shifts. Range
+    // doesn't matter (IGN takes fract internally); we just need it to be
+    // monotonic and deterministic enough that the eye temporally averages
+    // banding away.
+    const tUni = this.uniforms.get('uTime') as THREE.Uniform
+    tUni.value = ((tUni.value as number) + dt) % 1024
   }
 
   /** Update per-fixture uniforms from the shared fixture state. Call this
@@ -310,8 +328,8 @@ export function VolumetricFog({
   coneLength = 6,
   coneHalfAngle = Math.PI / 14,
   fogDensity = 0.25,
-  maxDistance = 40,
-  stepCount = 48,
+  maxDistance = 25,
+  stepCount = 32,
 }: VolumetricFogProps) {
   const effectRef = useRef<VolumetricFogEffectImpl | null>(null)
   const camera = useThree((s) => s.camera)
