@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { openPreviewStream, type PreviewStream } from '@/lib/preview-client'
+import { setVideoBlocked } from '@/lib/playback-sync-ref'
 
 // Backoff for engine-restart auto-recovery. On WS close (engine hot-reload,
 // crash, deploy) we rebuild the MediaSource instead of leaving it pinned to a
@@ -41,6 +42,12 @@ export function useMSEPlayback(
   const sourceBufferRef = useRef<SourceBuffer | null>(null)
   const objectUrlRef = useRef<string | null>(null)
   const pendingFragments = useRef<ArrayBuffer[]>([])
+  // Set by the seek effect right before stream.seek + buffer wipe, cleared
+  // by the next sourcebuffer ``updateend`` (= first fresh fragment landed).
+  // While true, ``playback-sync-ref.setVideoBlocked(true)`` keeps the audio
+  // element paused and the fallback playhead frozen so audio doesn't lurch
+  // ahead of video during the encode + WS round-trip.
+  const awaitingPostSeekFragmentRef = useRef(false)
 
   // Bumped on preview-stream WS close to tear down + rebuild the MediaSource.
   // See RECONNECT_DELAY_MS note above.
@@ -125,6 +132,15 @@ export function useMSEPlayback(
           'readyState=', v.readyState,
           'paused=', v.paused,
         )
+        // Release the audio + playhead gate on the first fresh fragment
+        // after a seek. Audio resumes from where it was paused (= the seek
+        // target, since we froze it before it could lurch forward) and
+        // video starts presenting that same frame, so the two are aligned
+        // when both resume.
+        if (awaitingPostSeekFragmentRef.current) {
+          awaitingPostSeekFragmentRef.current = false
+          setVideoBlocked(false)
+        }
         flushPending()
       })
 
@@ -168,6 +184,13 @@ export function useMSEPlayback(
       mediaSourceRef.current = null
       sourceBufferRef.current = null
       pendingFragments.current = []
+      // If we tore down mid-seek, release the gate so audio + playhead
+      // aren't permanently stranded waiting for an updateend that never
+      // comes from the dead session.
+      if (awaitingPostSeekFragmentRef.current) {
+        awaitingPostSeekFragmentRef.current = false
+        setVideoBlocked(false)
+      }
       const url = objectUrlRef.current
       if (url) {
         URL.revokeObjectURL(url)
@@ -295,6 +318,13 @@ export function useMSEPlayback(
     if (Math.abs(delta) < 0.3) return // normal tick
 
     console.log(`[useMSEPlayback] seek detected: delta=${delta.toFixed(3)} → ${currentTime.toFixed(3)}`)
+
+    // Block audio + playhead IMMEDIATELY (not after the 150ms debounce) so
+    // the audio element doesn't keep advancing past the seek target while
+    // we're still waiting for the encoder to start producing the new
+    // content. Released on the first updateend after the seek action fires.
+    setVideoBlocked(true)
+    awaitingPostSeekFragmentRef.current = true
 
     if (seekDebounceRef.current) clearTimeout(seekDebounceRef.current)
     seekDebounceRef.current = setTimeout(() => {

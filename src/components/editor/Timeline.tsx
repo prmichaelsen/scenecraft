@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo, useSyncExternalStore } from 'react'
+import { getVideoBlocked, subscribeVideoBlocked } from '@/lib/playback-sync-ref'
 import ReactMarkdown from 'react-markdown'
 import { useRouter } from '@tanstack/react-router'
 import type { EditorData, Keyframe, Transition, Beat, Section } from '@/routes/project/$name/editor'
@@ -784,6 +785,18 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   const transitionAudioRef = useRef<HTMLAudioElement | null>(null)
   const transitionAudioTrId = useRef<string | null>(null)
 
+  // True while the MSE preview pipeline is mid-seek and waiting for the
+  // first fresh fragment. While set, the transition audio element pauses
+  // and the fallback playhead timer freezes the project clock so audio +
+  // playhead stay aligned with video on resume. Set/cleared by
+  // useMSEPlayback (see playback-sync-ref). Subscribed via SES so a flip
+  // re-runs the audio effect immediately, not on the next rAF tick.
+  const videoBlocked = useSyncExternalStore(
+    subscribeVideoBlocked,
+    getVideoBlocked,
+    () => false,
+  )
+
   useEffect(() => {
     const trId = activeTransition?.id ?? null
     const hasVideo = activeTransition?.hasSelectedVideo ?? false
@@ -806,6 +819,16 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     const audio = transitionAudioRef.current
     if (!audio) return
 
+    // Video pipeline mid-seek: pause audio and DON'T re-seek currentTime —
+    // we want audio frozen at exactly where the user landed, so it's
+    // aligned with the video frame the encoder is about to deliver. When
+    // the gate releases (first updateend after seek), this effect re-runs
+    // and the play branch below picks up where we paused.
+    if (videoBlocked) {
+      if (!audio.paused) audio.pause()
+      return
+    }
+
     // Sync time: compute where we are within the transition
     if (activeTransitionFrom && activeTransitionTo) {
       const tStart = activeTransitionFrom.timeSeconds
@@ -826,7 +849,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
     } else if (!isPlaying && !audio.paused) {
       audio.pause()
     }
-  }, [activeTransition, activeTransitionFrom, activeTransitionTo, currentTime, isPlaying, data.projectName])
+  }, [activeTransition, activeTransitionFrom, activeTransitionTo, currentTime, isPlaying, data.projectName, videoBlocked])
 
   // Cleanup transition audio on unmount
   useEffect(() => {
@@ -924,6 +947,18 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         setIsPlaying(true)
         const tick = () => {
           const now = performance.now()
+          // Freeze the project clock while video is loading after a seek
+          // so audio + playhead stay aligned with the next presented
+          // frame. We still schedule the next rAF so we resume the moment
+          // the gate releases. Reset fallbackLastRef each frozen frame so
+          // the resumed delta starts from "now," not from the time before
+          // the freeze (otherwise we'd jump forward by the freeze
+          // duration the moment the gate clears).
+          if (getVideoBlocked()) {
+            fallbackLastRef.current = now
+            fallbackTimerRef.current = requestAnimationFrame(tick)
+            return
+          }
           const delta = (now - fallbackLastRef.current) / 1000
           fallbackLastRef.current = now
           const next = currentTimeRef.current + delta
@@ -2197,12 +2232,24 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
 
         {/* Controls bar */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 bg-gray-900 border-b border-gray-800 shrink-0">
-          <button
-            onClick={handlePlayPause}
-            className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 rounded transition-colors"
-          >
-            {isPlaying ? '⏸' : '▶'}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => { if (seekFnRef.current) seekFnRef.current(0); else setCurrentTime(0) }}
+              className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+              aria-label="Skip to start"
+              title="Skip to start"
+            >
+              ⏮
+            </button>
+            <button
+              onClick={handlePlayPause}
+              className="w-8 h-8 flex items-center justify-center bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              title={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? '⏸' : '▶'}
+            </button>
+          </div>
 
           <TimeDisplay
             currentTime={currentTime}
