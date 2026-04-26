@@ -1,6 +1,6 @@
 # Audio-Reactive Routing & Instrument Profiles
 
-**Concept**: Per-fixture audio source + envelope-shape routing for the light_show plugin — let an individual fixture react to a specific track (drum stem, bass stem, etc.) through a profile-shaped envelope (kick-snap, bass-glow, etc.) instead of every fixture reacting uniformly to the master bus.
+**Concept**: Per-fixture audio source + envelope-shape + sensitivity routing for the light_show plugin — let an individual fixture react to a specific track (drum stem, bass stem, etc.) through a profile-shaped envelope (kick-snap, bass-glow, etc.) at a per-fixture sensitivity multiplier, instead of every fixture reacting uniformly to the master bus.
 **Created**: 2026-04-26
 **Status**: Proposal
 
@@ -10,10 +10,11 @@
 
 Today's audio-reactive scenes (`beat_strobe`, `kick_pulse`, `beat_color_chase`) drive every fixture from the master bus's full-spectrum and low-band RMS envelopes. That's correct as a default but flat as an aesthetic — every fixture pulses on every kick the same way, every par flashes blue→white in sync. Real lighting design routes specific musical elements to specific fixtures: front pars react to kick, side movers ride the bassline, hats fixtures shimmer with high-end, vocals colour the back wash.
 
-This document specifies the smallest data + runtime change that unlocks per-fixture audio routing. Two coupled features:
+This document specifies the smallest data + runtime change that unlocks per-fixture audio routing. Three coupled features:
 
 1. **Track routing** — each fixture optionally references a specific track (typically a stem produced by `isolate_vocals` / future `stem_splitter`); null = master bus.
 2. **Instrument profiles** — each fixture optionally selects a named profile (`kick`, `bass`, `snare`, `hats`, `guitar`, `vocals`, `pad`, `master_full`) that bundles `(frequency band, attack time, release time, gamma curve, gate threshold)` into one parameter set. The profile encapsulates "how do I listen to this thing" — band selection lives inside the profile, not next to it.
+3. **Sensitivity** — each fixture optionally has a linear gain multiplier on its profile-shaped envelope output. Default `1.0` reproduces today's behavior; `0.0` mutes reactivity without unrouting; `>1.0` pushes the fixture toward saturation. Distinct from `gamma` (curve shape) and `gate` (threshold), which are profile-level engineering decisions about a kind of instrument; sensitivity is a per-installation taste knob about a specific fixture.
 
 Existing scenes that read `masterLevel` keep working unchanged (global-behavior path). New scenes — and existing scenes when retrofitted — read `audioByFixture[id]` for per-fixture profile-shaped audio (routed-behavior path). Both paths coexist; a single scene can mix them (base wash on master + accent on routed).
 
@@ -39,18 +40,22 @@ Without these, "a fixture that reacts only to the kick" requires either a custom
 
 ### Data model
 
-Two nullable columns added to `light_show__fixtures`:
+Three nullable columns added to `light_show__fixtures`:
 
 ```sql
 ALTER TABLE light_show__fixtures
   ADD COLUMN audio_track_id TEXT;       -- nullable; null = react to master bus
 ALTER TABLE light_show__fixtures
   ADD COLUMN audio_profile TEXT;        -- nullable; null = 'master_full'
+ALTER TABLE light_show__fixtures
+  ADD COLUMN audio_sensitivity REAL;    -- nullable; null = 1.0 (full profile output)
 ```
 
-Both default null so existing fixtures keep behaving exactly as today. A non-null `audio_track_id` references an `audio_tracks.id` in the same project DB. A non-null `audio_profile` references one of the hardcoded preset names below.
+All default null so existing fixtures keep behaving exactly as today. A non-null `audio_track_id` references an `audio_tracks.id` in the same project DB. A non-null `audio_profile` references one of the hardcoded preset names below. A non-null `audio_sensitivity` is a linear multiplier (typically 0.0..2.0, no hard upper bound; the runtime saturates the final output at 1.0).
 
 No `audio_band` column — the profile owns band selection, that decision was tried and discarded. Bundling `(band, envelope, curve, gate)` into one named profile is conceptually cleaner and lets a user say "kick" once instead of specifying band+attack+release+gamma+gate every time.
+
+Sensitivity intentionally lives **outside** the profile, on the fixture row directly. Profiles are shared engineering decisions (a "kick" responds the way a kick responds, regardless of which fixture is consuming it); sensitivity is per-installation taste (a fixture aimed at the back wall needs more gain to read across the room than the same fixture in someone's face). Coupling them inside the profile would force a proliferation of `kick_loud` / `kick_quiet` presets to cover what's really a one-axis fixture-level adjustment.
 
 ### Instrument profiles (hardcoded TS, MVP)
 
@@ -98,6 +103,8 @@ Frequency bands map to FFT bin ranges as a function of `analyser.context.sampleR
 ```ts
 // Per frame:
 //   1. Walk the rig, collect unique keys: `${track ?? 'master'}::${profile ?? 'master_full'}`.
+//      Sensitivity is NOT part of the key — it's a per-fixture multiplier
+//      applied at fixture-resolution time, not at envelope-computation time.
 //   2. For each unique key:
 //      a. Resolve analyser: master bus or mixer.getTrackAnalysers(track_id).left.
 //      b. analyser.getByteFrequencyData(buf).
@@ -107,10 +114,13 @@ Frequency bands map to FFT bin ranges as a function of `analyser.context.sampleR
 //      f. gated = shaped > profile.gate ? shaped : 0.
 //      g. envelopeByKey[key] = gated; persist envelope as new prev.
 //   3. masterLevel / masterLowLevel computed as today (no change to global path).
-//   4. audioByFixture[fixture.id] = envelopeByKey[fixture's key] for each fixture.
+//   4. Per fixture:
+//      a. raw = envelopeByKey[fixture's key].
+//      b. scaled = raw * (fixture.audio_sensitivity ?? 1.0).
+//      c. audioByFixture[fixture.id] = Math.min(1, scaled).   // saturate at 1.0
 ```
 
-The cost scales with **unique `(track, profile)` pairs the rig references**, not with fixture count. Eight fixtures all on `(drums-stem, kick)` = one envelope computation, eight reads. The `getByteFrequencyData` call is the dominant cost per analyser; everything downstream is trivial arithmetic.
+The cost scales with **unique `(track, profile)` pairs the rig references**, not with fixture count. Eight fixtures all on `(drums-stem, kick)` = one envelope computation, eight reads. Each of those eight fixtures may carry its own sensitivity multiplier — that's a single multiply + clamp at fixture-resolution time, free relative to the analyser sample. The `getByteFrequencyData` call is the dominant cost per analyser; everything downstream is trivial arithmetic.
 
 Master-bus envelopes (`masterLevel`, `masterLowLevel`) are still computed unconditionally — keeps the global path free of routing-config dependencies and is cheap (the master analyser is the same one we already use).
 
@@ -163,7 +173,7 @@ Existing scenes (the three audio-reactive ones in `audio-scenes.ts`) keep workin
 
 Two ways to set routing, in priority order:
 
-1. **Chat tool** (MVP): `light_show.route_fixture(fixture_id, track_id?, profile?)` registered on the plugin's chat surface. User says "route the front-left par to the bass track, kick profile" — agent looks up the fixture by label, looks up the track by name, calls the tool, the tool issues a row update via the engine's plugin_api. Leverages existing chat infrastructure — no new UI surface.
+1. **Chat tool** (MVP): `light_show.route_fixture(fixture_id, track_id?, profile?, sensitivity?)` registered on the plugin's chat surface. User says "route the front-left par to the bass track, kick profile, sensitivity 1.5" — agent looks up the fixture by label, looks up the track by name, calls the tool, the tool issues a row update via the engine's plugin_api. Leverages existing chat infrastructure — no new UI surface. Each kwarg is independent; passing only `sensitivity=0.7` adjusts the multiplier without changing track or profile.
 2. **Properties panel** (deferred): clicking a fixture in the 3D preview opens a sidebar with track + profile dropdowns. Real UI work; fits the larger "fixture properties" panel that doesn't exist yet. Post-MVP.
 
 DB-edited routing also works (the user has already edited `light_show__fixtures` directly to pin the RockPar 50 to address 1) but isn't a primary surface — chat-tool covers the common case more ergonomically.
@@ -180,6 +190,7 @@ DB-edited routing also works (the user has already edited `light_show__fixtures`
 # Add to the existing migration that creates light_show__fixtures
 ALTER TABLE light_show__fixtures ADD COLUMN audio_track_id TEXT REFERENCES audio_tracks(id) ON DELETE SET NULL;
 ALTER TABLE light_show__fixtures ADD COLUMN audio_profile TEXT;
+ALTER TABLE light_show__fixtures ADD COLUMN audio_sensitivity REAL;
 CREATE INDEX IF NOT EXISTS idx_light_show_fixtures_audio_track ON light_show__fixtures(audio_track_id);
 ```
 
@@ -199,12 +210,18 @@ def route_fixture(
     fixture_id: str,
     track_id: str | None = None,
     profile: str | None = None,
+    sensitivity: float | None = None,
 ) -> dict:
     """Route a light_show fixture's audio reactivity to a specific track
-    and/or instrument profile. Pass None for either to clear routing
-    (fixture falls back to master bus, master_full profile)."""
-    # validation: profile in PROFILE_NAMES, track_id exists in audio_tracks
-    # call plugin_api.upsert_light_show_fixture_audio(fixture_id, track_id, profile)
+    and/or instrument profile, optionally scaling the response with a
+    linear sensitivity multiplier. Pass None for any kwarg to clear that
+    field (track → master bus; profile → master_full; sensitivity → 1.0)."""
+    # validation:
+    #   - profile in PROFILE_NAMES
+    #   - track_id exists in audio_tracks
+    #   - sensitivity is finite, non-negative; warn (don't reject) if > 4.0
+    # call plugin_api.upsert_light_show_fixture_audio(
+    #     fixture_id, track_id, profile, sensitivity)
     # return updated row
 ```
 
@@ -245,7 +262,7 @@ export interface SceneContext {
 
 `src/plugins/light_show/LightShow3DPanel.tsx` — `MasterBusSampler` becomes a multi-bus sampler. Reads the rig + AudioMixer per frame, walks unique `(track, profile)` keys, samples each, writes envelopes to a ref. SceneRunner reads the ref into `audioByFixture` on each `apply` call.
 
-`src/plugins/light_show/light-show-client.ts` — fixture API types extend with `audioTrackId`, `audioProfile`. Existing rig fetch/upsert handlers wire these through.
+`src/plugins/light_show/light-show-client.ts` — fixture API types extend with `audioTrackId`, `audioProfile`, `audioSensitivity`. Existing rig fetch/upsert handlers wire these through.
 
 `src/plugins/light_show/audio-scenes.ts` — optionally retrofit `kick_pulse` and `beat_strobe` to consume per-fixture audio with master fallback. Not required for the feature to ship; existing scenes keep working unchanged. A new scene like `routed_pulse` that fully exercises per-fixture routing makes a good MVP demo.
 
@@ -300,7 +317,7 @@ For projects with stale schemas (`oktoberfest_show_01`, `test`): the prior schem
 
 ## Migration Path
 
-1. Engine: add `audio_track_id` + `audio_profile` columns to `light_show__fixtures`. Idempotent ALTER TABLE; runs on next engine startup against any project DB.
+1. Engine: add `audio_track_id` + `audio_profile` + `audio_sensitivity` columns to `light_show__fixtures`. Idempotent ALTER TABLE; runs on next engine startup against any project DB.
 2. Engine: extend fixture routes to read/write the new fields. No client breakage — frontend tolerates missing fields today.
 3. Engine: add `light_show.route_fixture(...)` chat tool.
 4. Frontend: add `audio-profiles.ts` with the 8 presets and helper functions.
@@ -320,8 +337,10 @@ The migration is purely additive — null defaults preserve existing behavior, n
 | Decision | Choice | Rationale |
 |---|---|---|
 | Routing granularity | Per-fixture | Aligns with MA3-style "Sound" attribute on a fixture; matches user mental model ("this fixture reacts to drums") |
-| Storage | Two nullable columns on `light_show__fixtures` (`audio_track_id`, `audio_profile`) | Smallest viable; null defaults preserve existing behavior; no separate table needed for the routing relation |
+| Storage | Three nullable columns on `light_show__fixtures` (`audio_track_id`, `audio_profile`, `audio_sensitivity`) | Smallest viable; null defaults preserve existing behavior; no separate table needed for the routing relation |
 | Master bus reference | `audio_track_id = NULL` | Simpler than a special "master" sentinel row in `audio_tracks`; null is the unambiguous "default" signal |
+| Sensitivity placement | Per-fixture column, not in the profile | Profile = engineering decision about an instrument kind (shared); sensitivity = per-installation taste about one fixture (specific). Coupling them would force `kick_loud` / `kick_quiet` profile proliferation for what's a one-axis adjustment |
+| Sensitivity range | 0.0..~2.0, default 1.0, output saturated at 1.0 | 0 = clean "mute reactivity" without unrouting; 1.0 = today's behavior unchanged; >1.0 = push toward always-on; saturation prevents accidental clipping above 1.0 from breaking scene math that assumes 0..1 inputs |
 
 ### Instrument Profiles
 
