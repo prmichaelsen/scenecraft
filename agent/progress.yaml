@@ -1379,12 +1379,12 @@ milestones:
 
   - id: milestone_19
     name: Light Show Scene Editor MVP
-    status: in_progress
+    status: completed
     started: 2026-04-25
-    completed: null
+    completed: 2026-04-26
     file: agent/milestones/milestone-19-light-show-scene-editor.md
     tasks_total: 12
-    tasks_completed: 7
+    tasks_completed: 12
     estimated_weeks: 1
     tasks:
       - id: task-151
@@ -1480,44 +1480,86 @@ milestones:
           m19/task-157-plugin-yaml (commit acaacab) stacked on m19/task-154-tools-scenes. Three new tools declared with full input_schema. scene_live marked destructive. Handler refs resolve to __all__ exports. Spec MCP tool input schemas verbatim.
       - id: task-158
         name: Backend pytest coverage
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T01:00:00Z
+        completed_date: 2026-04-26T01:30:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-158-backend-tests.md
         estimated_hours: 1
-        actual_hours: null
-        notes: "~30 tests translating spec Given/When/Then to pytest. Schema, three tools, REST, persistence, WS broadcasts, catalog roundtrip. R1-R29 backend coverage."
+        actual_hours: 0.5
+        notes: |
+          Landed on m19/task-158-backend-tests in scenecraft-engine
+          (stacked on m19/task-157-plugin-yaml). 5 test modules — schema +
+          three tools + REST — 54 tests, all green. Covers R1-R29 backend
+          surface: sparse params, RFC 7396 merge-patch, atomic batch
+          rollback, reference-blocking on delete, scene_id XOR inline,
+          replace-on-active-activate, WS broadcasts. NOT merged to main.
       - id: task-159
         name: Frontend client + types
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T01:30:00Z
+        completed_date: 2026-04-26T01:50:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-159-frontend-client.md
         estimated_hours: 0.5
-        actual_hours: null
-        notes: "light-show-client.ts: SceneRow / PlacementRow / LiveOverrideRow / PrimitiveCatalogEntry types + fetchers for all REST endpoints. Sparse params preserved on round-trip."
+        actual_hours: 0.3
+        notes: |
+          Landed on m19/task-159-frontend-client in scenecraft (stacked on
+          main since this is the first frontend task — engine repo split).
+          light-show-client.ts gained SceneRow / PlacementRow /
+          LiveOverrideRow / PrimitiveCatalogEntry + ScenePatch /
+          PlacementPatch / ActivatePayload types + 14 new fetchers
+          (full CRUD + paginated lists + live PUT/DELETE/GET). Sparse
+          params preserved verbatim on round-trip.
       - id: task-160
         name: Primitives module (apply functions + registry + catalog parity)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T01:50:00Z
+        completed_date: 2026-04-26T02:20:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-160-primitives-module.md
         estimated_hours: 1
-        actual_hours: null
-        notes: "primitives.ts: applyRotatingHead + applyStaticColor + PRIMITIVE_REGISTRY + module-init drift assertion + resolveParams helper for evaluator. Install vitest if not present. Spec R31-R38."
+        actual_hours: 0.5
+        notes: |
+          Landed on m19/task-160-primitives stacked on task-159.
+          primitives.ts: applyRotatingHead + applyStaticColor +
+          PRIMITIVE_REGISTRY, ensureCatalogLoaded (Option B REST fetch —
+          no js-yaml dep), assertCatalogRegistryParity (R31 drift guard),
+          resolveParams (catalog-defaults under stored sparse params).
+          15 vitest tests green; vitest installed in this milestone.
+          Spec R31-R38.
       - id: task-161
         name: Layered scene evaluator
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T02:20:00Z
+        completed_date: 2026-04-26T02:50:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-161-scene-evaluator.md
         estimated_hours: 1.5
-        actual_hours: null
-        notes: "scene-evaluator.ts: live > timeline > fallback precedence. Wall-clock for live, playhead-relative for placements. Sparse-params merge with catalog defaults at apply-time. Intensity-only fade envelopes. Auto-DELETE /live when fade completes. Spec R39-R48."
+        actual_hours: 0.5
+        notes: |
+          Landed on m19/task-161-evaluator stacked on task-160.
+          scene-evaluator.ts: evaluateLayeredScene with live > timeline >
+          fallback precedence. Wall-clock scene_time for live, playhead-
+          relative for placements. Intensity-only fade envelope (R42).
+          R45 fade-in/out overlap multiplies factors. Single-fire DELETE
+          /live finalizer when fade completes (Set-tracked dedup).
+          _parseSqliteTimestamp normalizes 'YYYY-MM-DD HH:MM:SS' for
+          cross-runtime Date.parse. 16 vitest tests green. Spec R39-R48.
       - id: task-162
         name: LightShow3DPanel integration + manual E2E
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T02:50:00Z
+        completed_date: 2026-04-26T06:40:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-162-panel-integration.md
         estimated_hours: 1
-        actual_hours: null
-        notes: "Wire fetch + WS subscription + reconnect-refetch (NO polling). Replace SceneRunner scene resolution with evaluateLayeredScene. Diag bar shows LIVE/TIMELINE/FALLBACK label. Manual rotating-head E2E. tsc clean. Spec R49-R50."
+        actual_hours: 0.7
+        notes: |
+          Landed on m19/task-162-panel-integration stacked on task-161
+          (commit 436412e). LightShow3DPanel now fetches scenes /
+          placements / live override alongside fixtures, calls
+          ensureCatalogLoaded once per project, and replaces SceneRunner's
+          scene resolution with evaluateLayeredScene when the catalog is
+          ready. socketConnected dep on the fetch effect drives R49
+          reconnect-refetch. Diag bar surfaces LIVE/TIMELINE/FALLBACK/IDLE
+          + scene label. tsc clean on all light_show paths; 31/31 vitest
+          tests pass. Spec R49-R50.
 
   - id: milestone_20
     name: Source Monitor Panel
