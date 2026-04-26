@@ -13,6 +13,7 @@ import {
   PRIMITIVE_REGISTRY,
   applyRotatingHead,
   applyStaticColor,
+  applyComposite,
   resolveParams,
   assertCatalogRegistryParity,
   _setCatalogForTest,
@@ -27,6 +28,7 @@ const STUB_CATALOG = {
       params_schema: {
         properties: {
           role: { type: 'string', default: 'moving_head' },
+          fixtures: { type: 'array' },
           period_sec: { type: 'number', default: 4.0 },
           pan_amplitude_rad: { type: 'number', default: Math.PI / 4 },
           tilt_center_rad: { type: 'number', default: -0.3 },
@@ -44,10 +46,17 @@ const STUB_CATALOG = {
       params_schema: {
         properties: {
           role: { type: 'string' },
+          fixtures: { type: 'array' },
           intensity: { type: 'number', default: 1.0 },
           color: { type: 'array', default: [1, 1, 1] },
         },
       },
+    },
+    {
+      id: 'composite',
+      label: 'Composite',
+      description: '',
+      params_schema: { properties: { layers: { type: 'array' } } },
     },
   ],
 }
@@ -182,9 +191,149 @@ describe('resolveParams', () => {
 })
 
 describe('PRIMITIVE_REGISTRY', () => {
-  it('contains rotating_head and static_color', () => {
+  it('contains rotating_head, static_color, and composite', () => {
     expect(PRIMITIVE_REGISTRY.rotating_head).toBe(applyRotatingHead)
     expect(PRIMITIVE_REGISTRY.static_color).toBe(applyStaticColor)
+    expect(PRIMITIVE_REGISTRY.composite).toBe(applyComposite)
+  })
+})
+
+describe('fixtures id filter (M21)', () => {
+  it('static_color: only listed ids are touched', () => {
+    const s = mkStates()
+    applyStaticColor(
+      0,
+      s,
+      { fixtures: ['mh1'], intensity: 0.7, color: [1, 0, 0] },
+      ctx,
+    )
+    expect(s.find((x) => x.id === 'mh1')!.intensity).toBe(0.7)
+    expect(s.find((x) => x.id === 'mh2')!.intensity).toBe(0)
+    expect(s.find((x) => x.id === 'par1')!.intensity).toBe(0)
+  })
+
+  it('static_color: role + fixtures intersect (AND, not OR)', () => {
+    const s = mkStates()
+    // role=par AND fixtures=[mh1] → empty intersection, nothing changes
+    applyStaticColor(
+      0,
+      s,
+      { role: 'par', fixtures: ['mh1'], intensity: 0.5, color: [0, 1, 0] },
+      ctx,
+    )
+    for (const f of s) expect(f.intensity).toBe(0)
+  })
+
+  it('rotating_head: fixtures filter overrides default role', () => {
+    const s = mkStates()
+    applyRotatingHead(
+      0,
+      s,
+      {
+        // role left at catalog default 'moving_head'; fixtures narrows further
+        role: 'moving_head',
+        fixtures: ['mh2'],
+        period_sec: 4,
+        pan_amplitude_rad: 1,
+        tilt_center_rad: -0.3,
+        tilt_amplitude_rad: 0.2,
+        tilt_period_sec: 4,
+        intensity: 1,
+        color: [1, 1, 1],
+      },
+      ctx,
+    )
+    expect(s.find((x) => x.id === 'mh1')!.intensity).toBe(0)
+    expect(s.find((x) => x.id === 'mh2')!.intensity).toBe(1)
+  })
+
+  it('empty fixtures array is treated as "no id filter"', () => {
+    // Otherwise authors would silently render nothing when removing the
+    // last id from the list.
+    const s = mkStates()
+    applyStaticColor(0, s, { fixtures: [], intensity: 0.4, color: [0, 0, 1] }, ctx)
+    // No role, no fixtures → all fixtures touched.
+    for (const f of s) expect(f.intensity).toBe(0.4)
+  })
+})
+
+describe('applyComposite (M21)', () => {
+  it('runs each sub-layer in order', () => {
+    const s = mkStates()
+    applyComposite(
+      0,
+      s,
+      {
+        layers: [
+          { type: 'static_color', params: { fixtures: ['mh1'], intensity: 0.4, color: [1, 0, 0] } },
+          { type: 'static_color', params: { fixtures: ['par1'], intensity: 0.9, color: [0, 1, 0] } },
+        ],
+      },
+      ctx,
+    )
+    expect(s.find((x) => x.id === 'mh1')!.intensity).toBe(0.4)
+    expect(s.find((x) => x.id === 'mh1')!.color).toEqual([1, 0, 0])
+    expect(s.find((x) => x.id === 'par1')!.intensity).toBe(0.9)
+    expect(s.find((x) => x.id === 'par1')!.color).toEqual([0, 1, 0])
+    expect(s.find((x) => x.id === 'mh2')!.intensity).toBe(0) // untouched
+  })
+
+  it('later layers overwrite earlier ones for overlapping fixtures', () => {
+    const s = mkStates()
+    applyComposite(
+      0,
+      s,
+      {
+        layers: [
+          { type: 'static_color', params: { fixtures: ['mh1'], intensity: 0.4, color: [1, 0, 0] } },
+          { type: 'static_color', params: { fixtures: ['mh1'], intensity: 0.9, color: [0, 1, 0] } },
+        ],
+      },
+      ctx,
+    )
+    expect(s.find((x) => x.id === 'mh1')!.color).toEqual([0, 1, 0])
+    expect(s.find((x) => x.id === 'mh1')!.intensity).toBe(0.9)
+  })
+
+  it('skips unknown sub-layer types and continues with the rest', () => {
+    const s = mkStates()
+    applyComposite(
+      0,
+      s,
+      {
+        layers: [
+          { type: 'bogus_primitive', params: {} },
+          { type: 'static_color', params: { fixtures: ['mh1'], intensity: 0.5, color: [1, 1, 0] } },
+        ],
+      },
+      ctx,
+    )
+    expect(s.find((x) => x.id === 'mh1')!.color).toEqual([1, 1, 0])
+  })
+
+  it('resolves bindings inside sub-layer params per-context', () => {
+    // beat.toggle + values picks values[beatIndex % len]
+    const s = mkStates()
+    const layers = [
+      {
+        type: 'static_color',
+        params: {
+          fixtures: ['mh1'],
+          color: { source: 'beat.toggle', mode: 'values', values: [[1, 0, 0], [0, 0, 1]] },
+        },
+      },
+    ]
+    applyComposite(0, s, { layers }, { ...ctx, beatIndex: 0 })
+    expect(s.find((x) => x.id === 'mh1')!.color).toEqual([1, 0, 0])
+    // Reset and try odd beat
+    s[0].color = [0, 0, 0]
+    applyComposite(0, s, { layers }, { ...ctx, beatIndex: 1 })
+    expect(s.find((x) => x.id === 'mh1')!.color).toEqual([0, 0, 1])
+  })
+
+  it('handles missing layers param without crashing', () => {
+    const s = mkStates()
+    expect(() => applyComposite(0, s, {}, ctx)).not.toThrow()
   })
 })
 

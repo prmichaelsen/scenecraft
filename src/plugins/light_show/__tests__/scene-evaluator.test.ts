@@ -35,6 +35,7 @@ const STUB_CATALOG = {
       params_schema: {
         properties: {
           role: { type: 'string', default: 'moving_head' },
+          fixtures: { type: 'array' },
           period_sec: { type: 'number', default: 4.0 },
           pan_amplitude_rad: { type: 'number', default: 1.0 },
           tilt_center_rad: { type: 'number', default: -0.3 },
@@ -52,10 +53,17 @@ const STUB_CATALOG = {
       params_schema: {
         properties: {
           role: { type: 'string' },
+          fixtures: { type: 'array' },
           intensity: { type: 'number', default: 1.0 },
           color: { type: 'array', default: [1, 1, 1] },
         },
       },
+    },
+    {
+      id: 'composite',
+      label: 'Composite',
+      description: '',
+      params_schema: { properties: { layers: { type: 'array' } } },
     },
   ],
 }
@@ -395,6 +403,101 @@ describe('R47 — live override fade-out', () => {
     expect(args.states[0].intensity).toBe(0)
     expect(mockedDeactivate).toHaveBeenCalledTimes(1)
     expect(mockedDeactivate).toHaveBeenCalledWith('test')
+  })
+})
+
+// ── M21: composite + bindings end-to-end ─────────────────────────────────
+
+describe('M21 — composite scene with audio-reactive bindings', () => {
+  /**
+   * The diagonal-flip use case: 4 pars in an xz rectangle. Two diagonals
+   * alternate red/blue every beat. One scene, one composite primitive,
+   * two static_color sub-layers with opposite-phase color tables driven
+   * by beat.toggle.
+   */
+  function mkRectStates(): FixtureState[] {
+    return [
+      // diagonal A: nw + se
+      { id: 'par_nw', role: 'par', intensity: 0, color: [0, 0, 0], pan: 0, tilt: 0 },
+      { id: 'par_se', role: 'par', intensity: 0, color: [0, 0, 0], pan: 0, tilt: 0 },
+      // diagonal B: ne + sw
+      { id: 'par_ne', role: 'par', intensity: 0, color: [0, 0, 0], pan: 0, tilt: 0 },
+      { id: 'par_sw', role: 'par', intensity: 0, color: [0, 0, 0], pan: 0, tilt: 0 },
+    ]
+  }
+
+  function mkDiagonalFlipScene(): SceneRow {
+    return mkScene('diagonal_flip', 'composite', {
+      layers: [
+        {
+          type: 'static_color',
+          params: {
+            fixtures: ['par_nw', 'par_se'],
+            color: { source: 'beat.toggle', mode: 'values', values: [[1, 0, 0], [0, 0, 1]] },
+            intensity: 1,
+          },
+        },
+        {
+          type: 'static_color',
+          params: {
+            fixtures: ['par_ne', 'par_sw'],
+            color: { source: 'beat.toggle', mode: 'values', values: [[0, 0, 1], [1, 0, 0]] },
+            intensity: 1,
+          },
+        },
+      ],
+    })
+  }
+
+  it('beat 0: diagonal A is red, diagonal B is blue', () => {
+    const scene = mkDiagonalFlipScene()
+    const args = baseArgs({
+      playheadTime: 5,
+      scenesById: new Map([['diagonal_flip', scene]]),
+      placements: [mkPlacement('p1', 'diagonal_flip', 0, 100)],
+      states: mkRectStates(),
+      context: { ...ctx, beatIndex: 0 },
+    })
+    const result = evaluateLayeredScene(args)
+    expect(result.activeLayer).toBe('timeline')
+    expect(args.states.find((s) => s.id === 'par_nw')!.color).toEqual([1, 0, 0])
+    expect(args.states.find((s) => s.id === 'par_se')!.color).toEqual([1, 0, 0])
+    expect(args.states.find((s) => s.id === 'par_ne')!.color).toEqual([0, 0, 1])
+    expect(args.states.find((s) => s.id === 'par_sw')!.color).toEqual([0, 0, 1])
+  })
+
+  it('beat 1: colors swap — diagonal A blue, diagonal B red', () => {
+    const scene = mkDiagonalFlipScene()
+    const args = baseArgs({
+      playheadTime: 5,
+      scenesById: new Map([['diagonal_flip', scene]]),
+      placements: [mkPlacement('p1', 'diagonal_flip', 0, 100)],
+      states: mkRectStates(),
+      context: { ...ctx, beatIndex: 1 },
+    })
+    evaluateLayeredScene(args)
+    expect(args.states.find((s) => s.id === 'par_nw')!.color).toEqual([0, 0, 1])
+    expect(args.states.find((s) => s.id === 'par_se')!.color).toEqual([0, 0, 1])
+    expect(args.states.find((s) => s.id === 'par_ne')!.color).toEqual([1, 0, 0])
+    expect(args.states.find((s) => s.id === 'par_sw')!.color).toEqual([1, 0, 0])
+  })
+
+  it('continuous binding: master.level drives intensity per frame', () => {
+    const scene = mkScene('audio_pulse', 'static_color', {
+      intensity: { source: 'master.level', scale: 1, offset: 0 },
+      color: [1, 1, 1],
+    })
+    const args = baseArgs({
+      playheadTime: 1,
+      scenesById: new Map([['audio_pulse', scene]]),
+      placements: [mkPlacement('p1', 'audio_pulse', 0, 10)],
+      states: mkRectStates(),
+      context: { ...ctx, masterLevel: 0.65 },
+    })
+    evaluateLayeredScene(args)
+    for (const s of args.states) {
+      expect(s.intensity).toBeCloseTo(0.65, 6)
+    }
   })
 })
 

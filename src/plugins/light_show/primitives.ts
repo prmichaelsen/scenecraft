@@ -1,5 +1,5 @@
 /**
- * Frontend primitive registry for the light_show scene editor (M19).
+ * Frontend primitive registry for the light_show scene editor.
  *
  * - PRIMITIVE_REGISTRY: maps catalog ``type`` -> apply() function.
  * - resolveParams: merges catalog defaults under stored sparse params (the
@@ -7,16 +7,23 @@
  * - assertCatalogRegistryParity: enforces R31 (catalog ids ↔ registry keys
  *   match exactly; fires loud when one drifts ahead of the other).
  *
- * Catalog import strategy: Option B from task-160 — fetched via REST at
- * module init. No filesystem coupling between repos, no new deps. Trade:
+ * Catalog import strategy: fetched via REST at module init (Option B from
+ * task-160). No filesystem coupling between repos, no new deps. Trade:
  * the catalog isn't available synchronously at import; ensureCatalogLoaded
- * resolves a Promise instead. Evaluator (task-161) awaits this once at
- * panel mount and caches.
+ * resolves a Promise instead. Evaluator awaits this once at panel mount.
+ *
+ * M21 additions:
+ * - ``fixtures: string[]`` filter on built-in primitives (intersected with
+ *   role) so a single primitive can target an arbitrary id list.
+ * - ``composite`` primitive: dispatches multiple sub-layers under one
+ *   scene, each with its own type/params/filters. Bindings inside
+ *   sub-layer params resolve against the same SceneContext.
  */
 
 import { fetchPrimitivesCatalog, type PrimitiveCatalogEntry } from './light-show-client'
 import type { FixtureState } from './fixtures'
 import type { SceneContext } from './scene-types'
+import { resolveBindings } from './bindings'
 
 export type PrimitiveApplyFn = (
   sceneTime: number,
@@ -30,6 +37,28 @@ export type PrimitiveApplyFn = (
 // ── Primitive implementations ────────────────────────────────────────────
 
 /**
+ * Build the per-fixture filter predicate from ``role`` and ``fixtures``
+ * params. Both are optional; when both are set, a fixture must match
+ * BOTH (role AND id allow-list — intersection, not union). Returns null
+ * for "match every fixture" so the hot path can skip the predicate
+ * entirely on the no-filter case.
+ */
+function _buildFilter(
+  params: Record<string, unknown>,
+): ((s: FixtureState) => boolean) | null {
+  const role = params.role as string | undefined
+  const fixtures = params.fixtures as string[] | undefined
+  const idSet =
+    Array.isArray(fixtures) && fixtures.length > 0 ? new Set(fixtures) : null
+  if (role === undefined && idSet === null) return null
+  return (s) => {
+    if (role !== undefined && s.role !== role) return false
+    if (idSet !== null && !idSet.has(s.id)) return false
+    return true
+  }
+}
+
+/**
  * Sinusoidal pan/tilt sweep with hold color + intensity.
  * Spec R32-R37: at sceneTime=0 pan=0 tilt=tilt_center; quarter-period
  * pan=+pan_amplitude; half-period pan=0; three-quarter pan=-pan_amplitude.
@@ -40,7 +69,7 @@ export function applyRotatingHead(
   params: Record<string, unknown>,
   _context: SceneContext,
 ): void {
-  const role = params.role as string | undefined
+  const filter = _buildFilter(params)
   const periodSec = params.period_sec as number
   const panAmp = params.pan_amplitude_rad as number
   const tiltCenter = params.tilt_center_rad as number
@@ -51,7 +80,7 @@ export function applyRotatingHead(
   const panPhase = (t / periodSec) * 2 * Math.PI
   const tiltPhase = (t / tiltPeriod) * 2 * Math.PI
   for (const s of states) {
-    if (role !== undefined && s.role !== role) continue
+    if (filter !== null && !filter(s)) continue
     s.intensity = intensity
     s.color = [color[0], color[1], color[2]]
     s.pan = Math.sin(panPhase) * panAmp
@@ -69,14 +98,63 @@ export function applyStaticColor(
   params: Record<string, unknown>,
   _context: SceneContext,
 ): void {
-  const role = params.role as string | undefined
+  const filter = _buildFilter(params)
   const intensity = params.intensity as number
   const color = params.color as [number, number, number]
   for (const s of states) {
-    if (role !== undefined && s.role !== role) continue
+    if (filter !== null && !filter(s)) continue
     s.intensity = intensity
     s.color = [color[0], color[1], color[2]]
     // pan/tilt deliberately untouched (R38)
+  }
+}
+
+/**
+ * Run multiple sub-primitives within a single scene.
+ *
+ * params shape:
+ *   { layers: [{type: string, params: Record<string, unknown>}, ...] }
+ *
+ * Each sub-layer goes through the full resolution pipeline:
+ *   stored sparse params → catalog defaults → context-bound bindings
+ *
+ * Layers run sequentially in declaration order; later layers overwrite
+ * earlier ones for any fixtures they touch. Bindings inside sub-layer
+ * params resolve against the same SceneContext as the top level — there
+ * is no nested context, no per-layer time offset (use a separate scene
+ * + placement for that).
+ *
+ * Unknown sub-layer types or malformed entries warn and skip; one bad
+ * layer never breaks the rest of the composite.
+ */
+export function applyComposite(
+  t: number,
+  states: FixtureState[],
+  params: Record<string, unknown>,
+  context: SceneContext,
+): void {
+  const layers = params.layers
+  if (!Array.isArray(layers)) {
+    console.warn('[composite] missing or non-array `layers`; nothing to render')
+    return
+  }
+  for (const raw of layers) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const type = (raw as { type?: unknown }).type
+    if (typeof type !== 'string') {
+      console.warn('[composite] layer missing string `type`; skipping')
+      continue
+    }
+    const apply = PRIMITIVE_REGISTRY[type]
+    if (!apply) {
+      console.warn(`[composite] unknown sub-layer type: ${type}`)
+      continue
+    }
+    const subStored =
+      ((raw as { params?: unknown }).params as Record<string, unknown>) ?? {}
+    const merged = resolveParams(subStored, type)
+    const resolved = resolveBindings(merged, context)
+    apply(t, states, resolved, context)
   }
 }
 
@@ -85,6 +163,7 @@ export function applyStaticColor(
 export const PRIMITIVE_REGISTRY: Record<string, PrimitiveApplyFn> = {
   rotating_head: applyRotatingHead,
   static_color: applyStaticColor,
+  composite: applyComposite,
 }
 
 let CATALOG: { primitives: PrimitiveCatalogEntry[] } | null = null

@@ -20,6 +20,7 @@
  */
 
 import { PRIMITIVE_REGISTRY, resolveParams } from './primitives'
+import { resolveBindings } from './bindings'
 import type { FixtureState } from './fixtures'
 import type {
   SceneRow,
@@ -128,7 +129,8 @@ function _evaluateLive(
 
   const resolved = _resolveLiveScene(override, args.scenesById)
   if (!resolved) return NONE
-  const params = resolveParams(resolved.sparseParams, resolved.type)
+  const merged = resolveParams(resolved.sparseParams, resolved.type)
+  const params = resolveBindings(merged, args.context)
   const apply = PRIMITIVE_REGISTRY[resolved.type]
   if (!apply) {
     console.error(`[scene-evaluator] unknown primitive type for live: ${resolved.type}`)
@@ -180,7 +182,8 @@ function _evaluateTimeline(
     return NONE
   }
   const sceneTime = args.playheadTime - p.start_time
-  const params = resolveParams(scene.params, scene.type)
+  const merged = resolveParams(scene.params, scene.type)
+  const params = resolveBindings(merged, args.context)
   const apply = PRIMITIVE_REGISTRY[scene.type]
   if (!apply) {
     console.error(`[scene-evaluator] unknown primitive type: ${scene.type}`)
