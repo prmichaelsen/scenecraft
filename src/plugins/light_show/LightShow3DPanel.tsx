@@ -287,6 +287,13 @@ function MicSampler({
 }) {
   const freqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
   const prevSpecRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
+  // Time-domain waveform buffer — used to compute the TRUE level (RMS of
+  // the raw waveform samples, 0=digital silence, 1=full-scale). Required
+  // for mic input because getByteFrequencyData's default normalization
+  // maps -60dB ambient noise to byte ~145, making "silent" register as
+  // 0.5+ in the spectral path. Time-domain RMS is the right scale for
+  // gating real-vs-noise.
+  const tdDataRef = useRef<Float32Array<ArrayBuffer> | null>(null)
 
   useFrame(() => {
     const analyser = micAnalyserRef.current
@@ -296,6 +303,41 @@ function MicSampler({
       micLowFluxRef.current *= 0.5
       return
     }
+    const fftSize = analyser.fftSize
+    if (!tdDataRef.current || tdDataRef.current.length !== fftSize) {
+      tdDataRef.current = new Float32Array(new ArrayBuffer(fftSize * 4))
+    }
+    const td = tdDataRef.current
+    analyser.getFloatTimeDomainData(td)
+    let sumSq = 0
+    for (let i = 0; i < fftSize; i++) sumSq += td[i] * td[i]
+    const tdRms = Math.sqrt(sumSq / fftSize)
+
+    // Noise gate: anything below ~-46dBFS (RMS 0.005) treated as silence.
+    // Built-in laptop mics have an ambient floor around -50 to -55dBFS,
+    // and HVAC/fan noise sits just above that. A 0.005 gate lets normal
+    // talk/music through while killing room rumble.
+    const NOISE_GATE = 0.005
+    const isHot = tdRms > NOISE_GATE
+
+    const apply = (prevVal: number, target: number) => {
+      const alpha = target > prevVal ? 0.85 : 0.08
+      return prevVal + (target - prevVal) * alpha
+    }
+
+    if (!isHot) {
+      // Below gate: bleed all derived signals toward 0. Also clear the
+      // prev-spectrum so flux doesn't get a fake spike when the gate
+      // re-opens (otherwise the first hot frame would diff against
+      // stale data).
+      micLevelRef.current = apply(micLevelRef.current, 0)
+      micLowLevelRef.current = apply(micLowLevelRef.current, 0)
+      micLowFluxRef.current *= 0.5
+      const prev = prevSpecRef.current
+      if (prev) prev.fill(0)
+      return
+    }
+
     const binCount = analyser.frequencyBinCount
     if (!freqDataRef.current || freqDataRef.current.length !== binCount) {
       freqDataRef.current = new Uint8Array(new ArrayBuffer(binCount))
@@ -303,32 +345,26 @@ function MicSampler({
     const data = freqDataRef.current
     analyser.getByteFrequencyData(data)
 
-    let sum = 0
-    for (let i = 0; i < binCount; i++) {
-      const v = data[i] / 255
-      sum += v * v
-    }
-    const rms = Math.sqrt(sum / binCount)
-
     const sampleRate = analyser.context.sampleRate
     const binHz = sampleRate / (analyser.fftSize || 2048)
     const lowBins = Math.max(2, Math.floor(150 / binHz))
     let lowSum = 0
-    for (let i = 0; i < lowBins; i++) {
+    // Skip bin 0 — it's DC and dominates the noise floor on many mics.
+    for (let i = 1; i < lowBins; i++) {
       const v = data[i] / 255
       lowSum += v * v
     }
-    const lowRms = Math.sqrt(lowSum / lowBins)
+    const lowRms = Math.sqrt(lowSum / Math.max(1, lowBins - 1))
 
-    // Spectral flux on kick band — same algorithm as MasterBusSampler.
+    // Spectral flux on kick band — also skipping bin 0.
     let prev = prevSpecRef.current
     let flux = 0
     if (prev && prev.length === binCount) {
-      for (let i = 0; i < lowBins; i++) {
+      for (let i = 1; i < lowBins; i++) {
         const d = data[i] - prev[i]
         if (d > 0) flux += d
       }
-      flux /= lowBins * 255
+      flux /= Math.max(1, lowBins - 1) * 255
     }
     if (!prev || prev.length !== binCount) {
       prev = new Uint8Array(new ArrayBuffer(binCount))
@@ -336,11 +372,11 @@ function MicSampler({
     }
     prev.set(data)
 
-    const apply = (prevVal: number, target: number) => {
-      const alpha = target > prevVal ? 0.85 : 0.08
-      return prevVal + (target - prevVal) * alpha
-    }
-    micLevelRef.current = apply(micLevelRef.current, rms)
+    // Use time-domain RMS as the true overall level. Spectral low-RMS
+    // still drives the lo= readout / mic.low_level binding because that
+    // value is band-specific (kicks vs. voice), but the gate above
+    // ensures it's only computed when audio is actually present.
+    micLevelRef.current = apply(micLevelRef.current, tdRms)
     micLowLevelRef.current = apply(micLowLevelRef.current, lowRms)
     micLowFluxRef.current = flux
   })
