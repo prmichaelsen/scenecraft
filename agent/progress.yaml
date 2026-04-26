@@ -1376,7 +1376,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-19-light-show-scene-editor.md
     tasks_total: 12
-    tasks_completed: 0
+    tasks_completed: 3
     estimated_weeks: 1
     tasks:
       - id: task-151
@@ -1411,12 +1411,21 @@ milestones:
           verified.
       - id: task-153
         name: REST endpoints (conventional REST)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-25T23:10:00Z
+        completed_date: 2026-04-26T00:00:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-153-rest-endpoints.md
         estimated_hours: 1
-        actual_hours: null
-        notes: "GET/POST /scenes, GET/PATCH/DELETE /scenes/:id; same for /placements; GET/PUT/DELETE /live (singleton); GET /primitives. Query-param filter+pagination. 409 Conflict on blocked deletes. WS broadcasts with new kind values. Spec R30, R29."
+        actual_hours: 0.8
+        notes: |
+          Landed on worktree m19/task-153-rest in scenecraft-engine
+          (commit 6516387, stacked on m19/task-152-primitives). 12 new
+          endpoints (GET /primitives, full CRUD on /scenes + /placements,
+          singleton /live with PUT/DELETE). Catalog loaded once via
+          yaml.safe_load. Blocked-delete returns structured payload
+          (blocked / blocked_by_live) per spec. WS broadcasts on every
+          mutation. Spec coverage: R4-R10, R12-R16, R18-R25, R29, R30.
+          Smoke tested end-to-end. NOT merged to main.
       - id: task-154
         name: tools_scenes MCP handler (action-dispatched)
         status: not_started
