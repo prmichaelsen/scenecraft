@@ -1,12 +1,14 @@
 project:
-  name: beatlab-synthesizer
+  name: scenecraft
   version: 0.4.0
   started: 2026-03-25
   status: in_progress
   description: |
-    Feature-rich web frontend for the beatlab pipeline — waveform editing, hit markers,
-    AI effect direction, candidate selection, image generation, and DaVinci Resolve
-    integration via headless backend
+    AI-augmented multi-track video timeline editor with an extensible plugin
+    system, LLM chat integration, and real-time light-show control. Browser-
+    based React (TanStack Start) frontend over a headless Python backend with
+    per-project SQLite state. Five first-party plugins ship today: isolate_vocals,
+    generate_music, generate_foley, light_show, transcribe.
 
 milestones:
   - id: milestone_1
@@ -2576,6 +2578,7 @@ progress:
   overall: 75
 
 recent_work:
+  - "Doc sync: README rewritten to match reality (was pre-plugin-system, pre-chat, pre-multitrack — described beatlab-synthesizer/DaVinci/wavesurfer). Project name + description in progress.yaml updated from 'beatlab-synthesizer' to 'scenecraft'. Audit at agent/reports/audit-1-feature-suite.md inventoried 5 plugins, 40+ chat tools, ~30 panels, 20 milestones (9 complete)."
   - "M19 Planned: Light Show Scene Editor MVP — clarification-14 (19 Qs across 6 items + modulation matrix + deferred), design (local.light-show-scene-editor.md), spec (local.light-show-scene-editor.md, 51 R + 66 tests), milestone doc, 12 task docs (task-151 through task-162). Three-tier data model (scenes / placements / single-slot live override), primitive catalog (rotating_head + static_color), layered evaluator (live > placement > fallback), three action-dispatched MCP tools (scenes / scene_timeline / scene_live). Server-assigned UUID scene ids; sparse param storage with RFC 7396 null-delete merge-patch; conventional REST; WS reconnect-driven refetch (no polling). ~12h estimated."
   - "M18 Planned: Foley Generation Plugin — clarification-12, design (local.foley-generation-plugin.md), milestone doc, 8 task docs (task-142 through task-149). MMAudio via Replicate (zsxkib/mmaudio), t2fx + v2fx modes, selection-driven mode dispatch, Set-in/Set-out playhead UX, pre-trim workaround for cog duration override. Introduces typed plugin_api.providers.replicate namespace as successor to M16's call_service shim. ~31h estimated."
   - "M16 Task 130: Musicful REST endpoints (POST /run, GET /generations, POST /generations/:id/retry, GET /credits) + plugin-host method routing. _rest_routes split into per-method buckets; register_rest_endpoint gains method kwarg (POST default); dispatch_rest(method, path, ...). api_server do_GET gains plugin-fallback. WS free via existing JobManager /ws/jobs seam. 51 tests pass"
