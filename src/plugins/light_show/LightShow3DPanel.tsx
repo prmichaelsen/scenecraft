@@ -59,6 +59,9 @@ import {
 import { autoPatch, fixturesToDMX, type DMXPatch } from './dmx-mapper'
 import { ensureCatalogLoaded } from './primitives'
 import { evaluateLayeredScene, type EvaluatorResult } from './scene-evaluator'
+// Vite serves this worklet as a static asset URL — registered into each
+// AudioContext that needs background-tab-resilient audio analysis.
+import audioMonitorWorkletUrl from './audio-monitor-worklet.js?url'
 
 /** Invisible component whose only job is to subscribe to the 20Hz playhead
  *  context and write it into a ref. Re-renders happen here (leaf, no DOM),
@@ -173,6 +176,73 @@ export type Beat = { time: number; intensity: number }
  * so we pick it up whenever Timeline mounts / swaps projects without any
  * explicit re-init.
  */
+/**
+ * Per-AudioContext registration cache for the audio-monitor worklet.
+ * addModule is idempotent within a context but re-loading the URL on
+ * every component remount is wasteful — keep one promise per context.
+ */
+const _workletReady = new WeakMap<BaseAudioContext, Promise<void>>()
+
+function _ensureWorkletRegistered(ctx: BaseAudioContext): Promise<void> {
+  let p = _workletReady.get(ctx)
+  if (p) return p
+  p = ctx.audioWorklet.addModule(audioMonitorWorkletUrl)
+  _workletReady.set(ctx, p)
+  return p
+}
+
+/**
+ * Attach an AudioWorkletNode to ``source`` and route its metric messages
+ * into the level/lowLevel/lowFlux refs. Returns a cleanup that disconnects
+ * the worklet node and detaches the message handler.
+ *
+ * Why this exists: the panel's existing useFrame-based FFT sampling stops
+ * firing when Chrome throttles rAF in unfocused tabs / occluded windows.
+ * The AudioWorklet runs on a dedicated audio thread that browsers do
+ * NOT throttle by tab focus, so audio analysis keeps producing updates
+ * even when the panel itself is in the background. The useFrame path
+ * stays in place as a graceful fallback for browsers without
+ * AudioWorklet support.
+ */
+async function _attachAudioMonitor(
+  source: AudioNode,
+  refs: {
+    levelRef: React.MutableRefObject<number>
+    lowLevelRef: React.MutableRefObject<number>
+    lowFluxRef: React.MutableRefObject<number>
+  },
+  cancel: { current: boolean },
+): Promise<(() => void) | null> {
+  const ctx = source.context
+  try {
+    await _ensureWorkletRegistered(ctx)
+  } catch (e) {
+    console.warn('[audio-monitor] addModule failed:', e)
+    return null
+  }
+  if (cancel.current) return null
+  const node = new AudioWorkletNode(ctx, 'audio-monitor')
+  source.connect(node)
+  // Smoothing envelope mirrors the existing sampler so scenes that
+  // bind to master.level / master.low_level see the same dynamics
+  // whether the worklet or the FFT path is producing the values.
+  const apply = (prev: number, target: number) => {
+    const alpha = target > prev ? 0.85 : 0.08
+    return prev + (target - prev) * alpha
+  }
+  node.port.onmessage = (ev: MessageEvent<{ rms: number; lowRms: number; flux: number }>) => {
+    const { rms, lowRms, flux } = ev.data
+    refs.levelRef.current = apply(refs.levelRef.current, rms)
+    refs.lowLevelRef.current = apply(refs.lowLevelRef.current, lowRms)
+    refs.lowFluxRef.current = flux
+  }
+  return () => {
+    try { source.disconnect(node) } catch { /* already disconnected */ }
+    try { node.disconnect() } catch { /* idempotent */ }
+    node.port.onmessage = null
+  }
+}
+
 function MasterBusSampler({
   masterLevelRef,
   masterLowLevelRef,
@@ -188,6 +258,55 @@ function MasterBusSampler({
   // unlike a smoothed level it spikes per kick even when steady-state
   // energy is high, which is exactly what onset detection needs.
   const prevSpecRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
+  // Track which analyser we've attached the worklet to. When the mixer
+  // rebuilds (project switch, audio reload), the analyser identity
+  // changes and we re-attach.
+  const attachedAnalyserRef = useRef<AnalyserNode | null>(null)
+  const detachRef = useRef<(() => void) | null>(null)
+
+  // Worklet attachment loop — polls every second for the mixer's master
+  // analyser and (re-)attaches the worklet whenever it shows up or
+  // changes identity. The worklet supplies levels via MessagePort which
+  // isn't throttled by tab focus, while the useFrame FFT path below
+  // stays as a fallback (its writes get overwritten by worklet writes
+  // when both are firing — last-writer-wins on the refs).
+  useEffect(() => {
+    const cancel = { current: false }
+    const tick = async () => {
+      const mixer = getActiveAudioMixer()
+      const pair = mixer?.getMasterAnalysers() ?? null
+      const analyser = pair?.left ?? null
+      if (analyser === attachedAnalyserRef.current) return
+      // Detach the previous one (if any) before attaching the new one.
+      detachRef.current?.()
+      detachRef.current = null
+      attachedAnalyserRef.current = analyser
+      if (!analyser) return
+      const detach = await _attachAudioMonitor(
+        analyser,
+        {
+          levelRef: masterLevelRef,
+          lowLevelRef: masterLowLevelRef,
+          lowFluxRef: masterLowFluxRef,
+        },
+        cancel,
+      )
+      if (cancel.current) {
+        detach?.()
+        return
+      }
+      detachRef.current = detach
+    }
+    void tick()
+    const id = window.setInterval(() => { void tick() }, 1000)
+    return () => {
+      cancel.current = true
+      window.clearInterval(id)
+      detachRef.current?.()
+      detachRef.current = null
+      attachedAnalyserRef.current = null
+    }
+  }, [masterLevelRef, masterLowLevelRef, masterLowFluxRef])
 
   useFrame(() => {
     const mixer = getActiveAudioMixer()
@@ -712,6 +831,10 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   const micLowLevelRef = useRef<number>(0)
   const micLowFluxRef = useRef<number>(0)
   const micAnalyserRef = useRef<AnalyserNode | null>(null)
+  // Cleanup handle for the mic-side AudioWorkletNode. Set when the
+  // worklet successfully attaches in handleMicToggle; called on toggle-
+  // off and on panel unmount so the worklet detaches cleanly.
+  const micWorkletDetachRef = useRef<(() => void) | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
   const micCtxRef = useRef<AudioContext | null>(null)
   const [micState, setMicState] = useState<MicState>('disconnected')
@@ -814,6 +937,8 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   // indicator lit and the mic LED on (Chrome) until the tab closes.
   useEffect(() => {
     return () => {
+      micWorkletDetachRef.current?.()
+      micWorkletDetachRef.current = null
       micStreamRef.current?.getTracks().forEach((t) => t.stop())
       micCtxRef.current?.close().catch(() => {})
       micAnalyserRef.current = null
@@ -826,6 +951,8 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
     if (micState === 'connecting') return
     // Toggle off: stop tracks, close context, clear refs.
     if (micState === 'connected') {
+      micWorkletDetachRef.current?.()
+      micWorkletDetachRef.current = null
       micStreamRef.current?.getTracks().forEach((t) => t.stop())
       try { await micCtxRef.current?.close() } catch { /* ignore */ }
       micAnalyserRef.current = null
@@ -869,6 +996,22 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
       micCtxRef.current = ctx
       micStreamRef.current = stream
       micAnalyserRef.current = analyser
+      // Background-tab-resilient analyser: the worklet runs on the audio
+      // thread and keeps writing mic.level / mic.low_level / mic flux
+      // into the refs even when Chrome throttles rAF on the panel tab.
+      // Fire-and-forget — the existing useFrame FFT path stays as a
+      // fallback (its writes get overwritten when the worklet is hot).
+      void _attachAudioMonitor(
+        source,
+        {
+          levelRef: micLevelRef,
+          lowLevelRef: micLowLevelRef,
+          lowFluxRef: micLowFluxRef,
+        },
+        { current: false },
+      ).then((detach) => {
+        if (detach) micWorkletDetachRef.current = detach
+      })
       // Log key context state up front so a silent mic ('M 0.00' but
       // expecting input) can be diagnosed from devtools.
       console.log('[mic] connected', {
