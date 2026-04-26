@@ -523,7 +523,7 @@ function SceneRunner({
       } else if (dmx?.connected) {
         dmxLabel = ` · DMX[ON, NO PATCHES]`
       }
-      const micLabel = ` · M ${micLevelRef.current.toFixed(2)}`
+      const micLabel = ` · M ${micLevelRef.current.toFixed(2)} (lo=${micLowLevelRef.current.toFixed(2)} fx=${micLowFluxRef.current.toFixed(3)})`
       diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${layerLabel}${beatLabel}${levelLabel}${micLabel}${dmxLabel}${overrideLabel}`
     }
 
@@ -816,6 +816,13 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
         (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) throw new Error('AudioContext unavailable')
       const ctx = new Ctor()
+      // The await on getUserMedia above can break the user-gesture chain
+      // such that the AudioContext lands in "suspended" state even though
+      // we created it inside a click handler. Force-resume — no-op if
+      // already running.
+      if (ctx.state === 'suspended') {
+        try { await ctx.resume() } catch { /* will surface below if it stays suspended */ }
+      }
       const source = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 2048
@@ -826,6 +833,15 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
       micCtxRef.current = ctx
       micStreamRef.current = stream
       micAnalyserRef.current = analyser
+      // Log key context state up front so a silent mic ('M 0.00' but
+      // expecting input) can be diagnosed from devtools.
+      console.log('[mic] connected', {
+        ctxState: ctx.state,
+        sampleRate: ctx.sampleRate,
+        trackLabel: stream.getAudioTracks()[0]?.label,
+        trackEnabled: stream.getAudioTracks()[0]?.enabled,
+        trackMuted: stream.getAudioTracks()[0]?.muted,
+      })
       setMicState('connected')
     } catch (err) {
       console.warn('[mic] connect failed:', err)
