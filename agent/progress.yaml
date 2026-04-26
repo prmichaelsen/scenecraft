@@ -1218,7 +1218,7 @@ milestones:
     started: 2026-04-24
     completed: null
     file: agent/milestones/milestone-17-track-contribution-point-and-light-show-plugin.md
-    tasks_total: 7
+    tasks_total: 8
     tasks_completed: 1
     estimated_weeks: 4
     tasks:
@@ -1285,6 +1285,14 @@ milestones:
         estimated_hours: 6
         actual_hours: null
         notes: "Scene List panel with hover-preview; transition candidate MCP tools (add/select/generate); end-to-end MCP authoring flow verification."
+      - id: task-169
+        name: Per-fixture audio routing + instrument profiles + sensitivity
+        status: not_started
+        started: null
+        file: agent/tasks/milestone-17-track-contribution-point-and-light-show-plugin/task-169-audio-reactive-routing.md
+        estimated_hours: 8
+        actual_hours: null
+        notes: "Cross-repo. Engine: 3 nullable columns on light_show__fixtures (audio_track_id, audio_profile, audio_sensitivity), POST /fixtures/:id/audio endpoint, light_show.route_fixture chat tool. Frontend: audio-profiles.ts with 8 hardcoded presets (kick/bass/snare/hats/guitar/vocals/pad/master_full), MasterBusSampler generalised to walk unique (track, profile) pairs, SceneContext.audioByFixture, new routed_pulse demo scene. master_full preserves today's master-bus behaviour bit-for-bit; existing scenes (beat_strobe/kick_pulse/beat_color_chase) untouched. Smoke test against big_words (RockPar 50 + ENTTEC) end-to-end. Properties-panel UI deferred."
 
   - id: milestone_18
     name: Foley Generation Plugin (Replicate BYO mode)
@@ -1376,7 +1384,7 @@ milestones:
     completed: null
     file: agent/milestones/milestone-19-light-show-scene-editor.md
     tasks_total: 12
-    tasks_completed: 3
+    tasks_completed: 7
     estimated_weeks: 1
     tasks:
       - id: task-151
@@ -1428,36 +1436,48 @@ milestones:
           Smoke tested end-to-end. NOT merged to main.
       - id: task-154
         name: tools_scenes MCP handler (action-dispatched)
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T00:30:00Z
+        completed_date: 2026-04-26T00:45:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-154-tools-scenes-handler.md
         estimated_hours: 1.5
         actual_hours: null
-        notes: "list/list_primitives/set/remove. Filter+pagination, sparse params, partial-upsert + null-delete merge-patch, atomic batches, reference-blocking on remove. Spec R4-R11."
+        actual_hours: 0.3
+        notes: |
+          m19/task-154-tools-scenes (commit f5faa10) — combined with 155+156. action dispatch, sparse params, RFC 7396 merge-patch, atomic batches, reference-blocking. Spec R4-R11.
       - id: task-155
         name: tools_scene_timeline MCP handler
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T00:30:00Z
+        completed_date: 2026-04-26T00:45:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-155-tools-scene-timeline-handler.md
         estimated_hours: 1
         actual_hours: null
-        notes: "list/set/remove. Filter (scene_id, time_range overlap) + pagination. Auto-UUID on insert. Spec R12-R17."
+        actual_hours: 0.3
+        notes: |
+          Co-landed with 154 in commit f5faa10 on m19/task-154-tools-scenes. list/set/remove with filter.time_range overlap. Atomic; rejects end<=start. Spec R12-R17.
       - id: task-156
         name: tools_scene_live MCP handler
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T00:30:00Z
+        completed_date: 2026-04-26T00:45:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-156-tools-scene-live-handler.md
         estimated_hours: 1
         actual_hours: null
-        notes: "activate/deactivate/status. scene_id-or-inline mutual exclusion. save_as creates library scene with that label. Replace-on-active-activate. Spec R18-R28."
+        actual_hours: 0.3
+        notes: |
+          Co-landed with 154 in commit f5faa10 on m19/task-154-tools-scenes. activate/deactivate/status with scene_id XOR inline + save_as. Replace-on-active-activate. Spec R18-R27.
       - id: task-157
         name: plugin.yaml MCP tool declarations
-        status: not_started
-        started: null
+        status: completed
+        started: 2026-04-26T00:30:00Z
+        completed_date: 2026-04-26T00:45:00Z
         file: agent/tasks/milestone-19-light-show-scene-editor/task-157-plugin-yaml-declarations.md
         estimated_hours: 0.5
         actual_hours: null
-        notes: "Three tool entries (scenes, scene_timeline, scene_live) per spec input_schemas. scene_live destructive:true."
+        actual_hours: 0.3
+        notes: |
+          m19/task-157-plugin-yaml (commit acaacab) stacked on m19/task-154-tools-scenes. Three new tools declared with full input_schema. scene_live marked destructive. Handler refs resolve to __all__ exports. Spec MCP tool input schemas verbatim.
       - id: task-158
         name: Backend pytest coverage
         status: not_started
