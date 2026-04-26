@@ -353,6 +353,20 @@ function SceneRunner({
   // so beatIndex increments on crossings rather than re-scanning every frame.
   const lastBeatIdxRef = useRef<number>(-1)
 
+  // Live onset detection — the fallback when no precomputed beats exist.
+  // Slow-EMA baseline of the low-band level; an onset fires when the
+  // current low-band exceeds baseline * THRESHOLD with a debounce window.
+  // This makes beat.toggle / beat.intensity / beat.index react to whatever
+  // is currently playing on master OR mic, without requiring an audio-
+  // intelligence pass on the loaded track.
+  const liveBaselineRef = useRef(0)
+  const liveBeatIndexRef = useRef(0)
+  const lastLiveBeatMsRef = useRef(0)
+  const liveBeatIntensityRef = useRef(0)
+  const ONSET_THRESHOLD = 1.4   // current must exceed baseline * THRESHOLD
+  const ONSET_FLOOR = 0.04      // and exceed an absolute floor (kill silence)
+  const ONSET_DEBOUNCE_MS = 130 // ~7.5 onsets/sec max ≈ 460 BPM ceiling
+
   useFrame((_, delta) => {
     tickRef.current++
 
@@ -369,17 +383,63 @@ function SceneRunner({
     lastBeatIdxRef.current = lastIdx
 
     const lastBeat = lastIdx >= 0 ? beats[lastIdx] : null
-    const beatAge = lastBeat !== null ? playheadTime - lastBeat.time : Infinity
-    const lastBeatIntensity = lastBeat ? lastBeat.intensity : 0
-    const beatIndex = lastIdx + 1
+    const precomputedBeatAge = lastBeat !== null ? playheadTime - lastBeat.time : Infinity
+    const precomputedBeatIntensity = lastBeat ? lastBeat.intensity : 0
+    const precomputedBeatIndex = lastIdx + 1
 
     const masterLevel = masterLevelRef.current
     const masterLowLevel = masterLowLevelRef.current
 
+    // Live onset detection — runs always, but only fed into the
+    // SceneContext when the precomputed beat list is empty. Kept always-on
+    // so swapping into a project with intelligence doesn't need to flush
+    // detector state.
+    const nowMs = performance.now()
+    // Source: max of master and mic low-bands. Whichever is louder drives.
+    // A user with master playing music gets master-driven beats; a user
+    // running a venue mic gets mic-driven; both running gives whichever
+    // peaks higher in any given frame.
+    const liveLow = Math.max(masterLowLevel, micLowLevelRef.current)
+    // Baseline: slow EMA, ~1s time constant at 60fps. Tracks the rolling
+    // "quiet level" so onset detection adapts to mix changes (loud bridge
+    // → louder baseline → only louder kicks register).
+    liveBaselineRef.current += (liveLow - liveBaselineRef.current) * 0.02
+    const baseline = liveBaselineRef.current
+    const sinceLast = nowMs - lastLiveBeatMsRef.current
+    if (
+      liveLow > ONSET_FLOOR &&
+      liveLow > baseline * ONSET_THRESHOLD &&
+      sinceLast > ONSET_DEBOUNCE_MS
+    ) {
+      liveBeatIndexRef.current++
+      // Onset intensity: how far above baseline we spiked, normalized 0..1.
+      // Baseline ~0 → use the raw value (early frames, no history yet).
+      liveBeatIntensityRef.current = Math.min(
+        1,
+        baseline > 0.001 ? (liveLow - baseline) / Math.max(baseline, 0.05) : liveLow,
+      )
+      lastLiveBeatMsRef.current = nowMs
+    }
+
+    // Choose the active source. Precomputed wins if any beats are loaded —
+    // they're frame-deterministic and survive scrubbing.
+    const usePrecomputed = beats.length > 0
+    const beatIndex = usePrecomputed
+      ? precomputedBeatIndex
+      : liveBeatIndexRef.current
+    const beatAge = usePrecomputed
+      ? precomputedBeatAge
+      : (nowMs - lastLiveBeatMsRef.current) / 1000
+    const lastBeatIntensity = usePrecomputed
+      ? precomputedBeatIntensity
+      : liveBeatIntensityRef.current
+
     if (tickRef.current % 15 === 0 && diagDomRef.current) {
       const overrideCount = overridesRef.current.size
       const overrideLabel = overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : ''
-      const beatLabel = beats.length > 0 ? ` · beat ${beatIndex}/${beats.length}` : ''
+      const beatLabel = usePrecomputed
+        ? ` · beat ${beatIndex}/${beats.length}`
+        : ` · live-beat ${beatIndex} (i=${lastBeatIntensity.toFixed(2)})`
       const levelLabel = ` · L ${masterLevel.toFixed(2)} / Lo ${masterLowLevel.toFixed(2)}`
       const layer = activeLayerRef.current
       const layerLabel =
