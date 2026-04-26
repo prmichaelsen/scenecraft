@@ -16,6 +16,11 @@ const END_OF_MSG = 0xe7
 const SEND_DMX_LABEL = 6
 const DMX_CHANNELS = 512
 
+// Transmit cadence on the USB side. DMX wire-level max is ~44Hz; this
+// gives the dongle a steady ~30Hz feed which is responsive enough to
+// look live and far below any throughput pressure.
+const TX_INTERVAL_MS = 33
+
 export type DMXOutputState = 'disconnected' | 'connecting' | 'connected' | 'error'
 
 export interface EnttecProEvents {
@@ -41,8 +46,17 @@ export class EnttecPro {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null
   private _state: DMXOutputState = 'disconnected'
   private events: EnttecProEvents
+  // The latest universe state; ``send()`` mutates this, the transmit loop
+  // reads it. Single-buffer-by-design: stale frames are useless on a
+  // continuous protocol, so we only care about whatever's in here at the
+  // moment the loop iterates.
   private lastFrame: Uint8Array = new Uint8Array(DMX_CHANNELS)
-  private sendPending = false
+  // Set to ``true`` once ``connect()`` succeeds; the transmit loop runs
+  // until this flips back to ``false`` (or until the writer is gone).
+  private transmitting = false
+  // The dedicated transmit loop's promise. Held so ``disconnect()`` can
+  // wait for it to drain before tearing down the port.
+  private transmitTask: Promise<void> | null = null
 
   constructor(events: EnttecProEvents = {}) {
     this.events = events
@@ -87,6 +101,13 @@ export class EnttecPro {
 
       this.writer = this.port.writable.getWriter()
       this.setState('connected')
+      // Start the transmit loop. It runs until ``transmitting`` flips false
+      // (disconnect) or a write throws (which sets state='error' and tears
+      // down the port). Decoupled from the React frame loop so per-frame
+      // calls to send() are O(1) memcpy and the dongle gets a steady stream
+      // at TX_INTERVAL_MS instead of bursts at 60fps.
+      this.transmitting = true
+      this.transmitTask = this.transmitLoop()
     } catch (e) {
       this.setState('error')
       this.events.onError?.((e as Error).message)
@@ -95,38 +116,48 @@ export class EnttecPro {
   }
 
   async disconnect(): Promise<void> {
+    this.transmitting = false
+    // Wait for the transmit loop to observe the flag and exit cleanly so
+    // we don't tear down the writer while a write is in flight.
+    if (this.transmitTask) {
+      try { await this.transmitTask } catch { /* loop swallows its own errors */ }
+      this.transmitTask = null
+    }
     await this.cleanup()
     this.setState('disconnected')
   }
 
   /**
-   * Queue a DMX frame for output. Non-blocking — only the most recent
-   * frame matters (DMX is a continuous protocol; stale frames are
-   * meaningless). If a write is already in flight, the new values are
-   * stored and sent when the current write completes.
+   * Update the universe state. Non-blocking; the dedicated transmit loop
+   * picks up the latest ``lastFrame`` on its next iteration. DMX is a
+   * continuous protocol — stale frames are meaningless — so we don't
+   * bother queuing; we always TX the most recent state.
+   *
+   * Per-frame from useFrame at 60fps: O(1) memcpy. The actual write rate
+   * to the dongle is throttled by the transmit loop to ~30Hz (33ms),
+   * which is well under DMX's wire-level max (~44Hz) and decouples the
+   * USB transmit cadence from React's render rate.
    */
   send(channels: Uint8Array): void {
     this.lastFrame.set(channels.subarray(0, DMX_CHANNELS))
-    if (!this.sendPending) {
-      this.sendPending = true
-      this.flush()
-    }
   }
 
-  private async flush(): Promise<void> {
-    while (this.sendPending && this.writer) {
-      this.sendPending = false
+  private async transmitLoop(): Promise<void> {
+    while (this.transmitting && this.writer) {
       const frame = buildDMXFrame(this.lastFrame)
       try {
         await this.writer.write(frame)
       } catch (e) {
         this.setState('error')
         this.events.onError?.(`Write failed: ${(e as Error).message}`)
+        // cleanup() is called by disconnect or here; either way the loop
+        // ends because writer becomes null.
         await this.cleanup()
         return
       }
-      // If send() was called during the await, sendPending is true again
-      // and we loop to send the latest values.
+      // Throttle to ~30Hz. DMX physical wire-level rate is ~44Hz max;
+      // 33ms gives us headroom and matches typical pro-grade TX rates.
+      await new Promise<void>((r) => setTimeout(r, TX_INTERVAL_MS))
     }
   }
 

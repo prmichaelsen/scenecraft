@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.25.2] - 2026-04-26
+
+### Fixed
+- **DMX output stops responding after first chat-tool change.** The `EnttecPro` instance lived in a `useRef` scoped to `LightShow3DPanel`. The dock layout remounts that panel in response to unrelated state changes (confirmed: an audio-mixer rebuild fires when timeline tracks change, which cascades into a parent re-render that remounts the panel). Each remount reset `dmxRef.current` to null and orphaned the previous `EnttecPro` — its transmit loop kept running with the last `lastFrame` value until the writer eventually errored, so users saw "first chat-tool change reaches the lights, subsequent ones don't until I refresh." Hoisted the instance to a module-level singleton (`src/plugins/light_show/dmx-ref.ts`, mirroring the existing `audio-mixer-ref.ts` pattern). The panel reads/writes via `getActiveDmx()` / `setActiveDmx()` and observes state via `useSyncExternalStore(subscribeDmx, getDmxState, ...)`. Mount/unmount of the panel no longer affects the connection — the EnttecPro keeps running and the new SceneRunner's per-frame `send()` calls reach the same instance. Side benefit: navigating away from and back to the LightShow panel preserves the active DMX connection.
+- **EnttecPro write coalescing race.** Replaced the previous `sendPending` flag + recursive-`flush()` coalescing logic with a dedicated long-running transmit loop (`transmitLoop`) started by `connect()`. `send(channels)` is now a simple `lastFrame.set(...)` — non-blocking, zero-allocation, called per-frame from `useFrame`. The transmit loop reads `lastFrame`, writes to the dongle, sleeps ~33 ms (≈30 Hz, well under DMX wire-level max ~44 Hz), repeats until disconnect or write error. Decouples USB transmit cadence from React's render rate and eliminates the race that could leave writes hung after the first successful one.
+
 ## [0.25.1] - 2026-04-26
 
 ### Changed

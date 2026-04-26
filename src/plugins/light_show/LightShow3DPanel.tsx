@@ -16,7 +16,7 @@
  * panel layout) gets a real SQL + DSL-backed replacement in M17 proper.
  */
 
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo, useSyncExternalStore } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
@@ -49,6 +49,13 @@ import {
   type LiveOverrideRow,
 } from './light-show-client'
 import { EnttecPro, type DMXOutputState } from './enttec-pro'
+import {
+  getActiveDmx,
+  setActiveDmx,
+  getDmxState,
+  setDmxState as setDmxStateSingleton,
+  subscribeDmx,
+} from './dmx-ref'
 import { autoPatch, fixturesToDMX, type DMXPatch } from './dmx-mapper'
 import { ensureCatalogLoaded } from './primitives'
 import { evaluateLayeredScene, type EvaluatorResult } from './scene-evaluator'
@@ -385,6 +392,7 @@ function SceneRunner({
 }
 
 export function LightShow3DPanel({ projectName }: { projectName?: string } = {}) {
+
   const [activeSceneId, setActiveSceneId] = useState<string>(SCENES[0].id)
   // Ref mirror of activeSceneId so SceneRunner's useFrame picks up changes
   // without needing to re-subscribe (avoids tearing down the tick).
@@ -462,9 +470,34 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   const activeLayerRef = useRef<EvaluatorResult>({ activeLayer: 'none' })
 
   // WebSerial DMX output — ENTTEC DMX USB Pro.
-  const dmxRef = useRef<EnttecPro | null>(null)
+  //
+  // The EnttecPro instance lives in a module-level singleton (dmx-ref.ts),
+  // not in a per-component useRef. Reason: this panel can be unmounted and
+  // remounted by the parent dock layout in response to unrelated state
+  // (e.g., the audio mixer rebuilding when timeline tracks change). A
+  // useRef-based instance would be orphaned on every remount and the dongle
+  // would receive a stuck frame. The singleton survives across remounts.
+  //
+  // dmxRef here is just a render-stable mirror of the singleton, kept so
+  // SceneRunner's existing useFrame closure (which reads dmxRef.current
+  // each frame) doesn't need to know about the singleton. The mirror is
+  // refreshed in a useEffect below so any re-mount picks up the live
+  // EnttecPro on first render.
+  const dmxRef = useRef<EnttecPro | null>(getActiveDmx())
   const dmxPatchesRef = useRef<DMXPatch[]>([])
-  const [dmxState, setDmxState] = useState<DMXOutputState>('disconnected')
+  const dmxState = useSyncExternalStore(
+    subscribeDmx,
+    getDmxState,
+    () => 'disconnected' as DMXOutputState,
+  )
+  useEffect(() => {
+    // Keep dmxRef in sync with the singleton across remounts and state
+    // changes. Subscribes once on mount; updates the ref synchronously
+    // whenever the singleton's instance or state changes.
+    const sync = () => { dmxRef.current = getActiveDmx() }
+    sync()
+    return subscribeDmx(sync)
+  }, [])
   const [dmxHelpOpen, setDmxHelpOpen] = useState(false)
   // Detect WebSerial after mount, never during SSR — `'serial' in navigator`
   // is always false during server render (Node has no Web Serial API), and a
@@ -486,16 +519,19 @@ export function LightShow3DPanel({ projectName }: { projectName?: string } = {})
   }, [rig])
 
   const handleDmxToggle = async () => {
-    if (dmxRef.current?.connected) {
-      await dmxRef.current.disconnect()
-      dmxRef.current = null
+    const existing = getActiveDmx()
+    if (existing?.connected) {
+      await existing.disconnect()
+      setActiveDmx(null)
       return
     }
     const pro = new EnttecPro({
-      onStateChange: setDmxState,
+      // EnttecPro state changes flow into the singleton, which broadcasts
+      // to all subscribers (including this panel's useSyncExternalStore).
+      onStateChange: setDmxStateSingleton,
       onError: (msg) => console.warn('[DMX]', msg),
     })
-    dmxRef.current = pro
+    setActiveDmx(pro)
     await pro.connect()
   }
 
