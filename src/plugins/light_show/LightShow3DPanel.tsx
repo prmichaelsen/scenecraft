@@ -387,7 +387,23 @@ function SceneRunner({
         layer.activeLayer === 'timeline' ? ` · TIMELINE: ${layer.label ?? ''}` :
         layer.activeLayer === 'fallback' ? ` · FALLBACK: ${layer.label ?? ''}` :
         ` · IDLE`
-      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${layerLabel}${beatLabel}${levelLabel}${overrideLabel}`
+      // DMX diag: if any patches exist, show the connected state, patch count,
+      // and the live intensity byte (0..255) for the first patched fixture.
+      // If this byte pulses while the physical light doesn't, the bug is at
+      // the dongle / fixture-mode / addressing level — not in our code path.
+      const dmx = dmxRef.current
+      const patches = dmxPatchesRef.current
+      let dmxLabel = ''
+      if (patches.length > 0) {
+        const f0 = patches[0]
+        const f0State = stateRef.current.find((s) => s.id === f0.fixtureId)
+        const f0Byte = f0State ? Math.round(Math.max(0, Math.min(1, f0State.intensity)) * 255) : -1
+        dmxLabel = ` · DMX[${dmx?.connected ? 'ON' : 'OFF'}, ${patches.length}p, F0(${f0.fixtureId})=${f0Byte}]`
+      } else if (dmx?.connected) {
+        dmxLabel = ` · DMX[ON, NO PATCHES]`
+      }
+      const micLabel = ` · M ${micLevelRef.current.toFixed(2)}`
+      diagDomRef.current.textContent = `ticks ${tickRef.current} · t=${timeRef.current.toFixed(1)}s${layerLabel}${beatLabel}${levelLabel}${micLabel}${dmxLabel}${overrideLabel}`
     }
 
     const context: SceneContext = {
