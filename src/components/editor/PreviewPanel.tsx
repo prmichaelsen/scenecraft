@@ -88,7 +88,12 @@ export function PreviewPanel() {
             onCurvePinUpdate={async (trId, curveKey, progress, value) => {
               const styleKey = curveKey
               const existing = (selectedTransition as Record<string, unknown>)[curveKey] as [number, number][] | null
-              const pts: [number, number][] = existing ? [...existing] : curveKey === 'transformZCurve' ? [[0, 1], [1, 1]] : [[0, 0], [1, 0]]
+              // Scale curves default to a flat-at-1.0 curve; translate
+              // curves default to flat-at-0.0. The scale axes replaced
+              // the old single "z" axis after the z-to-scaleX/scaleY
+              // split, so we match on either of the two new curve keys.
+              const isScaleCurve = curveKey === 'transformScaleXCurve' || curveKey === 'transformScaleYCurve'
+              const pts: [number, number][] = existing ? [...existing] : isScaleCurve ? [[0, 1], [1, 1]] : [[0, 0], [1, 0]]
               const idx = pts.findIndex((p) => Math.abs(p[0] - progress) < 0.005)
               if (idx >= 0) {
                 pts[idx] = [pts[idx][0], value]

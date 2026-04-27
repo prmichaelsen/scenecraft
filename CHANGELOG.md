@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.26.0] - 2026-04-27
+
+### Added
+- **Non-uniform scale on transitions.** The single `transformZCurve` (uniform zoom) is replaced with two independent curves, `transformScaleXCurve` and `transformScaleYCurve`, enabling squash/stretch/anamorphic-zoom effects per transition. The curve editor's pill bar becomes four-wide (`X | Y | Scale X | Scale Y`) with independent tab colors (X cyan, Y magenta, Scale X yellow, Scale Y orange). Per-axis ranges unchanged: X/Y in [-1, +1], Scale X/Y in [0.1, 10] log. See `agent/design/local.split-z-into-scalex-scaley.md` and `agent/tasks/unassigned/task-170-split-transform-z-into-scalex-scaley.md`.
+
+### Changed
+- **Transform scale handle in preview writes both axes.** The on-canvas scale handle in `TransformHandles` (radial drag from fixture anchor) updates both `transformScaleXCurve` and `transformScaleYCurve` to the same value — preserves the pre-split "uniform scale via drag" UX while letting users break uniformity via the curve editor's Scale X / Scale Y tabs directly.
+
+### Migration
+- Existing `transformZCurve` data is copied into both new scale curves by the engine migration, so pre-existing projects render bit-identical after upgrade. See engine-side changelog for the SQL-level details.
+
 ## [0.25.3] - 2026-04-26
 
 ### Fixed

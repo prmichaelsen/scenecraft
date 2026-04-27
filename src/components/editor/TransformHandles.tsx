@@ -56,7 +56,16 @@ export function TransformHandles({
     const p = linearProgress
     const x = tr.transformXCurve ? evaluateCurve(tr.transformXCurve, p) : (tr.transformX ?? 0)
     const y = tr.transformYCurve ? evaluateCurve(tr.transformYCurve, p) : (tr.transformY ?? 0)
-    const scale = tr.transformZCurve ? evaluateCurve(tr.transformZCurve, p) : 1
+    // The single scale handle drives uniform scale — read whichever curve
+    // is present (both should match when the drag handle was the source
+    // of the edit). Prefer ScaleX with ScaleY as fallback; if the two
+    // have diverged (user dragged them independently in the curve
+    // editor), display uses ScaleX which is the X-axis component.
+    const scale = tr.transformScaleXCurve
+      ? evaluateCurve(tr.transformScaleXCurve, p)
+      : tr.transformScaleYCurve
+        ? evaluateCurve(tr.transformScaleYCurve, p)
+        : 1
     return {
       x, y, scale,
       anchorX: tr.anchorX ?? 0.5,
@@ -223,7 +232,12 @@ export function TransformHandles({
         const curDist = Math.hypot(ev.clientX - (containerRect?.left ?? 0) - anchorPx, ev.clientY - (containerRect?.top ?? 0) - anchorPy)
         if (startDist > 5) {
           const newScale = Math.max(0.01, ds.startValX * (curDist / startDist))
-          onCurvePinUpdate(tr.id, 'transformZCurve', linearProgress, newScale)
+          // The single scale handle pins both axes to the same value —
+          // preserves the pre-split "uniform scale" UX for the drag
+          // handle; users wanting non-uniform scale use the curve
+          // editor's Scale X / Scale Y tabs directly.
+          onCurvePinUpdate(tr.id, 'transformScaleXCurve', linearProgress, newScale)
+          onCurvePinUpdate(tr.id, 'transformScaleYCurve', linearProgress, newScale)
         }
       } else if (ds.type === 'mask-center') {
         const newX = Math.max(0, Math.min(1, ds.startValX + dx))

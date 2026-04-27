@@ -1717,14 +1717,27 @@ function ChromaKeyEditor({ transition, projectName, onDataChange }: { transition
   )
 }
 
-const TRANSFORM_AXES = ['X', 'Y', 'Z'] as const
+// Four transform axes: X/Y translate + SX/SY scale. SX and SY replaced the
+// old single "Z" axis (uniform scale) so users can author independent
+// horizontal and vertical scale (squash / stretch / anamorphic zoom).
+// Old labels X/Y/Z are gone; code uses SX / SY for scale axes to keep
+// single-char keys and Record lookups short.
+const TRANSFORM_AXES = ['X', 'Y', 'SX', 'SY'] as const
 type TransformAxis = typeof TRANSFORM_AXES[number]
-const TRANSFORM_COLORS: Record<TransformAxis, string> = { X: '#00cccc', Y: '#cc44cc', Z: '#cccc00' }
-const TRANSFORM_LABELS: Record<TransformAxis, string> = { X: 'X Offset', Y: 'Y Offset', Z: 'Scale' }
-const TRANSFORM_DEFAULTS: Record<TransformAxis, number> = { X: 0, Y: 0, Z: 1 }
-const TRANSFORM_RANGES: Record<TransformAxis, { min: number; max: number; log?: boolean }> = { X: { min: -1, max: 1 }, Y: { min: -1, max: 1 }, Z: { min: 0.1, max: 10, log: true } }
-const TRANSFORM_CURVE_KEYS: Record<TransformAxis, 'transformXCurve' | 'transformYCurve' | 'transformZCurve'> = { X: 'transformXCurve', Y: 'transformYCurve', Z: 'transformZCurve' }
-const TRANSFORM_STYLE_KEYS: Record<TransformAxis, string> = { X: 'transformXCurve', Y: 'transformYCurve', Z: 'transformZCurve' }
+const TRANSFORM_COLORS: Record<TransformAxis, string> = { X: '#00cccc', Y: '#cc44cc', SX: '#eab308', SY: '#f97316' }
+const TRANSFORM_LABELS: Record<TransformAxis, string> = { X: 'X Offset', Y: 'Y Offset', SX: 'Scale X', SY: 'Scale Y' }
+const TRANSFORM_TAB_LABELS: Record<TransformAxis, string> = { X: 'X', Y: 'Y', SX: 'Scale X', SY: 'Scale Y' }
+const TRANSFORM_DEFAULTS: Record<TransformAxis, number> = { X: 0, Y: 0, SX: 1, SY: 1 }
+const TRANSFORM_RANGES: Record<TransformAxis, { min: number; max: number; log?: boolean }> = {
+  X: { min: -1, max: 1 }, Y: { min: -1, max: 1 },
+  SX: { min: 0.1, max: 10, log: true }, SY: { min: 0.1, max: 10, log: true },
+}
+const TRANSFORM_CURVE_KEYS: Record<TransformAxis, 'transformXCurve' | 'transformYCurve' | 'transformScaleXCurve' | 'transformScaleYCurve'> = {
+  X: 'transformXCurve', Y: 'transformYCurve', SX: 'transformScaleXCurve', SY: 'transformScaleYCurve',
+}
+const TRANSFORM_STYLE_KEYS: Record<TransformAxis, string> = {
+  X: 'transformXCurve', Y: 'transformYCurve', SX: 'transformScaleXCurve', SY: 'transformScaleYCurve',
+}
 
 function TransformCurveEditor({ transition, projectName, keyframes, currentTime, onDataChange }: {
   transition: Transition; projectName: string; keyframes: KfWithTime[]; currentTime: number; onDataChange?: () => void
@@ -1734,7 +1747,8 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
   const [allPoints, setAllPoints] = useState<Record<TransformAxis, CurvePoint[]>>(() => ({
     X: (transition.transformXCurve as CurvePoint[]) || [[0, 0], [1, 0]],
     Y: (transition.transformYCurve as CurvePoint[]) || [[0, 0], [1, 0]],
-    Z: (transition.transformZCurve as CurvePoint[]) || [[0, 1], [1, 1]],
+    SX: (transition.transformScaleXCurve as CurvePoint[]) || [[0, 1], [1, 1]],
+    SY: (transition.transformScaleYCurve as CurvePoint[]) || [[0, 1], [1, 1]],
   }))
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -1742,7 +1756,8 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
 
   // Dynamic ranges that expand when points approach boundaries
   const [dynamicRanges, setDynamicRanges] = useState<Record<TransformAxis, { min: number; max: number }>>(() => ({
-    X: { ...TRANSFORM_RANGES.X }, Y: { ...TRANSFORM_RANGES.Y }, Z: { ...TRANSFORM_RANGES.Z },
+    X: { ...TRANSFORM_RANGES.X }, Y: { ...TRANSFORM_RANGES.Y },
+    SX: { ...TRANSFORM_RANGES.SX }, SY: { ...TRANSFORM_RANGES.SY },
   }))
 
   // Expand range if any point is near the boundary (within 15% of range)
@@ -2173,7 +2188,7 @@ function TransformCurveEditor({ transition, projectName, keyframes, currentTime,
             className={`flex-1 text-[9px] py-1 rounded transition-colors ${activeAxis === axis ? 'text-white font-medium' : 'text-gray-500 hover:text-gray-300 bg-gray-800'}`}
             style={activeAxis === axis ? { backgroundColor: TRANSFORM_COLORS[axis] + '44', color: TRANSFORM_COLORS[axis] } : undefined}
           >
-            {axis}
+            {TRANSFORM_TAB_LABELS[axis]}
           </button>
         ))}
       </div>

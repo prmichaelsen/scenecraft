@@ -2094,7 +2094,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
         const span = toKf.timeSeconds - fromKf.timeSeconds
         const curProgress = (currentTimeRef.current - fromKf.timeSeconds) / span
         // Collect all pin times from all curves
-        const curveKeys = ['opacityCurve', 'redCurve', 'greenCurve', 'blueCurve', 'blackCurve', 'saturationCurve', 'hueShiftCurve', 'invertCurve', 'brightnessCurve', 'contrastCurve', 'exposureCurve', 'transformXCurve', 'transformYCurve', 'transformZCurve'] as const
+        const curveKeys = ['opacityCurve', 'redCurve', 'greenCurve', 'blueCurve', 'blackCurve', 'saturationCurve', 'hueShiftCurve', 'invertCurve', 'brightnessCurve', 'contrastCurve', 'exposureCurve', 'transformXCurve', 'transformYCurve', 'transformScaleXCurve', 'transformScaleYCurve'] as const
         const pinTimes = new Set<number>()
         for (const key of curveKeys) {
           const curve = (tr as Record<string, unknown>)[key] as [number, number][] | null
@@ -2156,10 +2156,14 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
               transformMode={transformMode}
               onCurvePinUpdate={(trId, curveKey, progress, value) => {
                 if (!selectedTransition) return
-                // Auto-keyframe: insert or update pin on the curve
-                const styleKey = curveKey === 'transformXCurve' ? 'transformXCurve' : curveKey === 'transformYCurve' ? 'transformYCurve' : 'transformZCurve'
+                // Auto-keyframe: insert or update pin on the curve. curveKey
+                // is one of the transformXCurve / transformYCurve /
+                // transformScaleXCurve / transformScaleYCurve names — pass
+                // through as-is; no per-key remapping needed.
+                const styleKey = curveKey
                 const existing = (selectedTransition as Record<string, unknown>)[curveKey] as [number, number][] | null
-                const pts: [number, number][] = existing ? [...existing] : curveKey === 'transformZCurve' ? [[0, 1], [1, 1]] : [[0, 0], [1, 0]]
+                const isScaleCurve = curveKey === 'transformScaleXCurve' || curveKey === 'transformScaleYCurve'
+                const pts: [number, number][] = existing ? [...existing] : isScaleCurve ? [[0, 1], [1, 1]] : [[0, 0], [1, 0]]
                 // Find existing pin near this progress (±0.005)
                 const idx = pts.findIndex((p) => Math.abs(p[0] - progress) < 0.005)
                 if (idx >= 0) {
