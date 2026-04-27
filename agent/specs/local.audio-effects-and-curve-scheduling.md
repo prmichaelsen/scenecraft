@@ -130,14 +130,14 @@ Define the exact observable behavior of the audio-effect subsystem: the 17-entry
   - `input === convolver`; `output === wet`; `node === convolver`.
   - IR load: if `row.static_params.ir` is a string, `env.loadBuiltinIr(name)` is invoked asynchronously; when it resolves with a non-null `AudioBuffer`, `convolver.buffer = buf`. The bus is operational (passthrough, `buffer = null`) immediately.
   - `setParam`: no-op (ConvolverNode has no `AudioParam`s; IR swaps require `upsertBus`).
-  - `scheduleCurve`: no-op in current code (TODO marker for task-48).
+  - `scheduleCurve`: no-op in current code (known unimplemented; see Resolved OQ-4 cross-cutting note).
 - **R26** Delay bus:
   - Nodes: `input (Gain) → delay (DelayNode, max 5.0s) → fb (Gain) → delay` (feedback loop).
   - `input === input`; `output === delay`; `node === delay`.
   - `setParam('time', v, when?)` → `delay.delayTime.setValueAtTime(v, when ?? ctx.currentTime)`.
   - `setParam('feedback', v, when?)` → `fb.gain.setValueAtTime(v, when ?? ctx.currentTime)`.
   - `setParam(<other>, …)` is a silent no-op.
-  - `scheduleCurve`: no-op in current code (TODO marker for task-48).
+  - `scheduleCurve`: no-op in current code (known unimplemented; see Resolved OQ-4 cross-cutting note).
 - **R27** Echo bus:
   - Nodes: `input (Gain) → delay (DelayNode, max 5.0s) → filter (BiquadFilter, lowpass)`.
   - `input === input`; `output === filter`; `node === delay`.
@@ -179,12 +179,42 @@ Define the exact observable behavior of the audio-effect subsystem: the 17-entry
   - `newcomerParam.setValueCurveAtTime(SIN_CURVE, fadeStartCtx, duration)` — fade-in, equal-power.
 - **R37** `COS_CURVE` and `SIN_CURVE` are `Float32Array` of length `CROSSFADE_CURVE_LEN = 128`, precomputed at module load: `cos(t·π/2)` and `sin(t·π/2)` for `t ∈ [0,1]`.
 - **R38** `isTrackEffectivelyMuted(track, allTracks)` = `true` if `track.muted`, OR if any track in `allTracks` has `solo === true` and `track.solo !== true`.
-- **R39** `sortedCurvePoints(curve)` returns `[]` for null/undefined/empty, otherwise a copy sorted ascending by `x`. It does NOT deduplicate and does NOT validate monotonicity — downstream scheduling treats whatever sort produces as ground truth.
+- **R39** `sortedCurvePoints(curve)` returns `[]` for null/undefined/empty. Otherwise it returns a copy sorted ascending by `x`, with duplicate-`x` entries deduped last-wins (the later entry in the input replaces the earlier at the same `x`). Non-monotonic input is thus clamped to a monotonic sequence downstream. (Updated per OQ-7 resolution.)
 - **R40** Coordinate systems:
   - Clip `volume_curve` x-values: normalized `[0,1]` relative to `[start_time, end_time]`.
   - Track `volume_curve` x-values: absolute seconds on the timeline.
   - `paramAnchorTime` in live playback: `ctx.currentTime` at call time.
   - `paramAnchorTime` in offline render: `0` for track curves; `max(0, clip.start_time - renderStart)` for clip curves.
+
+**Parameter validation + bypass lifecycle**
+
+- **R46** `EffectNode.setParam(name, value, when?)` MUST clamp `value` to
+  `EFFECT_TYPES[type].params[name].range` before writing to the WebAudio param.
+  Out-of-range inputs are silently clamped; the graph layer does not rely on
+  WebAudio to validate finite/in-bounds values. Applies uniformly to builders and
+  send buses.
+- **R47** `chain.setEffectEnabled(id, false)` MUST call `cancelScheduledValues(ctx.currentTime)`
+  on the effect's inner animatable `AudioParam`(s) so pending curves do not
+  continue to tick on the detached inner node. `chain.setEffectEnabled(id, true)`
+  MUST re-schedule the curve against the current playhead via the standard
+  clip/track curve helpers. The BypassManager itself still does not dispose the
+  inner node (R21). (Resolves OQ-4; the code's `TODO(task-48)` marker is removed.)
+- **R48** `scheduleClipCurveOnParam` / `scheduleTrackCurveOnParam` / `scheduleCrossfadeOnParams`
+  MUST clamp `paramAnchorTime` to `max(paramAnchorTime, ctx.currentTime)` before any
+  `cancelScheduledValues` / `setValueAtTime` call. This prevents silent-skip on
+  seek races where a helper is called with a stale anchor.
+- **R49** `EffectNode.scheduleCurve(name, points, …)` with `points.length === 0`
+  is contract-defined as **anchor-only scheduling**: it calls
+  `cancelScheduledValues(paramAnchorTime)` + `setValueAtTime(current_param_value,
+  paramAnchorTime)` and returns. No ramps are scheduled. (Resolves OQ-2.)
+- **R50** `TrackSend` with `level === 0` retains full wiring
+  (`trackGain → sendGain → bus.input`); `sendGain.gain.value === 0` is a "silent
+  send". The send counts toward `chain.sends` and toward any UI "active bus"
+  indicator. (Resolves OQ-5.)
+- **R51** `BypassManager.setEnabled(enabled)` invoked twice in the same animation
+  frame (e.g., `false → true`) MUST apply each transition as-observed; no
+  coalescing or rAF-trailing-edge batching. Each call performs at most one
+  `disconnect/connect` pair (idempotent within a given state, per R21).
 
 **Shared master-bus effect chain (`buildEffectChain` in mix-graph.ts)**
 
@@ -339,14 +369,14 @@ declare const CROSSFADE_CURVE_LEN: 128
 | 39 | `buildEffectChain` (master bus) with empty `effects` | Returns passthrough: single chain where `input === output === Gain(1)` OR equivalent head-tail passthrough | `master-bus-empty-chain-passthrough` |
 | 40 | `buildEffectChain` with disabled effect | Effect still wired (master bus has no BypassManager) | `master-bus-includes-disabled` |
 | 41 | `sortedCurvePoints([])` / null / undefined | Returns `[]` | `sorted-curve-points-empty` |
-| 42 | Effect type not in registry (DB row for a deprecated/new type) | `undefined` | → [OQ-1](#open-questions) |
-| 43 | `scheduleCurve` called with `points.length === 0` | `undefined` | → [OQ-2](#open-questions) |
-| 44 | `setParam` called with value outside the declared `range` | `undefined` | → [OQ-3](#open-questions) |
-| 45 | `setEffectEnabled(id, false)` mid-scheduled-curve on that effect | `undefined` (TODO in code: reschedule against bypassed node) | → [OQ-4](#open-questions) |
-| 46 | `TrackSend.level === 0` | `undefined` (is the bus considered disconnected or just silent?) | → [OQ-5](#open-questions) |
-| 47 | Two `BypassManager.setEnabled` calls in the same animation frame | `undefined` (idempotent guard handles same state; what about flip-flip?) | → [OQ-6](#open-questions) |
-| 48 | Clip curve with non-monotonic x-values | `undefined` (stable sort produces some order, but no validation) | → [OQ-7](#open-questions) |
-| 49 | Curve scheduled where `paramAnchorTime` is in the past relative to `ctx.currentTime` | `undefined` (WebAudio will clamp or throw; not spelled out) | → [OQ-8](#open-questions) |
+| 42 | Effect type not in registry (DB row for a deprecated/new type) | Row is skipped with `console.warn('[audio-graph] unknown effect_type=…')`; chain builds without it | `unknown-effect-type-silently-skipped-in-chain` |
+| 43 | `scheduleCurve` called with `points.length === 0` | Contract is anchor-only: `cancelScheduledValues(anchor)` + `setValueAtTime(anchor_value, anchor)`; no ramps. No early short-circuit. | `schedule-curve-empty-points-anchor-only` |
+| 44 | `setParam` called with value outside the declared `range` | Graph layer clamps to `[range.min, range.max]` before writing to the WebAudio param; never relies on WebAudio for validation | `setparam-clamps-to-range` |
+| 45 | `setEffectEnabled(id, false)` mid-scheduled-curve on that effect | `setEffectEnabled(id, false)` calls `cancelScheduledValues` on the inner param to freeze pending curves; `setEffectEnabled(id, true)` re-schedules from the current playhead | `disable-midcurve-cancels-pending`, `enable-resumes-curve-from-playhead` |
+| 46 | `TrackSend.level === 0` | Wiring is preserved (`trackGain → sendGain → bus.input`); `sendGain.gain.value === 0` is "silent send", NOT "disconnected" | `send-level-zero-preserves-wiring` |
+| 47 | Two `BypassManager.setEnabled` calls in the same animation frame | Accepted: each call performs its disconnect/connect idempotently; no coalescing. Flip-flip runs both transitions. | `bypass-flip-flip-same-frame-both-run` |
+| 48 | Clip curve with non-monotonic x-values | `sortedCurvePoints` dedupes duplicate-x (last-wins) and sorts ascending; non-monotonic input is clamped to monotonic | `sorted-curve-dedupes-duplicate-x` |
+| 49 | Curve scheduled where `paramAnchorTime` is in the past relative to `ctx.currentTime` | Helper clamps `paramAnchorTime = max(paramAnchorTime, ctx.currentTime)` before any `cancel/setValueAtTime` call | `curve-anchor-clamped-to-currenttime` |
 
 ---
 
@@ -746,6 +776,85 @@ declare const CROSSFADE_CURVE_LEN: 128
 - **loop-breaks-at-out-of-range**: no ramp is scheduled for any point with `xSec > end_time`.
 - **earlier-points-still-scheduled**: valid in-range points ARE scheduled.
 
+#### Test: unknown-effect-type-silently-skipped-in-chain (covers R12, R42, OQ-1)
+
+**Given**: A DB row for a `track_effects` entry whose `effect_type` is not in `EFFECT_TYPES`.
+**When**: `buildTrackChain` / `buildEffectChain` builds.
+**Then** (assertions):
+- **warn-emitted**: `console.warn` contains `[audio-graph] unknown effect_type=` or `[mix-graph] unknown effect_type=`.
+- **row-skipped**: the chain's effects list omits the unknown row.
+- **other-effects-wired**: known effects build and wire normally.
+- **no-ui-surface**: no additional UI event is emitted today (silent-skip is the contract).
+
+#### Test: schedule-curve-empty-points-anchor-only (covers R49)
+
+**Given**: A clip or track whose `volume_curve` is `[]` (or whose scheduled points are empty post-sort).
+**When**: `scheduleClipCurveOnParam` / `scheduleTrackCurveOnParam` runs.
+**Then** (assertions):
+- **cancel-called**: `param.cancelScheduledValues(anchor)` invoked.
+- **anchor-set**: `param.setValueAtTime(current_value_at_playhead, anchor)` invoked.
+- **no-ramps**: `linearRampToValueAtTime` NOT invoked.
+
+#### Test: setparam-clamps-to-range (covers R46)
+
+**Given**: A delay bus with param `feedback` whose range is `[0, 0.95]`.
+**When**: `bus.setParam('feedback', 1.5)` is called.
+**Then** (assertions):
+- **clamped-value**: `fb.gain.setValueAtTime(0.95, ...)` is invoked (clamped, not raw).
+- **no-webaudio-error**: no exception from the WebAudio layer.
+
+#### Test: disable-midcurve-cancels-pending (covers R47)
+
+**Given**: A chain effect with an active scheduled curve on its inner animatable param; curve still has future ramp points.
+**When**: `chain.setEffectEnabled(id, false)` is invoked.
+**Then** (assertions):
+- **cancel-called**: `cancelScheduledValues(ctx.currentTime)` observed on the inner param.
+- **bypass-applied**: the BypassManager transitions to bypass.
+- **inner-not-disposed**: inner node `.dispose()` is NOT called.
+
+#### Test: enable-resumes-curve-from-playhead (covers R47)
+
+**Given**: Same chain after `setEffectEnabled(id, false)`; playhead has advanced by 0.5s.
+**When**: `chain.setEffectEnabled(id, true)` is invoked.
+**Then** (assertions):
+- **curve-rescheduled**: a fresh `cancelScheduledValues` + `setValueAtTime` + `linearRampToValueAtTime` sequence is observed on the inner param, anchored at the current playhead.
+- **route-restored**: the BypassManager transitions back to inner.
+
+#### Test: send-level-zero-preserves-wiring (covers R50)
+
+**Given**: A `TrackSend { track_id, bus_id, level: 0 }`.
+**When**: `buildTrackChain` runs.
+**Then** (assertions):
+- **sendgain-present**: `chain.sends.has(bus_id) === true`.
+- **gain-zero**: `sendGain.gain.value === 0`.
+- **upstream-connected**: `trackGain → sendGain` edge is present.
+- **connect-send-still-invoked**: caller can still call `SendBusGraph.connectSend(bus_id, sendGain)` successfully.
+
+#### Test: bypass-flip-flip-same-frame-both-run (covers R51)
+
+**Given**: A `BypassManager` in `enabled=true, inner` state.
+**When**: `setEnabled(false)` then `setEnabled(true)` within the same animation frame (no await between).
+**Then** (assertions):
+- **disconnect-then-reconnect-observed**: one `input.disconnect()` + `input.connect(output)` pair from the first call, then a second `disconnect()` + re-wire to inner chain from the second.
+- **no-coalescing**: neither call is a no-op; both transitions execute.
+
+#### Test: sorted-curve-dedupes-duplicate-x (covers R39)
+
+**Given**: `volume_curve = [[0.3, -6], [0.3, -2], [0.7, -10]]` (duplicate `x=0.3`).
+**When**: `sortedCurvePoints(curve)` runs.
+**Then** (assertions):
+- **dedupe-last-wins**: result is `[[0.3, -2], [0.7, -10]]` (the later duplicate survived).
+- **ascending-order**: result is sorted by `x` ascending.
+
+#### Test: curve-anchor-clamped-to-currenttime (covers R48)
+
+**Given**: Helper is called with `paramAnchorTime = ctx.currentTime - 0.5` (stale, in the past).
+**When**: `scheduleClipCurveOnParam` (or track/crossfade helper) runs.
+**Then** (assertions):
+- **anchor-bumped**: `cancelScheduledValues` is called with `ctx.currentTime` (not the stale value).
+- **setvalueattime-bumped**: `setValueAtTime(..., ctx.currentTime)` is observed.
+- **ramps-offset-from-current**: any `linearRampToValueAtTime(v, t)` uses `t = ctx.currentTime + (xSec - playhead)`, not `stale_anchor + (...)`.
+
 #### Test: schedule-clip-curve-zero-length-span (covers R34)
 
 **Given**: a clip with `end_time === start_time` and one curve point at `xNorm = 0.5`.
@@ -769,14 +878,21 @@ declare const CROSSFADE_CURVE_LEN: 128
 
 ## Open Questions
 
-- **OQ-1 — Effect type not in registry (new or deprecated DB row)**: `buildTrackChain` and `buildEffectChain` log a `console.warn` and skip the row. But what SHOULD happen for a row whose `effect_type` becomes unknown (e.g., migration removed an effect; or a DB row pre-dates the current registry)? Should the UI surface an error, a placeholder effect, or silently omit? Current behavior is silent + console-only. Decision needed: (a) silent-skip (current), (b) surface event to UI, (c) raise on load.
-- **OQ-2 — `scheduleCurve` called with zero points**: `EffectNode.scheduleCurve` is declared in the type but most concrete bus implementations currently no-op (TODO task-48). Expected behavior for the volume-curve helpers when `sortedCurvePoints(…)` returns `[]` is: `cancelScheduledValues` + anchor only; no ramps. That's implicit in the code but not stated as a contract. Decide: is "anchor-only scheduling" the contract when points are empty, or should the helper short-circuit earlier? Affects whether the anchor clobbers a value the caller expects to preserve.
-- **OQ-3 — `setParam` value out of declared `range`**: No clamp, no validation in either the send-bus `setParam` or the effect factories (as far as the audio-graph layer can see). Behavior is WebAudio-defined (some params clamp, some throw on finite but out-of-bounds, some accept anything). Contract to declare: (a) clamp to range at the graph layer, (b) pass through and rely on WebAudio, (c) validate at the API/DB layer and trust inputs at the graph layer.
-- **OQ-4 — Disable effect mid-scheduled-curve**: `setEffectEnabled(id, false)` currently updates `enabled` and flips bypass. The code has a `TODO(task-48)` to reschedule pending curves against the bypassed node. Today: the curve continues to tick on the detached inner param (its values are set but the signal is routed around). Decide: (a) keep current (curve advances silently), (b) pause the curve by cancelling scheduled values on disable and re-scheduling from the current playhead on enable, (c) mirror the curve onto the bypass node. Same question for `bus.scheduleCurve` (not yet wired).
-- **OQ-5 — `TrackSend.level === 0`**: Current code creates the GainNode at level 0 and still wires `trackGain → sendGain`; caller still invokes `connectSend`. Is `level === 0` semantically "bus disconnected" (skip the wiring entirely) or "silent send" (keep wiring, only the gain is 0)? Matters for CPU overhead (a disposed bus would save the convolver tail) and for whether the send counts toward "active buses" in the UI.
-- **OQ-6 — Two `BypassManager.setEnabled` calls in the same frame**: The idempotent guard (R21) returns early only when the new state equals the current state AND `#currentRoute !== 'detached'`. For flip-flip (enabled → disabled → enabled), the second call re-enters the wiring path twice, calling `input.disconnect()` and `input.connect(output)` each time. Expected? Or should calls within the same frame be coalesced (e.g., via `requestAnimationFrame` trailing-edge)?
-- **OQ-7 — Curve with non-monotonic x-values**: `sortedCurvePoints` performs a stable ascending sort by `x` but does NOT deduplicate or reject non-monotonic inputs. If two points share an x, their original order is preserved (stable); if x is negative, it will be scheduled before the anchor and silently skipped (xSec ≤ playhead). Decide: (a) reject at the API/DB layer (curve validation), (b) clamp to monotonic at schedule time, (c) accept as-is (current).
-- **OQ-8 — Curve scheduled in the past (`paramAnchorTime < ctx.currentTime`)**: The helper calls `cancelScheduledValues(paramAnchorTime)` and `setValueAtTime(…, paramAnchorTime)` with a value that is earlier than `ctx.currentTime`. WebAudio's behavior: `setValueAtTime` in the past takes effect immediately at `ctx.currentTime` (no retroactive jump); `linearRampToValueAtTime` with a past end time clamps or is ignored. Contract to declare: this is accepted (the helper leans on WebAudio's clamping) or it is a bug and the helper should clamp `paramAnchorTime = max(paramAnchorTime, ctx.currentTime)`. Live playback passes `ctx.currentTime`, so this only matters on seek races or when offline helpers are (mis)used on a live context.
+### Resolved
+
+- **OQ-1 — Effect type not in registry**: **Resolved (codify)**. Silent-skip with `console.warn` is the contract; no UI event, no raise. Test `unknown-effect-type-silently-skipped-in-chain`.
+- **OQ-2 — `scheduleCurve` with zero points**: **Resolved (codify)**. Anchor-only: `cancelScheduledValues` + `setValueAtTime(current, anchor)`; no ramps. Requirement R49. Test `schedule-curve-empty-points-anchor-only`.
+- **OQ-3 — `setParam` out of declared range**: **Resolved (fix)**. Graph-layer clamps to `[range.min, range.max]` before writing to the WebAudio param. Requirement R46. Test `setparam-clamps-to-range`.
+- **OQ-4 — Disable effect mid-scheduled-curve**: **Resolved (fix)**. `setEffectEnabled(id, false)` cancels pending curves on the inner animatable param; `setEffectEnabled(id, true)` re-schedules from the current playhead. The code's `TODO(task-48)` marker is removed. Requirement R47. Tests `disable-midcurve-cancels-pending`, `enable-resumes-curve-from-playhead`.
+- **OQ-5 — `TrackSend.level === 0`**: **Resolved (codify)**. Wiring preserved; level 0 is "silent send" not "disconnected". Requirement R50. Test `send-level-zero-preserves-wiring`.
+- **OQ-6 — Two `BypassManager.setEnabled` calls same frame**: **Resolved (codify)**. No coalescing; each transition applied as-called. Requirement R51. Test `bypass-flip-flip-same-frame-both-run`.
+- **OQ-7 — Non-monotonic curve x-values**: **Resolved (fix)**. `sortedCurvePoints` dedupes duplicate-x (last-wins) and sorts ascending; non-monotonic input clamped to monotonic. Requirement R39 updated. Test `sorted-curve-dedupes-duplicate-x`.
+- **OQ-8 — Curve scheduled in the past**: **Resolved (fix)**. Helper clamps `paramAnchorTime = max(paramAnchorTime, ctx.currentTime)` before any schedule call. Requirement R48. Test `curve-anchor-clamped-to-currenttime`.
+
+### Cross-cutting notes
+
+- **Master-bus divergence from track bypass**: per-track chains use `BypassManager`; master bus does NOT (disabled effects still included in the master chain). This is explicit design, not a bug. Codified by R43.
+- **`SendBusGraph.scheduleCurve` TODO**: reverb/delay/echo bus `scheduleCurve` methods are currently no-ops. This is known unimplemented work and tracked as future. The contract surfaced to callers today is: calls succeed silently without scheduling. Spec does not promise automation on send-bus params until task-48 lands.
 
 ---
 

@@ -132,8 +132,11 @@ candidates-tab visibility filter.
   pool_segment id.
 - **R17**: A partial index `idx_pool_segments_derived_from` exists for
   non-null rows.
-- **R18**: There is no `ON DELETE CASCADE` or `ON DELETE SET NULL` on the
-  `derived_from` FK — see Open Questions.
+- **R18**: `derived_from` FK carries `ON DELETE SET NULL`. Hard-deleting a
+  parent promotes every dependent segment to a root (its `derived_from`
+  becomes NULL). Inserting with a non-existent `derived_from` raises
+  `sqlite3.IntegrityError` (FK enforcement assumes `PRAGMA foreign_keys=ON`
+  for project.db). (Resolves OQ-1, OQ-2.)
 
 ### Weak-Reference Provenance — context_entity_*
 
@@ -212,17 +215,42 @@ candidates-tab visibility filter.
 ### Garbage Collection
 
 - **R43**: `find_gc_candidates` returns pool_segments rows with
-  `kind='generated'` that have zero `tr_candidates` rows referencing
-  them. Segments with `kind='imported'` are never returned (user assets
+  `kind='generated'` that are unreachable via any reference path.
+  Segments with `kind='imported'` are never returned (user assets
   are never GC'd).
-- **R44**: `find_gc_candidates` does NOT consider `audio_candidates`,
-  `isolation_stems`, or plugin sidecar tables as references; see Open
-  Questions.
-- **R45**: `delete_pool_segment` is hard-delete. It deletes
-  `pool_segment_tags` rows and the `pool_segments` row; it does NOT
-  delete the on-disk file (caller responsibility) and does NOT verify
-  absence of `tr_candidates` / `audio_candidates` / `derived_from`
-  references.
+- **R44**: `find_gc_candidates` performs a full reachability query
+  across ALL reference paths: `tr_candidates`, `audio_candidates`,
+  `audio_clips.selected`, plugin sidecar tables
+  (`generate_music__tracks.pool_segment_id`,
+  `generate_foley__tracks.pool_segment_id`,
+  `isolation_stems.pool_segment_id`, `transcribe__runs`), and the
+  `derived_from` chain — if any downstream segment is kept, its
+  ancestors are kept. (Resolves OQ-6.)
+- **R45**: `delete_pool_segment` is hard-delete and performs a
+  reference check across `tr_candidates`, `audio_candidates`,
+  `audio_clips.selected`, plugin sidecar `*__tracks` tables (music,
+  foley), `isolation_stems`, `transcribe__runs`, plus the
+  `derived_from` incoming edge. Any live reference raises
+  `PoolSegmentInUseError` and aborts. Otherwise deletes
+  `pool_segment_tags` rows and the `pool_segments` row; does NOT
+  delete the on-disk file (caller responsibility). (Resolves OQ-4.)
+- **R45a**: `duration_seconds` and `byte_size` carry
+  `CHECK (… >= 0)` constraints. Negative values raise
+  `sqlite3.IntegrityError`. (Resolves OQ-5.)
+- **R45b**: `_row_to_pool_segment` emits `variant_kind`,
+  `derived_from`, `context_entity_type`, and `context_entity_id` as
+  first-class fields. The redundant bulk-variant-kind resolver in
+  `get_audio_clips` is removed. (Resolves OQ-8.)
+- **R45c**: Broken-link pattern — a pool_segment row whose
+  `pool_path` refers to a now-missing file persists in the DB.
+  Clients detect the 404 at fetch time and render a
+  "file missing — remove or reimport" placeholder in bin /
+  waveform / preview. GC treats broken-link rows normally per
+  reachability. (Resolves OQ-3.)
+- **R45d**: Concurrent pool_segments DAL calls from the same
+  `(user, project)` are out of scope per INV-1 (single-writer per
+  user-project). No in-process lock is held across DAL calls.
+  (Resolves OQ-7.)
 
 ### Soft vs Hard Delete
 
@@ -346,8 +374,8 @@ get_audio_clip_effective_path(project_dir, audio_clip_dict) -> str
 | 11 | `set_pool_segment_context` without variant_kind arg                         | Only context_entity_* written; existing variant_kind untouched                | `set-context-preserves-variant-kind` |
 | 12 | `set_pool_segment_context` with variant_kind='bogus-kind'                   | Value stored verbatim (no enum check); frontend falls back to default cyan   | `variant-kind-accepts-unknown-values` |
 | 13 | Insert segment with `derived_from` = valid parent id                        | FK stored; chain readable by id                                               | `derived-from-stored` |
-| 14 | Insert segment with `derived_from` = non-existent id                        | `undefined`                                                                   | → [OQ-1](#open-questions) |
-| 15 | Delete a segment that is referenced via `derived_from` by another           | `undefined`                                                                   | → [OQ-2](#open-questions) |
+| 14 | Insert segment with `derived_from` = non-existent id                        | Raises `sqlite3.IntegrityError` (FK enforced; migration adds ON DELETE SET NULL) | `derived-from-bad-parent-raises-integrity` |
+| 15 | Delete a segment that is referenced via `derived_from` by another           | Parent deleted; dependents' `derived_from` set to NULL (promoted to roots)    | `derived-from-parent-delete-sets-null` |
 | 16 | `add_pool_segment_tag` same (seg, tag) twice                                | Second call is a no-op; first tagged_by/tagged_at preserved                   | `tag-idempotent` |
 | 17 | `remove_pool_segment_tag` on absent tag                                     | Silent no-op                                                                  | `remove-tag-missing-noop` |
 | 18 | `find_segments_by_tag` unknown tag                                          | Empty list                                                                    | `find-by-unknown-tag-empty` |
@@ -357,7 +385,7 @@ get_audio_clip_effective_path(project_dir, audio_clip_dict) -> str
 | 22 | `clone_tr_candidates` preserves slot + added_at + rewrites source           | All src rows copied; target's source column = `new_source`                    | `clone-preserves-slot-added-at` |
 | 23 | `count_tr_candidate_refs` on unreferenced segment                           | Returns 0                                                                     | `count-zero-for-unreferenced` |
 | 24 | `find_gc_candidates`                                                        | Returns only kind='generated' with zero tr_candidates refs                    | `gc-excludes-imported-and-referenced` |
-| 25 | `find_gc_candidates` — segment referenced ONLY by audio_candidates          | Returned as GC candidate (audio refs not consulted)                           | `gc-ignores-audio-candidates` |
+| 25 | `find_gc_candidates` — segment referenced ONLY by audio_candidates          | NOT returned (full reachability: audio_candidates consulted)                  | `gc-respects-audio-candidates` |
 | 26 | `add_audio_candidate` with `source='bogus'`                                 | Assertion error; no row inserted                                              | `rejects-bad-audio-source` |
 | 27 | `add_audio_candidate` same (clip, seg) twice                                | Second call is a no-op                                                        | `audio-candidate-idempotent` |
 | 28 | `get_audio_candidates`                                                      | Joined pool_segments, newest-first (added_at DESC)                            | `audio-candidates-sorted-desc` |
@@ -371,10 +399,10 @@ get_audio_clip_effective_path(project_dir, audio_clip_dict) -> str
 | 36 | Clip's selected pool_segment has variant_kind='music'                       | Clip rendered with purple colors                                              | `clip-color-follows-variant-kind` |
 | 37 | Clip's selected pool_segment has variant_kind=NULL                          | Clip rendered with default cyan                                               | `null-variant-kind-default-color` |
 | 38 | Candidates tab listing for a keyframe                                       | Filters to pool_segments with variant_kind IS NULL                            | `candidates-tab-filters-variant-kind` |
-| 39 | pool_path points to a file that has been deleted from disk                  | `undefined`                                                                   | → [OQ-3](#open-questions) |
+| 39 | pool_path points to a file that has been deleted from disk                  | Row persists; client detects 404 and renders broken-link placeholder (bin / waveform / preview) | `broken-link-row-persists-client-detects` |
 | 40 | Concurrent `add_pool_segment_tag` (same seg/tag, two connections)           | Both succeed (second is no-op); exactly one row; no exception                 | `concurrent-tag-add-no-error` |
-| 41 | `delete_pool_segment` when referenced by tr_candidates                      | `undefined`                                                                   | → [OQ-4](#open-questions) |
-| 42 | Insert pool_segment with negative `duration_seconds` / `byte_size`          | `undefined`                                                                   | → [OQ-5](#open-questions) |
+| 41 | `delete_pool_segment` when referenced by tr_candidates (or other live refs) | Raises `PoolSegmentInUseError`; no row deleted                                 | `delete-raises-when-live-refs` |
+| 42 | Insert pool_segment with negative `duration_seconds` / `byte_size`          | Raises `sqlite3.IntegrityError` (CHECK constraint ≥ 0); no row inserted        | `negative-metadata-rejected` |
 | 43 | `generation_params` is an unserializable object                             | `json.dumps` raises; insert fails before SQL executes                         | `rejects-non-json-generation-params` |
 
 ---
@@ -783,14 +811,116 @@ seg_a has `pool_path='pool/segments/a.wav'`
 - **raises-typeerror**: `json.dumps` raises `TypeError`
 - **no-row**: no `pool_segments` row created (INSERT never executes)
 
-#### Test: gc-ignores-audio-candidates (covers R43, R44)
+#### Test: gc-respects-audio-candidates (covers R43, R44, OQ-6)
 
 **Given**: generated seg S referenced ONLY by an `audio_candidates`
 row (no tr_candidates refs)
 **When**: `find_gc_candidates()`
 **Then** (assertions):
-- **s-in-result**: S is returned (junction not consulted)
-- **note**: this surfaces the known gap — see OQ-6
+- **s-excluded**: S is NOT returned (audio_candidates is a live ref)
+
+#### Test: gc-respects-audio-clips-selected (covers R44, OQ-6)
+
+**Given**: generated seg S referenced ONLY by `audio_clips.selected`
+(no junction rows)
+**When**: `find_gc_candidates()`
+**Then** (assertions):
+- **s-excluded**: S is NOT returned
+
+#### Test: gc-respects-plugin-sidecar-tables (covers R44, OQ-6)
+
+**Given**: generated seg S referenced by
+`generate_music__tracks.pool_segment_id` (or
+`generate_foley__tracks` / `isolation_stems` / `transcribe__runs`)
+**When**: `find_gc_candidates()`
+**Then** (assertions):
+- **s-excluded**: S is NOT returned for any of the sidecar tables
+
+#### Test: gc-respects-derived-from-chain (covers R44, OQ-6)
+
+**Given**: parent P (unreferenced directly) with descendant D that
+IS referenced by `tr_candidates`
+**When**: `find_gc_candidates()`
+**Then** (assertions):
+- **p-excluded**: P is NOT returned — kept because a downstream
+  descendant is live
+
+#### Test: derived-from-bad-parent-raises-integrity (covers R18, OQ-1)
+
+**Given**: project.db with `PRAGMA foreign_keys=ON`; no row with
+`id='deadbeef'`
+**When**: direct INSERT of a pool_segment with `derived_from='deadbeef'`
+**Then** (assertions):
+- **raises-integrity**: raises `sqlite3.IntegrityError`
+- **no-row**: no pool_segments row inserted
+
+#### Test: derived-from-parent-delete-sets-null (covers R18, OQ-2)
+
+**Given**: parent P inserted; child C with `derived_from=P.id`
+**When**: `delete_pool_segment(P.id)` (no live references to P)
+**Then** (assertions):
+- **parent-gone**: `get_pool_segment(P.id)` returns `None`
+- **child-promoted**: C's `derived_from` is `NULL`
+- **child-survives**: C row still exists
+
+#### Test: broken-link-row-persists-client-detects (covers R45c, OQ-3)
+
+**Given**: pool_segment S whose `pool_path` file has been unlinked from
+disk
+**When**: DAL read and client fetch
+**Then** (assertions):
+- **row-persists**: `get_pool_segment(S.id)` still returns the row
+- **effective-path-unchanged**: `get_audio_clip_effective_path` still
+  returns S's `pool_path` (DAL does not validate on-disk presence)
+- **client-placeholder**: client-side 404 handler surfaces a
+  "file missing — remove or reimport" placeholder
+
+#### Test: delete-raises-when-live-refs (covers R45, OQ-4)
+
+**Given**: pool_segment S referenced by at least one of:
+`tr_candidates`, `audio_candidates`, `audio_clips.selected`,
+`generate_music__tracks`, `generate_foley__tracks`,
+`isolation_stems`, `transcribe__runs`, or another segment's
+`derived_from`
+**When**: `delete_pool_segment(S.id)`
+**Then** (assertions):
+- **raises-in-use**: raises `PoolSegmentInUseError`
+- **row-still-present**: `get_pool_segment(S.id)` still returns dict
+- **tags-still-present**: any `pool_segment_tags` rows for S remain
+
+#### Test: negative-metadata-rejected (covers R45a, OQ-5)
+
+**Given**: schema with CHECK constraints applied
+**When**: `add_pool_segment(duration_seconds=-1, byte_size=-1, …)`
+**Then** (assertions):
+- **raises-integrity**: raises `sqlite3.IntegrityError`
+- **no-row**: pool_segments row count unchanged
+
+#### Test: variant-kind-stamping-no-internal-lock (covers R45d, OQ-7)
+
+**Given**: the DAL module for pool_segments
+**When**: source is inspected for locking primitives
+**Then** (assertions):
+- **no-threading-lock**: `add_pool_segment` /
+  `set_pool_segment_context` do not hold a threading.Lock /
+  asyncio.Lock across the call (enforcement deferred to INV-1
+  single-writer-per-(user,project) contract)
+
+#### Test: dto-emits-m16-columns (covers R45b, OQ-8)
+
+**Given**: a pool_segment with `variant_kind='music'`,
+`derived_from=<parent_id>`, `context_entity_type='transition'`,
+`context_entity_id='tr_1'`
+**When**: `get_pool_segment(id)`
+**Then** (assertions):
+- **variant-kind-present**: dict includes `variantKind='music'`
+- **derived-from-present**: dict includes `derivedFrom=<parent_id>`
+- **context-entity-type-present**: dict includes
+  `contextEntityType='transition'`
+- **context-entity-id-present**: dict includes
+  `contextEntityId='tr_1'`
+- **get-audio-clips-no-bulk-resolve**: `get_audio_clips` reads
+  variant_kind from the joined row, not via a second query
 
 #### Test: concurrent-tag-add-no-error (covers R23)
 
@@ -857,44 +987,51 @@ row (no tr_candidates refs)
 
 ## Open Questions
 
-- **OQ-1** — Insert with `derived_from` pointing to a non-existent
-  pool_segment id: SQLite by default does not enforce FKs unless
-  `PRAGMA foreign_keys=ON`. Is that pragma enabled for project.db?
-  What is the observable behavior — silent orphan, or FK violation?
-  → Behavior row 14.
-- **OQ-2** — When a pool_segment P is hard-deleted and another segment
-  C has `derived_from = P.id`, the current DAL does not check for or
-  null out dangling `derived_from`. Is this intentional (archival
-  history is fine even if broken) or a bug? → Behavior row 15.
-- **OQ-3** — A pool_segment row's `pool_path` points to a file that
-  has been deleted from disk. Does any DAL function detect this?
-  `get_audio_clip_effective_path` returns the path regardless —
-  playback will fail at the WebAudio layer. Should there be a
-  `verify_pool_segments` helper? → Behavior row 39.
-- **OQ-4** — `delete_pool_segment` docstring says "Caller is
-  responsible for verifying no tr_candidates references exist." No
-  assertion enforces this. Should the DAL raise on orphaning, or
-  continue to trust the caller? → Behavior row 41.
-- **OQ-5** — Negative `duration_seconds` or `byte_size`: no CHECK
-  constraint. Is the contract "values must be non-negative" or
-  "store whatever the caller supplies"? → Behavior row 42.
-- **OQ-6** — `find_gc_candidates` only considers `tr_candidates`.
-  Segments referenced only by `audio_candidates`, `isolation_stems`,
-  or plugin sidecars (e.g., `generate_music__tracks`) are listed as
-  GC-able. This can erase in-use audio. Is this a known limitation
-  to fix, or a deliberate choice because generated audio is assumed
-  regenerable? → see Behavior row 25.
-- **OQ-7** — `variant_kind` is populated by plugins post-insert via
-  `set_pool_segment_context`. Is the handshake "insert then stamp"
-  the permanent shape, or should `add_pool_segment` take `variant_kind`
-  and `derived_from` directly? Currently a race window exists where a
-  newly-inserted row has `variant_kind=NULL` and a UI poll could
-  briefly show the wrong color.
-- **OQ-8** — `_row_to_pool_segment` does NOT include `variant_kind`,
-  `derived_from`, `context_entity_type`, or `context_entity_id` in its
-  DTO. The bulk-resolver at line 3181 pulls variant_kind separately
-  for audio_clips. Should the DTO be extended for symmetry, or is the
-  split intentional (DTOs-by-consumer)?
+### Resolved
+
+**OQ-1 (resolved)**: Insert with `derived_from` pointing to a non-existent
+pool_segment id. **Decision**: migration adds `derived_from REFERENCES
+pool_segments(id) ON DELETE SET NULL`; `PRAGMA foreign_keys=ON` assumed
+for project.db; insert with bad parent raises `sqlite3.IntegrityError`.
+**Tests**: `derived-from-bad-parent-raises-integrity`.
+
+**OQ-2 (resolved)**: Hard-deleting a parent pool_segment when descendants
+carry `derived_from = parent.id`. **Decision**: ON DELETE SET NULL
+semantics promotes descendants to roots; no orphan pointers post-migration.
+**Tests**: `derived-from-parent-delete-sets-null`.
+
+**OQ-3 (resolved)**: pool_path points to a file deleted from disk.
+**Decision**: codify broken-link pattern — row persists; clients detect
+404 on fetch and render "file missing — remove or reimport" placeholder;
+GC still applies reachability rules normally. **Tests**:
+`broken-link-row-persists-client-detects`.
+
+**OQ-4 (resolved)**: `delete_pool_segment` with live references.
+**Decision**: DAL performs reference check across all junction / sidecar
+tables plus `derived_from` incoming edge; any live reference raises
+`PoolSegmentInUseError`. **Tests**: `delete-raises-when-live-refs`.
+
+**OQ-5 (resolved)**: Negative `duration_seconds` / `byte_size`.
+**Decision**: add CHECK (>= 0) constraints at migration; violations raise
+`sqlite3.IntegrityError`. **Tests**: `negative-metadata-rejected`.
+
+**OQ-6 (resolved)**: `find_gc_candidates` audio blindness. **Decision**:
+rewrite as full reachability query across all reference paths (tr /
+audio / audio_clips.selected / plugin sidecar tables / isolation_stems /
+transcribe runs / derived_from chain). **Tests**:
+`gc-respects-audio-candidates`, `gc-respects-audio-clips-selected`,
+`gc-respects-plugin-sidecar-tables`, `gc-respects-derived-from-chain`.
+
+**OQ-7 (resolved)**: `variant_kind` post-insert race. **Decision**:
+closed per INV-1 — concurrent writes from the same (user, project) are
+out of scope. The "insert then stamp" handshake remains; no in-process
+lock is introduced. **Tests**: `variant-kind-stamping-no-internal-lock`
+(negative-assertion).
+
+**OQ-8 (resolved)**: DTO incomplete. **Decision**: `_row_to_pool_segment`
+includes `variant_kind`, `derived_from`, `context_entity_type`,
+`context_entity_id`; redundant bulk-variant-kind resolve in
+`get_audio_clips` removed. **Tests**: `dto-emits-m16-columns`.
 
 ---
 

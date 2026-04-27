@@ -90,7 +90,9 @@ and duration bounds `min: 1.0, max: 30.0`.
 a `panels` contribution (`id: foley-generations`, `title: Foley`,
 `component: FoleyGenerationsPanel`, `registry: PanelRegistry`), chat tool
 `generate_foley`, variant kind `foley→orange`, invariants (`no-raw-db-access`,
-`survives-ws-disconnect`).
+`survives-ws-disconnect`). **Note**: the manifest's `foley-generations` id is NOT
+honored at runtime — `index.ts::activate` imperatively registers the panel under
+`foley_generations` (underscored). See R31 for the known-bug note.
 
 **R3. Activation.** Backend `activate(plugin_api, context)` registers the three REST
 routes and triggers `resume_in_flight`. Frontend `activate(host, context)` registers
@@ -184,9 +186,14 @@ populated with a user-visible message.
 calls `impl.run` with the original generation's params, returning the new
 `{generation_id, job_id, status, mode}`.
 
-**R19. WS events.** On `/ws/jobs` the worker emits `job_started`, `job_progress`
-(`detail: 'pretrim' | 'predicting' | 'downloading'`), `job_completed`
-(`{generation_id, pool_segment_id}`), and `job_failed` (`{error}`).
+**R19. WS events.** On the unified `/ws` socket (per INV-4) the worker broadcasts events
+namespaced under the plugin id:
+`generate_foley__job_started`, `generate_foley__job_progress`
+(`detail: 'pretrim' | 'predicting' | 'downloading'`), `generate_foley__job_completed`
+(`{generation_id, pool_segment_id}`), and `generate_foley__job_failed` (`{error}`).
+Plugin uses `plugin_api.broadcast_event('generate-foley', event_type, payload)` —
+it MUST NOT open its own WebSocket. The legacy `/ws/jobs` path is deprecated and
+not used by this plugin.
 
 **R20. Frontend REST client shapes.** `runFoleyGeneration`, `fetchFoleyGenerations`,
 `retryFoleyGeneration` target the three endpoints exactly as declared; base URL from
@@ -249,6 +256,29 @@ adds:
 - `v2fx` missing `source_candidate_id` or in/out → `ValueError`.
 - Variant count != 1 → `ValueError`.
 
+**R29. R9a allowlist exception (INV-2).** Plugins MUST NOT import from
+`scenecraft.db` directly; access goes through `plugin_api`. R9a enforcement is a
+CI grep over `src/scenecraft/plugins/*/`, not a runtime hook. `generate_foley` has
+one documented exception: `generate_foley.py::_set_derived_from` imports
+`scenecraft.db` to set `pool_segments.derived_from` until the helper is promoted
+into `plugin_api`. This exception is recorded in the CI allowlist and is expected
+to be cleaned up post-spec; no new raw-db call sites are permitted.
+
+**R30. Unified WebSocket (INV-4).** Plugin MUST NOT open its own WS endpoint.
+All worker→client events flow through `plugin_api.broadcast_event('generate-foley',
+event_type, payload)` which multiplexes over the single project WS, with the client
+dispatching on the `generate_foley__` prefix.
+
+**R31. Panel id mismatch — known bug.** The frontend `plugin.yaml` declares
+`panels: [{id: foley-generations, ...}]` (hyphenated) but `index.ts::activate`
+calls `host.registerPanel({id: 'foley_generations', ...})` (underscored).
+`register_declared` (which would honor the manifest) is not used by this plugin's
+frontend today; activation is imperative. The imperative `registerPanel` call
+wins, so the runtime id is `foley_generations`. This is a known inconsistency to
+be fixed when generate_foley migrates to the canonical manifest shape
+(cf. plugin-host-and-manifest OQ-5). Consumers referencing the panel today MUST
+use the runtime id `foley_generations`, not the manifest id.
+
 ---
 
 ## Interfaces / Data Shapes
@@ -310,12 +340,15 @@ interface GenerateFoleyResponse {
 
 MIME type: `application/x-scenecraft-stem`. `effectAllowed='copy'`.
 
-### WS events (on `/ws/jobs`)
+### WS events (on unified `/ws` socket — INV-4)
 
-- `job_started`   — `{job_id, generation_id}`
-- `job_progress`  — `{job_id, stage: 'pretrim' | 'predicting' | 'downloading'}`
-- `job_completed` — `{job_id, generation_id, pool_segment_id}`
-- `job_failed`    — `{job_id, generation_id, error}`
+Plugin broadcasts via `plugin_api.broadcast_event('generate-foley', type, payload)`;
+event names arrive on the client as:
+
+- `generate_foley__job_started`   — `{job_id, generation_id}`
+- `generate_foley__job_progress`  — `{job_id, stage: 'pretrim' | 'predicting' | 'downloading'}`
+- `generate_foley__job_completed` — `{job_id, generation_id, pool_segment_id}`
+- `generate_foley__job_failed`    — `{job_id, generation_id, error}`
 
 ### SQL schemas
 
@@ -595,11 +628,12 @@ Between steps 3 and 5:
 - **error-message**: response `error` contains `"still running"` (or `"still pending"`).
 - **no-new-job**: no new `generate_foley__generations` row is created.
 
-#### Test: `frontend-activate-registers-panel` (covers R3)
+#### Test: `frontend-activate-registers-panel` (covers R3, R31)
 **Given**: Plugin module loaded.
 **When**: `activate(host, context)` is called.
 **Then**:
 - **panel-registered**: `host.registerPanel` called with `{id:'foley_generations', title:'Foley', Component: FoleyGenerationsPanel}`.
+- **runtime-id-is-underscored**: the effective panel id at runtime is `foley_generations`, NOT the manifest's `foley-generations` (see R31 known-bug note).
 
 #### Test: `backend-activate-registers-routes` (covers R3)
 **Given**: Backend plugin module.
@@ -772,12 +806,14 @@ Between steps 3 and 5:
 ## Open Questions
 
 **OQ-1. Playhead at exactly the clip boundary when `Set in`/`Set out`.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 What is the captured value when `currentTime` equals the clip's in-boundary or
 out-boundary exactly? The code path has no boundary clamp; the captured value is
 the raw `currentTime`. Unclear whether zero-duration or exact-boundary ranges
 should be rejected earlier. Behavior marked `undefined`.
 
 **OQ-2. In-point set, out-point null, submit attempted.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 The UI gate blocks submit; but REST-side behavior when a caller sends
 `source_in_seconds` without `source_out_seconds` is "v2fx mode requires both" only if
 a `source_candidate_id` is also passed. If the client bypasses the UI and sends
@@ -785,28 +821,33 @@ partial ranges without `source_candidate_id`, the request routes into t2fx and t
 in-seconds value is silently ignored. Is that desired? Behavior marked `undefined`.
 
 **OQ-3. v2fx with source candidate deleted mid-job.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 If `source_candidate_id` is deleted from the pool between `Generate` click and
 pretrim resolution, `_resolve_candidate_source_path` raises `ValueError("candidate
 … not found in pool")`. Whether the generation should then be `failed` with that
 error string, or refunded, or retried is not codified. Behavior marked `undefined`.
 
 **OQ-4. Foley duration beyond MMAudio's sweet spot.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 The product ceiling is 30s but MMAudio quality degrades past ~10–12s. Is there
 an expected UI affordance or warning beyond 12s? Today there is none. Behavior
 marked `undefined`.
 
 **OQ-5. Concurrent generations for the same entity.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 Nothing prevents multiple simultaneous `generate_foley` calls for the same
 transition + candidate pair. Each spawns its own daemon thread; outputs land as
 separate pool segments. Whether this should serialize, dedupe, or cancel-newer
 is unspecified. Behavior marked `undefined`.
 
 **OQ-6. Foley drag-tile dropped onto a video track.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 Drop rules are owned by the core timeline, not the plugin. The drag payload has
 `stem_type='foley'` and `variant_kind='foley'`; core decides whether a video track
 rejects the drop or snaps it to the nearest audio track. Behavior marked `undefined`.
 
 **OQ-7. Pre-submit cost estimate.**
+**Deferred**: plugin; core-feature OQs take priority; revisit post-spec-pass.
 No cost preview is surfaced before clicking Generate. `get_balance()` is a
 provider-level concern and not wired to the panel. Whether a per-job estimate
 (in USD or Replicate units) should render before submit is undecided. Behavior

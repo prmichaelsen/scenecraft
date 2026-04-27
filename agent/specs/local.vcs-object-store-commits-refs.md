@@ -243,8 +243,9 @@ now-UTC-isoformat.
 - Deletes rows where `last_active < now - max_age_days`
 - Unlinks each deleted row's WC file if it exists
 - Returns the count of deleted rows
-- No global lock; concurrent prune + checkout races are `undefined`
-  (see OQ-5)
+- No global lock; concurrent prune + checkout from the same
+  (user, project) are out of scope per INV-1 (single-writer). Startup
+  sweep (R6.6) covers the orphaned-WC cleanup path.
 
 **R5.8** `delete_session(session_id)`:
 - Returns `False` if the session is not found
@@ -262,12 +263,51 @@ now-UTC-isoformat.
 5. Calls `set_ref(branch, commit_hash)`
 6. Returns the full commit dict
 
-**R6.2** Steps 1–5 are **not transactional**. A crash between step 4
-(commit written) and step 5 (ref advanced) leaves the commit orphaned
-in the store; re-running `commit_working_copy` with identical bytes
-will dedup the snapshot, re-hash an identical commit metadata (same
-parents, author, message; DIFFERENT timestamp), and produce a new
-commit hash.
+**R6.2** Steps 1–5 are **not transactional** (codified per OQ-7). A crash
+between step 4 (commit written) and step 5 (ref advanced) leaves the
+commit orphaned in the store; re-running `commit_working_copy` with
+identical bytes will dedup the snapshot, re-hash an identical commit
+metadata (same parents, author, message; DIFFERENT timestamp), and
+produce a new commit hash. Orphan commits are accepted (space bounded
+by dedup); no WAL-style recovery is introduced.
+
+**R6.3** Concurrent `commit_working_copy` calls on the same branch are
+last-writer-wins (codified per OQ-1 + INV-1). Both commits persist in
+the object / commit stores; the branch tip points to whichever
+`set_ref` landed second. The "losing" commit is still reachable by
+hash but not via the branch ref. No internal mutex is held across
+`commit_working_copy`. (Concurrent writes from the same (user, project)
+are out of scope per INV-1.)
+
+**R6.4** First commit on a new branch uses canonical `parents=[]`.
+`parents=[""]` is invalid. Multi-parent commits are reserved — today
+`create_commit` accepts only `len(parents) <= 1`; future merge engine
+will lift this. (Resolves OQ-8, OQ-9.)
+
+**R6.5** Object-store corruption detection. If `checkout_branch`
+encounters a commit whose `db_hash` has no corresponding
+`objects/<hash>.db`, it raises `ObjectStoreCorrupted("missing object
+for commit <hash>")` rather than letting `FileNotFoundError` escape
+raw. (Resolves OQ-5.)
+
+**R6.6** Startup sweep. On engine startup, the VCS layer iterates the
+`users/*/sessions/` directories and removes any `*.db` file that no
+current `sessions.db` row references. This cleans up old WCs that
+`checkout_branch` was unable to unlink (per R4.6, swallowed OSError).
+(Resolves OQ-3.)
+
+**R6.7** Externally-deleted WC. If a session's `working_copy` file is
+removed out-of-band between session create and checkout,
+`has_uncommitted_changes` returns False (WC missing) and checkout
+transparently re-copies from the tip commit snapshot. No error is
+raised. (Resolves OQ-4.)
+
+**R6.8** Ref writes are not multi-ref-atomic. `delete_branch` racing
+with `commit_working_copy` / `checkout_branch` against the same branch
+is last-writer-wins per INV-1; session-to-ref integrity is NOT an
+invariant this spec enforces. A session may legitimately hold a
+`branch` string naming a now-deleted ref — the WC bytes remain valid.
+(Resolves OQ-2.)
 
 ---
 
@@ -406,14 +446,14 @@ delete_session(sc_root, session_id) -> bool
 | 47 | `delete_session` missing | Returns `False` | `delete-session-missing-returns-false` |
 | 48 | `commit_working_copy` first commit on branch | `parents=[]`; ref advanced | `commit-working-copy-first-commit` |
 | 49 | `commit_working_copy` subsequent commit | `parents=[prev_tip]`; ref advanced | `commit-working-copy-advances-ref` |
-| 50 | Two concurrent `commit_working_copy` calls on same branch | `undefined` — last `set_ref` wins; earlier commit becomes orphan reachable only by hash | → [OQ-1](#open-questions) |
-| 51 | `delete_branch` races with `checkout_branch` to same branch | `undefined` — no lock between ref check and mutate | → [OQ-2](#open-questions) |
-| 52 | Checkout when new WC file is OS-locked by another process | `undefined` — new-WC `copy2` may fail with OSError mid-op; session row not updated; old WC still referenced | → [OQ-3](#open-questions) |
+| 50 | Two concurrent `commit_working_copy` calls on same branch | Last-writer-wins: both commits persist in object/commit stores; branch tip points to whichever `set_ref` landed second; losing commit reachable only by hash | `concurrent-commits-orphan-reachable-by-hash` |
+| 51 | `delete_branch` races with `checkout_branch` to same branch | Last-writer-wins: delete-after-checkout orphans session ref pointer; commit-after-delete recreates ref. Both acceptable. | `ref-delete-commit-race-last-writer-wins` |
+| 52 | Checkout when new WC file is OS-locked by another process | Codified current: swallow OSError + log on old-WC unlink; startup sweep removes stale session WCs not referenced by any session row | `checkout-swallows-old-wc-unlink-error`, `startup-sweeps-stale-wcs` |
 | 53 | `commit_working_copy` first commit on a branch (no prior ref) | `parents=[]` (explicitly empty list, NOT `[""]`) | `commit-working-copy-first-commit` |
-| 54 | Switching to a branch whose WC file was externally deleted between create_session and checkout | `undefined` — `has_uncommitted_changes` returns `False` (WC missing), checkout proceeds and repopulates WC from tip | → [OQ-4](#open-questions) |
-| 55 | Object-store file for a commit's `db_hash` is missing | `undefined` — `checkout_branch` via `copy_snapshot_to` raises `FileNotFoundError` (not wrapped as `BranchError`) | → [OQ-5](#open-questions) |
-| 56 | Branch name contains Unicode letters (e.g. "feature-ß") | Rejected by `_BRANCH_NAME_RE` — `BranchError`. Current regex is ASCII-only | `validate-branch-name-rejects-unicode` |
-| 57 | Branch name with valid Unicode intent but caller expected support | `undefined` whether this is desired behavior or a bug | → [OQ-6](#open-questions) |
+| 54 | Switching to a branch whose WC file was externally deleted between create_session and checkout | Codified: `has_uncommitted_changes` returns False (WC missing); checkout transparently re-copies from commit snapshot | `wc-externally-deleted-recopied-from-tip` |
+| 55 | Object-store file for a commit's `db_hash` is missing | Raises `ObjectStoreCorrupted("missing object for commit <hash>")`; never silent | `checkout-raises-object-store-corrupted` |
+| 56 | Branch name contains Unicode letters (e.g. "feature-ß") | Rejected by `_BRANCH_NAME_RE` — `BranchError`. ASCII-only is intentional | `validate-branch-name-rejects-unicode` |
+| 57 | Branch name with valid Unicode intent but caller expected support | Rejected — ASCII-only is the intentional constraint | `validate-branch-name-ascii-only-intentional` |
 | 58 | Writing a ref while another process reads it | File-level atomicity from `write_text` on the same filesystem; concurrent readers see either old or new content, never torn | `set-ref-atomic-on-same-fs` |
 | 59 | Multi-ref atomicity (update two branches together) | Not supported — each `set_ref` is a separate file write | `set-ref-no-multi-ref-atomicity` |
 | 60 | Coexistence with legacy `checkpoints` table | Out of scope for this spec; VCS does not read/write the checkpoints table | `vcs-ignores-checkpoints-table` |
@@ -987,7 +1027,110 @@ locking. New WC path differs from old.
 **Then**:
 - **raises-brancherror**: Each raises `BranchError`.
 
-_Note_: Whether this is desired is tracked in [OQ-6](#open-questions).
+#### Test: validate-branch-name-ascii-only-intentional (covers R4.1, OQ-6)
+
+**Given**: The `_BRANCH_NAME_RE` regex source.
+**When**: inspected.
+**Then**:
+- **no-re-unicode-flag**: regex does not include `re.UNICODE` or a
+  Unicode-letter character class
+- **ascii-intentional**: spec comment cites filesystem-portability as
+  rationale
+
+#### Test: concurrent-commits-orphan-reachable-by-hash (covers R6.3, OQ-1)
+
+**Given**: Branch `main` at tip `P`. Two concurrent
+`commit_working_copy(..., "main", ...)` calls from distinct users (or
+separate processes) with different bodies; both complete.
+**When**: Both `set_ref` calls land; second wins.
+**Then**:
+- **both-commits-persist**: both `<hash1>.json` and `<hash2>.json`
+  exist under `commits/`
+- **both-objects-persist**: both `<db_hash1>.db` and `<db_hash2>.db`
+  exist under `objects/`
+- **ref-points-to-second**: `get_ref("main")` equals the
+  second-writer's commit hash
+- **orphan-retrievable**: `get_commit(project_dir, losing_hash)`
+  returns a dict
+
+#### Test: commit-working-copy-no-internal-lock (covers R6.3, INV-1)
+
+**Given**: The `commit_working_copy` source.
+**When**: inspected.
+**Then**:
+- **no-threading-lock**: no `threading.Lock` / `asyncio.Lock` held
+  across the function body
+- **no-fcntl-lock**: no `fcntl.flock` on the project dir or any file
+
+#### Test: ref-delete-commit-race-last-writer-wins (covers R6.8, OQ-2)
+
+**Given**: Branch `feature-x` exists with tip `T`.
+**When**: `delete_branch("feature-x")` and
+`commit_working_copy(..., "feature-x", ...)` are invoked concurrently.
+**Then**:
+- **delete-first-commit-recreates**: if delete lands first, commit's
+  `set_ref` recreates the ref file
+- **commit-first-delete-removes**: if commit lands first, delete
+  removes the ref, orphaning the commit
+- **no-exception-either-order**: neither ordering raises
+
+#### Test: startup-sweeps-stale-wcs (covers R6.6, OQ-3)
+
+**Given**: `users/<name>/sessions/` contains a `.db` file whose path
+is not referenced by any row in `sessions.db`.
+**When**: engine startup's VCS sweep runs.
+**Then**:
+- **stale-file-removed**: the orphaned WC file is deleted
+- **referenced-files-kept**: WCs whose paths appear in `sessions.db`
+  remain
+
+#### Test: wc-externally-deleted-recopied-from-tip (covers R6.7, OQ-4)
+
+**Given**: Session created for branch with tip `T`; `session.working_copy`
+file is subsequently deleted out-of-band.
+**When**: `checkout_branch(session_id, target_branch)` is called.
+**Then**:
+- **no-exception**: returns normally
+- **wc-recopied**: new WC file exists with bytes matching tip's
+  `db_hash` object
+- **has-uncommitted-false**: `has_uncommitted_changes` returns False
+  (because WC was missing pre-checkout)
+
+#### Test: checkout-raises-object-store-corrupted (covers R6.5, OQ-5)
+
+**Given**: `refs/feature-x` points to commit `T` whose JSON is present,
+but `objects/<T.db_hash>.db` has been deleted.
+**When**: `checkout_branch(..., "feature-x")`.
+**Then**:
+- **raises-object-store-corrupted**: raises `ObjectStoreCorrupted`
+  whose message mentions `T` or its `db_hash`
+- **not-filenotfounderror**: the raw `FileNotFoundError` is wrapped
+- **session-unchanged**: session row not mutated
+
+#### Test: commit-ref-non-transactional-accepted (covers R6.2, OQ-7)
+
+**Given**: `commit_working_copy` is called; the process is killed
+between step 4 (commit JSON written) and step 5 (`set_ref`).
+**When**: the process restarts and re-runs `commit_working_copy` with
+identical WC bytes.
+**Then**:
+- **snapshot-deduped**: object-store `<db_hash>.db` is the same single
+  file
+- **new-commit-hash**: new commit produces a different hash because
+  `timestamp` differs
+- **orphan-accepted**: the partially-written commit remains in
+  `commits/` with no harm; no recovery code runs
+
+#### Test: create-commit-rejects-multi-parent (covers R6.4, OQ-9)
+
+**Given**: A caller passing `parents=[A, B]` to `create_commit`.
+**When**: called.
+**Then**:
+- **raises**: raises `ValueError` (or equivalent) citing
+  "multi-parent commits not supported"
+- **no-commit-file**: no `commits/*.json` written
+
+_Note_: Unicode rejection is intentional per OQ-6 resolution.
 
 ---
 
@@ -1009,94 +1152,55 @@ _Note_: Whether this is desired is tracked in [OQ-6](#open-questions).
 
 ## Open Questions
 
-### OQ-1 — Concurrent commits on the same branch
+### Resolved
 
-Two concurrent `commit_working_copy` calls against the same branch have
-no locking between `get_ref` (step 2) and `set_ref` (step 5). The
-second call's `set_ref` wins; the first commit becomes orphaned (still
-present in `commits/` and `objects/`, but not pointed to by any ref and
-reachable only if the caller kept the hash).
+**OQ-1 (resolved)**: Concurrent commits on the same branch.
+**Decision**: codify last-writer-wins per INV-1 (single-writer per
+(user, project)). Object-store is content-addressed so both commits
+persist; losing commit is reachable by hash. No CAS, no lockfile.
+**Tests**: `concurrent-commits-orphan-reachable-by-hash`,
+`commit-working-copy-no-internal-lock`.
 
-**Needs decision**:
-- Is this acceptable (rely on single-writer-per-branch convention)?
-- Should `set_ref` become CAS (expect-old-hash → write-new-hash)?
-- Should commits coordinate via a project-level lockfile?
+**OQ-2 (resolved)**: Ref update race with branch delete.
+**Decision**: codify same last-writer-wins. Session-to-ref integrity
+is NOT an invariant; delete-after-commit orphans, commit-after-delete
+recreates ref — both acceptable. **Tests**:
+`ref-delete-commit-race-last-writer-wins`.
 
-### OQ-2 — Ref update race with branch delete
+**OQ-3 (resolved)**: Session WC locked during checkout.
+**Decision**: codify current swallow + log on old-WC unlink. Add
+startup sweep: on engine startup, remove stale session WCs not
+referenced by any `sessions.db` row. **Tests**:
+`checkout-swallows-old-wc-unlink-error`, `startup-sweeps-stale-wcs`.
 
-`delete_branch` and `checkout_branch` / `commit_working_copy` against
-the same branch have no cross-operation coordination. A delete racing
-with a checkout can result in: checkout validates existence, delete
-removes the ref, checkout's `copy_snapshot_to` succeeds but the
-session ends up with a `branch` field naming a now-nonexistent ref.
+**OQ-4 (resolved)**: Externally-deleted WC between create_session and
+checkout. **Decision**: codify silent re-copy from commit snapshot.
+**Tests**: `wc-externally-deleted-recopied-from-tip`.
 
-**Needs decision**: Is session-to-ref integrity a required invariant,
-or is "ref gone, session points at it" acceptable (with the WC still
-valid bytes-wise)?
+**OQ-5 (resolved)**: Object-store file missing for a commit's
+`db_hash`. **Decision**: raise `ObjectStoreCorrupted("missing object
+for commit <hash>")` — never silent, never bare `FileNotFoundError`.
+**Tests**: `checkout-raises-object-store-corrupted`.
 
-### OQ-3 — Session WC locked during checkout
+**OQ-6 (resolved)**: Unicode branch names. **Decision**: ASCII-only is
+the intentional constraint (filesystem-portability). No change to
+regex. **Tests**: `validate-branch-name-rejects-unicode`,
+`validate-branch-name-ascii-only-intentional`.
 
-If the new WC path is locked by another process when `copy_snapshot_to`
-is called (e.g. a previous session still has a SQLite connection open
-to that exact path — note R5.2 puts all of a user's branches on
-collision-free paths, but branch-name collisions like
-`feature/x` vs `feature--x` after slash substitution could collide
-in theory), `shutil.copy2` raises an exception mid-checkout. Session
-row is NOT updated, old WC is NOT unlinked (unlink step is never
-reached), caller sees exception.
+**OQ-7 (resolved)**: Commit-ref transaction. **Decision**: accept
+current non-transactional behavior. Orphaned commits are harmless;
+space bounded by dedup; no WAL-style recovery added. **Tests**:
+`commit-ref-non-transactional-accepted`.
 
-**Needs decision**: Is the current "raise through" behavior intended,
-or should the code retry / rename around / report a `BranchError`?
+**OQ-8 (resolved)**: First commit parents shape. **Decision**:
+`parents=[]` is canonical for the root commit on a branch.
+`parents=[""]` is invalid input. **Tests**:
+`commit-working-copy-first-commit` (already present).
 
-### OQ-4 — Switching to a branch whose WC file was externally deleted
-
-If the new-WC target path was externally deleted between session
-creation and checkout, `copy_snapshot_to` simply recreates it (via
-`shutil.copy2`). This is observable as a silent re-materialization.
-
-**Needs decision**: Is this silent re-creation desirable? Should the
-code emit a warning / log?
-
-### OQ-5 — Object store file missing for a commit's `db_hash`
-
-If `commits/<T>.json` exists but `objects/<db_hash>.db` was deleted,
-`checkout_branch` raises `FileNotFoundError` (from `load_snapshot` via
-`copy_snapshot_to`) — NOT a `BranchError`. The exception escapes past
-the error-handling contract the rest of `checkout_branch` uses.
-
-**Needs decision**: Should this be wrapped as `BranchError("Object
-store corrupted: missing db_hash for commit <T>")`? Or is the raw
-`FileNotFoundError` intended as a "this is catastrophic, don't hide
-it" signal?
-
-### OQ-6 — Unicode branch names
-
-The regex `^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$` is ASCII-only.
-Unicode letters are rejected.
-
-**Needs decision**: Is ASCII-only intentional (filesystem-portability
-concern for cross-platform sync)? Or is this a bug that should be
-fixed with `re.UNICODE` + a Unicode-letter character class?
-
-### OQ-7 — Commit-ref transaction
-
-R6.2 notes that `commit_working_copy` is not transactional across
-store-commit-ref. A crash between `create_commit` and `set_ref`
-orphans the commit.
-
-**Needs decision**: Acceptable as-is (orphans are harmless, space
-bounded by dedup), or should there be a WAL-style "pending-commit"
-state that's cleaned up at startup?
-
-### OQ-8 — Multi-parent (merge) commits
-
-`create_commit`'s signature accepts `parents: list[str]` of arbitrary
-length, but no caller produces more than one, and `list_commits` only
-walks `parents[0]`.
-
-**Needs decision**: Should the spec forbid `len(parents) > 1` (raise
-on input) until merge is implemented? Or preserve the shape for
-forward-compat?
+**OQ-9 (resolved)**: Multi-parent (merge) commits. **Decision**:
+single-parent only today; `create_commit` raises on
+`len(parents) > 1`. Multi-parent reserved for future merge engine.
+**Tests**: `create-commit-rejects-multi-parent`.
 
 ---
 

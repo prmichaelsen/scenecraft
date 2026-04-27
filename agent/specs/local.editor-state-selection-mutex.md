@@ -57,7 +57,11 @@ Retroactive black-box spec derived from:
 12. **R12**. The returned setters (`setSelectedKeyframe`, etc.) and `registerCallbacks` are stable references across renders of the provider (wrapped in `useCallback` with empty deps) and safe to include in effect dependency arrays without causing loops.
 13. **R13**. The context does NOT hold, expose, or mutate: playhead time, `isPlaying`, project data, job state, preview URL, or context-menu visibility. Those live in sibling contexts.
 14. **R14**. Entity payload types: `selectedKeyframe` is `KeyframeWithTime | null` (a `Keyframe` plus a derived numeric `timeSeconds`); `selectedTransition` is `Transition | null`; the three id fields are `string | null`. No integrity check is performed against `EditorDataContext` — a stale or foreign id is accepted verbatim (see R-15, OQ-2, OQ-3).
-15. **R15**. `null` is the only "cleared" sentinel. `undefined`, missing key, or other falsy values are not valid input for setters per the TypeScript contract; runtime behavior with `undefined` is `undefined` (OQ-5).
+15. **R15**. `null` is the canonical "cleared" sentinel. Setters normalize `undefined` → `null` at entry (per OQ-5 resolution), so the mutex clear path fires correctly for both. Other falsy values are still out-of-contract for setters.
+16. **R16 (new, OQ-2)**. The provider subscribes to `EditorDataContext` and auto-clears any selection slot whose underlying entity has been soft-deleted (`deleted_at` set) or is missing from the current data set. The clear writes `null` to that slot only; other slots are untouched.
+17. **R17 (new, OQ-3)**. The provider resets ALL five selection slots to `null` when the project id changes. Wiring is either `<EditorStateProvider key={projectId}>` (remount) or an internal effect watching project id. Callbacks bundle is also reset to `{}`.
+18. **R18 (new, OQ-4)**. `registerCallbacks` has no unmount detection. Callers MUST pair registration with cleanup inside the same effect (return-cleanup that calls `registerCallbacks({})` or a matching reset). The provider does NOT guard against orphaned callback references.
+19. **R19 (new, OQ-6)**. The context `value` is wrapped in `useMemo` keyed on the five selection fields + the callback bundle. Consumers that read only unchanged fields do not re-render.
 
 ---
 
@@ -156,14 +160,14 @@ Every setter, when called with a non-null argument, performs this clear pattern:
 | 15 | Setter identity across renders | `setSelectedKeyframe` has referential equality across re-renders of the provider | `setters-are-stable-refs` |
 | 16 | Two different setters called in the same render tick | Both `setState` calls are batched by React; final observable state has exactly the field from the **last** setter invocation set, all others null | `last-setter-in-tick-wins` |
 | 17 | Same setter called twice in same tick with different values | Final observable state has the later value; the mutex still holds | `same-setter-twice-last-value-wins` |
-| 18 | Selecting an entity that has been deleted from `EditorDataContext` | **undefined** — context does not cross-check against data; the stale value is stored and consumers must guard | → [OQ-2](#open-questions) |
-| 19 | Selecting an entity from a different project | **undefined** — no project-id scoping in this context | → [OQ-3](#open-questions) |
-| 20 | `registerCallbacks` invoked during component unmount (effect cleanup) | **undefined** — provider may still hold a stale bundle referring to an unmounted owner's closures | → [OQ-4](#open-questions) |
-| 21 | Setter called with `undefined` (violates TS type) | **undefined** — stored verbatim as `undefined`; mutex clearing still triggered because `if (kf)` is falsy, so clears do **not** run and `selectedKeyframe` holds `undefined` | → [OQ-5](#open-questions) |
-| 22 | Shift/cmd multi-select of keyframes | **undefined** — not implemented; context has no array state | → [OQ-1](#open-questions) |
+| 18 | Selecting an entity that has been deleted from `EditorDataContext` | Provider subscribes to `EditorDataContext`; when selected entity has `deleted_at` set or is missing, the matching slot auto-clears to `null` | `selection-auto-clears-on-delete` |
+| 19 | Selecting an entity from a different project | Provider resets all selection slots to `null` on project-id change (via `key={projectId}` remount or internal effect) | `selection-resets-on-project-change` |
+| 20 | `registerCallbacks` invoked during component unmount (effect cleanup) | Contract: callers MUST pair registration with cleanup in the same effect; provider does NOT detect orphaned bundles | `register-callbacks-cleanup-is-caller-responsibility` |
+| 21 | Setter called with `undefined` (violates TS type) | Normalized to `null` at setter entry; mutex clear triggers correctly | `setter-with-undefined-normalized-to-null` |
+| 22 | Shift/cmd multi-select of keyframes | **Deferred** — single-select is current product shape; multi-select would require mutex refactor | → [OQ-1](#open-questions) |
 | 23 | Consumer outside provider calls a setter | No-op (default setter is `() => {}`); state in any real provider elsewhere is unaffected | `no-provider-setter-is-noop` |
 | 24 | Context exposes playhead time / data / jobs | Does NOT — those live in sibling contexts; `useEditorState()` has no such fields | `does-not-expose-foreign-state` |
-| 25 | Re-render of provider with unchanged selection | Consumers that read only unchanged fields do re-render (context identity changes each render of provider because the `value` object is a fresh literal) | `value-identity-new-each-render` |
+| 25 | Re-render of provider with unchanged selection | Consumers do NOT re-render if their read slice is unchanged; context `value` is wrapped in `useMemo` keyed on the five selections + callback bundle | `value-identity-stable-via-memo` |
 
 ---
 
@@ -382,14 +386,46 @@ Every setter, when called with a non-null argument, performs this clear pattern:
 - **kfB-wins**: `selectedKeyframe === kfB`.
 - **others-still-null**: the other four remain `null`.
 
-#### Test: `value-identity-new-each-render` (covers implementation detail consumers must not rely on)
+#### Test: `value-identity-stable-via-memo` (covers R19, OQ-6)
 
-**Given**: provider with no state change triggered externally.
-**When**: parent re-renders the provider (so provider re-renders too).
+**Given**: a provider; consumer captures `useEditorState()` reference on first render.
+**When**: parent re-renders the provider with NO change to the five selection fields and NO change to the callback bundle.
 **Then**:
-- **value-is-fresh-literal**: the context value object is a new literal each render (because the JSX passes an inline `{...}`). Memoized consumers that rely on value identity will re-render; this is intentional behavior of the current implementation and a known perf tradeoff.
+- **value-reference-stable**: on the second render, the returned value object `===` the first render's value (stable via `useMemo`).
+- **no-consumer-rerender**: a consumer that reads the same fields does NOT re-render in response to the provider's parent re-render.
 
-*Note*: this test pins a behavior that is not a goal but is a fact — if future refactoring wraps the value in `useMemo`, the test should be updated and so should Open Question OQ-6.
+#### Test: `selection-auto-clears-on-delete` (covers R16, OQ-2)
+
+**Given**: provider with `selectedKeyframe = kf_7`; `EditorDataContext` then emits an update where `kf_7` has `deleted_at` set (or kf_7 is absent from the current data set).
+**When**: the data-context update commits.
+**Then**:
+- **kf-cleared**: `selectedKeyframe === null` on the next render.
+- **others-unchanged**: the other four selection slots remain as they were (all `null`).
+- **callback-slots-unchanged**: callback bundle is unchanged.
+
+#### Test: `selection-resets-on-project-change` (covers R17, OQ-3)
+
+**Given**: provider under project A with `selectedTransition` set; callbacks registered.
+**When**: the ambient project id changes to B (either via `key={projectId}` remount or an internal effect firing).
+**Then**:
+- **all-selections-null**: all five selection slots are `null`.
+- **callbacks-reset**: all four callback slots are `null`.
+
+#### Test: `register-callbacks-cleanup-is-caller-responsibility` (covers R18, OQ-4)
+
+**Given**: an owner component that registers callbacks in a `useEffect` and unmounts without calling `registerCallbacks({})` in its cleanup.
+**When**: After unmount, the provider still holds the bundle.
+**Then**:
+- **bundle-still-present**: `onKeyframeDelete` still resolves to the unmounted owner's closure (provider does not auto-detect).
+- **contract-documented**: this is the codified contract — caller, not provider, is responsible for cleanup.
+
+#### Test: `setter-with-undefined-normalized-to-null` (covers R15, OQ-5)
+
+**Given**: provider with `selectedTransition` set (non-null).
+**When**: consumer calls `setSelectedKeyframe(undefined as any)`.
+**Then**:
+- **kf-null**: `selectedKeyframe === null` (normalized, not `undefined`).
+- **mutex-clears-do-not-fire**: because the normalized value is `null`, mutex clears do NOT run; `selectedTransition` remains unchanged (matches `setSelectedKeyframe(null)` semantics per R8).
 
 #### Test: `selection-survives-unrelated-rerender`
 
@@ -432,14 +468,24 @@ Every setter, when called with a non-null argument, performs this clear pattern:
 
 ## Open Questions
 
-- **OQ-1 (multi-select)**: Should the context support shift/cmd multi-select of keyframes or transitions? Today it does not. If multi-select is ever required, the mutex design changes substantially (arrays per type, or a discriminated union of "single" vs "multi"). Current answer: not required. Behavior table row #22.
-- **OQ-2 (stale-id selection)**: What should happen if a consumer calls `setSelectedKeyframe(kf)` or `setSelectedAudioClipId(id)` and that entity has already been deleted (soft-deleted via `deleted_at`) in `EditorDataContext`? The context does not check. Property panels must defensively render. Desired behavior: **undefined** — should the context proactively clear selection when the underlying data disappears? Behavior table row #18.
-- **OQ-3 (cross-project selection)**: The context has no project-id scope. If the user switches projects while a selection is in memory, the stale id may conflict with a new project's entity. Desired behavior: **undefined** — probably the provider should remount with a new project key, but this is not asserted here. Behavior table row #19.
-- **OQ-4 (registerCallbacks during unmount)**: If an owner registers callbacks and then unmounts without clearing them, the provider still holds a bundle referencing the unmounted component's closures. Calling them may invoke stale handlers on unmounted state. Desired behavior: **undefined** — should `registerCallbacks` be paired with a cleanup contract, or should the provider detect and skip stale calls? Behavior table row #20.
-- **OQ-5 (undefined argument)**: Setters typed as `(x: T | null) => void`. At runtime, passing `undefined` stores `undefined` in state and the mutex clear does NOT trigger (because `if (kf)` is falsy). Desired behavior: **undefined** — treat as equivalent to `null`? Throw? Current behavior is accidental. Behavior table row #21.
-- **OQ-6 (value identity churn)**: The provider rebuilds the context `value` literal every render, so every provider re-render broadcasts to all consumers even when nothing changed. Acceptable for now given shallow consumer counts, but should this be memoized? Tied to test `value-identity-new-each-render`.
-- **OQ-7 (provider-less behavior)**: Is it a bug or a feature that `useEditorState()` silently returns defaults outside a provider? It enables standalone component rendering in Storybook but hides provider-mounting bugs. Desired behavior: keep as-is for now; revisit if a consumer ships broken.
-- **OQ-8 (audio clip + audio track simultaneously)**: Could a user legitimately want both `selectedAudioClipId` AND `selectedAudioTrackId` (e.g., "the clip I'm editing lives on this track")? Today mutex forbids it. If that's desired UX, split into a composite selection model. Not in scope.
+### Resolved
+
+**OQ-2 (resolved)**: Stale-id selection. **Decision**: provider subscribes to `EditorDataContext` and auto-clears a selection slot when the selected entity has `deleted_at` set or is missing. **Tests**: `selection-auto-clears-on-delete`.
+
+**OQ-3 (resolved)**: Cross-project selection. **Decision**: provider resets on project-id change (via `key={projectId}` or internal effect). **Tests**: `selection-resets-on-project-change`.
+
+**OQ-4 (resolved)**: `registerCallbacks` during unmount. **Decision**: codify — callers MUST pair registration with cleanup in the same effect; provider does not detect orphaned bundles. **Tests**: `register-callbacks-cleanup-is-caller-responsibility`.
+
+**OQ-5 (resolved)**: Setter called with `undefined`. **Decision**: normalize `undefined` → `null` at setter entry; mutex clear triggers correctly. **Tests**: `setter-with-undefined-normalized-to-null`.
+
+**OQ-6 (resolved)**: Value identity churn. **Decision**: wrap context value in `useMemo` keyed on selections + callback bundle. Pure perf hygiene; no behavior change. **Tests**: `value-identity-stable-via-memo`.
+
+**OQ-7 (resolved)**: Provider-less behavior. **Decision**: codify — intentional escape hatch for Storybook / isolated component rendering. Keep as-is. **Tests**: `no-provider-returns-default` (already present).
+
+### Deferred
+
+- **OQ-1 (multi-select)**: **Deferred** — single-select is the current product shape; multi-select would require a mutex refactor (arrays per type or discriminated union). Behavior table row #22.
+- **OQ-8 (audio clip + audio track simultaneously)**: **Deferred** — not required today; composite selection is a future refactor if UX needs it.
 
 ---
 

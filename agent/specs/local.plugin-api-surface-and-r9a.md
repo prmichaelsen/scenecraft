@@ -49,12 +49,12 @@ Define the exact observable behavior of the `scenecraft.plugin_api` facade: what
 8. **R8 (foley DAL re-exports)**: `add_foley_generation`, `update_foley_generation_status`, `add_foley_track`, `get_foley_generation`, `get_foley_generations_for_entity`, `get_foley_generation_tracks` are re-exported (M18).
 9. **R9 (isolation DAL re-exports)**: `add_audio_isolation`, `update_audio_isolation_status`, `add_isolation_stem`, `get_isolations_for_entity`, `get_isolation_stems` are re-exported.
 10. **R10 (light_show DAL re-exports)**: `list_light_show_fixtures`, `upsert_light_show_fixtures`, `reset_light_show_fixtures`, `remove_light_show_fixtures`, `list_light_show_overrides`, `set_light_show_overrides`, `clear_light_show_overrides`, `list_light_show_screens`, `upsert_light_show_screens`, `remove_light_show_screens`, `reset_light_show_screens`, `list_light_show_scenes`, `upsert_light_show_scenes`, `remove_light_show_scenes`, `list_light_show_placements`, `upsert_light_show_placements`, `remove_light_show_placements`, `get_light_show_live_override`, `activate_light_show_live_override`, `deactivate_light_show_live_override`, plus exceptions `BlockedByLiveError`, `BlockedByPlacementsError` are re-exported (M17, M19).
-11. **R11 (transcribe DAL)**: No transcribe DAL functions are re-exported from `plugin_api.__init__`. The transcribe plugin owns its sidecar tables (`transcribe__runs`, `transcribe__segments`) and accesses them via... (see **Open Questions OQ-3**).
+11. **R11 (transcribe DAL)**: Transcribe DAL functions (`add_transcription_run`, `get_transcription`, `list_transcriptions`, etc.) are re-exported from `plugin_api.__init__` per R42. The transcribe plugin accesses its sidecar tables (`transcribe__runs`, `transcribe__segments`) exclusively through these re-exports.
 12. **R12 (shared candidate helper)**: `add_tr_candidate` is re-exported so both music and foley (and future transition-candidate-producing plugins) can share the tr-candidate junction.
 13. **R13 (undo helper)**: `undo_begin` is re-exported.
 14. **R14 (jobs)**: `job_manager` (the singleton from `scenecraft.ws_server`) is re-exported so plugins can `create_job` / `update_progress` / `complete_job` / `fail_job`.
 15. **R15 (spend ledger)**: `record_spend` and `list_spend` are exposed. `record_spend` is the **ONLY** supported write path to `server.db.spend_ledger` per R9/R9a. `list_spend` is read-only. `find_root` is imported for internal use by `record_spend` but is **not** in `__all__`.
-16. **R16 (spend attribution trust)**: `record_spend(plugin_id=...)` trusts the caller-supplied `plugin_id` verbatim. It does not verify the caller's identity against the currently-active plugin context. This is a known gap (M17 TODO comment at line 290).
+16. **R16 (spend attribution — stack-derived + idempotent)**: `record_spend` derives `plugin_id` from the caller's stack frame (matching `scenecraft.plugins.<id>`), NOT from a caller-supplied argument. The function is idempotent on `(plugin_id, source_external_id)`. See R41 for the full contract.
 17. **R17 (spend unit-agnostic)**: `record_spend.amount` is an integer in the smallest atomic unit of `unit` (`credit` / `usd_micro` / `token` / `character` / `second`). Negative values represent refunds. No automatic unit conversion.
 18. **R18 (spend auth placeholder)**: `record_spend` defaults `username=""`, `org=""`, `api_key_id=None` when not provided. Foreign-key enforcement against `users` / `orgs` / `api_keys` is NOT done at this layer (deferred to the auth milestone).
 19. **R19 (spend requires root)**: `record_spend` calls `find_root()`; if no scenecraft root is discovered (no `SCENECRAFT_ROOT` env var and not inside a provisioned box), it raises `RuntimeError`.
@@ -78,6 +78,9 @@ Define the exact observable behavior of the `scenecraft.plugin_api` facade: what
 37. **R37 (spend_ledger attribution trust: undefined)**: Any in-process caller can invoke `record_spend(plugin_id="other_plugin", ...)` and the ledger records that attribution. There is no trust check. See **OQ-2**.
 38. **R38 (no dynamic enforcement plan in surface)**: `plugin_api` does not implement, expose, or reference an import hook, audit log, or sandbox. The line-289 comment acknowledges "M17 adds a process-boundary check" as future work — the surface itself is silent on how future enforcement would be introduced.
 39. **R39 (module import side effects)**: Importing `scenecraft.plugin_api` triggers: (a) a DAL re-export batch from `scenecraft.db`, (b) import of `scenecraft.ws_server.job_manager`, (c) import of `scenecraft.vcs.bootstrap` (for `record_spend`, `list_spend`, `find_root`), (d) import of the `providers` subpackage (which in turn imports `providers.replicate`). Any import-time failure in these chains raises at `plugin_api` import time.
+40. **R40 (R9a CI enforcement)**: R9a is enforced by CI grep, not runtime. CI greps `src/scenecraft/plugins/*/` for `from scenecraft.db` and `import scenecraft.db` and fails the build on any hit. Today's allowlist: `generate_foley/generate_foley.py::_set_derived_from` (temporary, to be cleaned up post-spec). Wording: "plugins MUST NOT access `scenecraft.db` directly. Violation is detected by CI, not runtime."
+41. **R41 (record_spend stack-frame-derived plugin_id + idempotent)**: `record_spend` derives `plugin_id` from the caller's module via stack inspection (matching `scenecraft.plugins.<id>`); raises `RuntimeError` if caller is not a plugin. The function is idempotent on `(plugin_id, source_external_id)` — if a row with that pair already exists, return the existing ledger entry id without inserting. Replicate always passes `prediction_id` as `source_external_id`, making `attach_polling` on a terminal prediction naturally safe. Replaces the earlier "TODO(M17)" in R16.
+42. **R42 (transcribe DAL re-exports)**: `plugin_api.__all__` includes transcribe DAL functions: `add_transcription_run`, `get_transcription`, `list_transcriptions`, and siblings matching the music/foley/isolation pattern. Transcribe plugin accesses its sidecar tables through these re-exports — NOT raw DB.
 
 ---
 
@@ -209,10 +212,10 @@ Tuple shape: `(base_url, env_var, auth_header_name)`.
 | 2 | Plugin reads `plugin_api.__all__` | Returns the documented 67-entry allowlist | `all-list-matches-documented-surface` |
 | 3 | Plugin imports a name not in `__all__` (e.g. `find_root`) | Import succeeds (Python does not enforce `__all__`); name is still off-surface by convention | `non-all-name-still-importable` |
 | 4 | Plugin does `from scenecraft.db import get_db` | Import succeeds; no runtime block; plugin obtains raw handle | `raw-db-import-not-blocked` |
-| 5 | Plugin writes to a core table (e.g. `keyframes`) via raw handle | `undefined` — no runtime check, no audit, no alarm | → [OQ-1](#open-questions) |
-| 6 | Plugin creates a new table named `bad_name` (no prefix) via raw DDL | `undefined` — no SQL CHECK, no validator; schema accepts it | → [OQ-1](#open-questions) |
-| 7 | Plugin creates a table `other_plugin__evil` claiming another plugin's prefix | `undefined` — no ownership check | → [OQ-1](#open-questions) |
-| 8 | Plugin A calls `record_spend(plugin_id="plugin_b", ...)` | Ledger records attribution to `plugin_b`; no trust check (M17 TODO) | → [OQ-2](#open-questions) |
+| 5 | Plugin writes to a core table (e.g. `keyframes`) via raw handle | Blocked at CI grep, not runtime; build fails on `from scenecraft.db` imports | `ci-grep-blocks-raw-db-imports` (covers R40, OQ-1) |
+| 6 | Plugin creates a new table named `bad_name` (no prefix) via raw DDL | Blocked by R40 CI grep (raw DB access required to issue DDL) | `ci-grep-blocks-raw-db-imports` (covers R40, OQ-1) |
+| 7 | Plugin creates a table `other_plugin__evil` claiming another plugin's prefix | Blocked by R40 CI grep (raw DB required) | `ci-grep-blocks-raw-db-imports` (covers R40, OQ-1) |
+| 8 | Plugin A attempts to spend as plugin B by passing `plugin_id="plugin_b"` | Ignored; `record_spend` derives `plugin_id` from caller's stack frame | `record-spend-plugin-id-derived-from-stack` (covers R41, OQ-2) |
 | 9 | `record_spend` called outside a scenecraft root | Raises `RuntimeError` with message referencing `SCENECRAFT_ROOT` | `record-spend-no-root-raises` |
 | 10 | `record_spend` called with negative amount | Recorded as-is (refund semantics) | `record-spend-negative-amount-allowed` |
 | 11 | `broadcast_event(plugin_id, event_type)` with no env var | Calls `job_manager._broadcast(msg)` in-process with `type = "plugin_id__event_type"` | `broadcast-in-process-default` |
@@ -239,9 +242,9 @@ Tuple shape: `(base_url, env_var, auth_header_name)`.
 | 32 | `from scenecraft.plugin_api import *` used from a plugin | Binds exactly the names in `__all__` | `star-import-bounds-match-all` |
 | 33 | Plugin's handler passed to `register_rest_endpoint` raises | `plugin_api` does not catch it; behavior depends on `PluginHost.dispatch_rest` (out of scope here) | `—` |
 | 34 | Plugin accesses `plugin_api.find_root` | Succeeds at the Python level (symbol exists in module); off-surface per convention | `find-root-not-in-all-but-attribute-exists` |
-| 35 | Plugin consumes transcribe DAL from `plugin_api` | `undefined` — no transcribe DAL re-exports in `__all__`; plugin path unclear | → [OQ-3](#open-questions) |
+| 35 | Plugin consumes transcribe DAL from `plugin_api` | Transcribe DAL names are in `__all__` and re-exported from `scenecraft.db` | `transcribe-dal-reexports-match-surface` (covers R42, OQ-3) |
 | 36 | Future plugin creates sidecar table with correct prefix | Convention honored; no enforcement, no registration step | `sidecar-prefix-convention-documented` |
-| 37 | `record_spend` called concurrently from two threads | `undefined` — thread-safety of `_record_spend_raw` not specified at this layer | → [OQ-4](#open-questions) |
+| 37 | `record_spend` called concurrently from two threads | Accepted-undefined per INV-1 (single-writer per user/project) | `no-internal-lock-on-record-spend` (covers OQ-4, INV-1) |
 | 38 | `broadcast_event` called with `project_name=None` | `projectName` key is omitted from the message | `broadcast-project-name-omitted-when-none` |
 | 39 | `record_spend` call does NOT log the amount/metadata at INFO level | `undefined` — logging behavior not specified in surface | → [OQ-5](#open-questions) |
 | 40 | `call_service` call does NOT include the raw API key in `ServiceResponse.headers` | API key appears only in the outbound request headers; never in the response object returned to caller | `call-service-never-leaks-api-key` |
@@ -599,6 +602,49 @@ A plugin can, at any time, import `scenecraft.db` directly and perform arbitrary
 - **not-in-all**: `"find_root"` not in `__all__`.
 - **attribute-exists**: `hasattr(scenecraft.plugin_api, "find_root")` is True (bound for internal `record_spend` use).
 
+#### Test: ci-grep-blocks-raw-db-imports (covers R40, OQ-1)
+
+**Given**: CI pipeline configuration.
+**When**: a plugin source file under `src/scenecraft/plugins/*/` contains `from scenecraft.db` or `import scenecraft.db`.
+**Then**:
+- **ci-fails**: CI build fails with a message naming the offending file and line.
+- **allowlist-honored**: `generate_foley/generate_foley.py::_set_derived_from` is explicitly allowlisted and does NOT fail CI.
+- **no-runtime-check**: at runtime, the import still succeeds (no import hook installed).
+
+#### Test: record-spend-plugin-id-derived-from-stack (covers R41, OQ-2)
+
+**Given**: plugin code at `scenecraft.plugins.generate_foley.generate_foley` calls `record_spend(amount=1, unit="prediction", operation="x")` with NO `plugin_id` argument.
+**When**: the call executes.
+**Then**:
+- **derived-from-frame**: stored ledger row has `plugin_id == "generate_foley"`.
+- **caller-supplied-ignored**: if the caller additionally passes `plugin_id="other"`, the stack-derived value wins (or raises per spec — not trusted).
+- **non-plugin-caller-raises**: calling `record_spend` from a module NOT under `scenecraft.plugins.*` raises `RuntimeError`.
+
+#### Test: record-spend-idempotent-on-source-external-id (covers R41, INV-3)
+
+**Given**: a valid scenecraft root; `record_spend(amount=1, ..., source_external_id="pred_abc")` has already inserted ledger row `sl_1`.
+**When**: a second call with the same `(plugin_id, source_external_id="pred_abc")` is made.
+**Then**:
+- **returns-existing-id**: return value equals `"sl_1"`.
+- **no-new-row**: the ledger has only one row for this pair.
+- **safe-for-attach-polling**: replicate's `attach_polling` on a terminal prediction can call `record_spend` again without duplicate charging.
+
+#### Test: transcribe-dal-reexports-match-surface (covers R42, OQ-3)
+
+**Given**: `scenecraft.plugin_api` loaded.
+**When**: inspect `__all__` and import transcribe DAL names.
+**Then**:
+- **in-all**: `"add_transcription_run"`, `"get_transcription"`, `"list_transcriptions"` are present in `__all__`.
+- **identity**: each name is the same object as the corresponding `scenecraft.db.*` function.
+
+#### Test: no-internal-lock-on-record-spend (covers OQ-4, INV-1)
+
+**Given**: source inspection of `record_spend` in `scenecraft.plugin_api.__init__`.
+**When**: static analysis.
+**Then**:
+- **no-lock-acquired**: the wrapper takes no `threading.Lock` / `asyncio.Lock` across the call.
+- **single-writer-contract**: concurrent callers from the same user/project are explicitly undefined per INV-1.
+
 #### Test: sidecar-prefix-convention-documented (covers R34, R35)
 
 **Given**: every shipped plugin's sidecar tables.
@@ -622,35 +668,15 @@ A plugin can, at any time, import `scenecraft.db` directly and perform arbitrary
 
 ## Open Questions
 
-### OQ-1: What should happen when a plugin writes to core tables or claims a foreign sidecar prefix via raw DB access?
+### Resolved
 
-Today: nothing. The runtime permits it; there is no audit log. Audit-2 rates this CRITICAL. A future spec should either:
-- (a) codify "convention only, code review is the guard" as the contract; OR
-- (b) define a runtime enforcement mechanism (audit hook on `sqlite3.connect`, capability-handle pattern, out-of-process plugin hosting, SQL-level CHECK on table name patterns).
+**OQ-1 (resolved)**: What should happen when a plugin writes to core tables or claims a foreign sidecar prefix via raw DB access? **Decision**: Per INV-2, R9a is enforced by CI grep over `src/scenecraft/plugins/*/` for `from scenecraft.db` and `import scenecraft.db`. CI failure blocks the build. Allowlist: `generate_foley/generate_foley.py::_set_derived_from` until cleaned up. Contract: "plugins MUST NOT access `scenecraft.db` directly. Violation is detected by CI, not runtime." **Tests**: `ci-grep-blocks-raw-db-imports`.
 
-Rows 5, 6, 7, 36 in the Behavior Table reflect this.
+**OQ-2 (resolved)**: How should `record_spend` verify the caller's claimed `plugin_id`? **Decision**: Per INV-3, `record_spend` derives `plugin_id` from the caller's module via stack inspection (matching `scenecraft.plugins.<id>`); raises `RuntimeError` if caller is not a plugin. Also idempotent on `(plugin_id, source_external_id)`. The M17 TODO is resolved — no more caller-supplied `plugin_id` trust. **Tests**: `record-spend-plugin-id-derived-from-stack`, `record-spend-idempotent-on-source-external-id`.
 
-### OQ-2: How should `record_spend` verify the caller's claimed `plugin_id`?
+**OQ-3 (resolved)**: How does the `transcribe` plugin reach its sidecar tables? **Decision**: Fix — add transcribe DAL functions (`add_transcription_run`, `get_transcription`, `list_transcriptions`, etc.) to `plugin_api.__all__`. Close by promoting them to first-class exports matching the music/foley/isolation pattern. **Tests**: `transcribe-dal-reexports-match-surface`.
 
-The line-290 TODO targets M17: "enforce plugin_id == current plugin context via wrapped handle." Options include:
-- Stack-frame inspection (rejected as fragile across async/threading).
-- Capability-handle pattern (each plugin gets a bound `record_spend` closure at activation, with `plugin_id` baked in).
-- Process-boundary (out-of-process plugin hosts; host injects attribution).
-
-Row 8 in the Behavior Table.
-
-### OQ-3: How does the `transcribe` plugin reach its sidecar tables, given no transcribe DAL is re-exported from `plugin_api`?
-
-Possible answers (undecided from this surface alone):
-- The transcribe plugin owns a DAL module inside the plugin itself and opens its own DB handle (violating R9a by convention if so).
-- The transcribe plugin uses `add_pool_segment` only and stores transcript state elsewhere.
-- A future addition to `plugin_api.__all__` will cover it.
-
-Row 35. Resolve when speccing the transcribe plugin.
-
-### OQ-4: Is `record_spend` thread-safe under concurrent callers from the same process?
-
-Not specified at the `plugin_api` layer. Depends on `_record_spend_raw` / SQLite WAL semantics in `scenecraft.vcs.bootstrap`. Row 37.
+**OQ-4 (resolved)**: Is `record_spend` thread-safe under concurrent callers? **Decision**: Accepted-undefined per INV-1 (single-writer per user/project). No lock taken at the `plugin_api` layer. **Tests**: `no-internal-lock-on-record-spend`.
 
 ### OQ-5: Does `record_spend` / `broadcast_event` / `call_service` emit log records containing sensitive payloads?
 

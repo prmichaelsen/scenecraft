@@ -83,6 +83,12 @@ Define the exact observable behavior of the scenecraft editor's audio-track surf
 26. **R26** — When `headerless === true`, `AudioLane` MUST NOT render the sticky header block; clip body + drop behavior MUST be unaffected.
 27. **R27** — Extraction ghost blocks (from `ghosts` prop) MUST render above clips at `z-30`, use the striped repeating-linear-gradient background, and be non-interactive (`pointer-events: none`).
 28. **R28** — Clip selection styling precedence: `selected` ring overrides `highlighted` glow; a highlighted-but-not-selected clip gets the yellow ring/shadow; neither → palette default border.
+29. **R29** — Trim gestures that would collapse a clip to `≤ 0` duration clamp to a 1-frame minimum (≈ 0.0333s at 30fps). `AudioLane` does not allow persisting a zero-or-negative-duration clip.
+30. **R30** — A drop onto a muted track inherits `track.muted` into the new clip (`clip.muted = track.muted`). No drop blocking; the visual mute is reflected immediately on the new clip.
+31. **R31** — `AudioLane` pre-validates drag MIME content: `application/x-scenecraft-pool-path` is accepted only when the referenced pool segment's kind is audio-like (ext matches `/\.(wav|mp3|m4a|ogg|flac|aac|opus)$/i`). Non-audio pool paths are rejected at dragover (no drop target paint; no `onDropPoolAudio` invocation on drop).
+32. **R32** — Clip insertions (via drop, split, or resolver output) clamp `start_time` to `≥ 0`. Any op that would produce `start_time < 0` is dropped; `AudioLane` does not persist negative-time clips.
+33. **R33** — `resolveOverlapsWithSplit` never produces `source_offset < 0` given valid overlapping inputs; this is asserted as a negative invariant.
+34. **R34** — AudioTrack unmount mid-playback stalls playback silently (symmetric with Timeline remount; see timeline-composition-and-playback-loop R-series). Refs are nulled; caller's stale `seekRef.current?.()` becomes a no-op. User resumes by pressing Play.
 
 ## Interfaces / Data Shapes
 
@@ -214,13 +220,13 @@ DEFAULT_CLIP_COLORS = cyan (bg-cyan-900/30, ...)
 | 49 | Overlap resolver: does not emit terminal insert for dropped clip | Caller is responsible for inserting dropped | `resolve-omits-terminal-insert` |
 | 50 | Overlap resolver: does not mutate `existing` | Input array and its entries unchanged | `resolve-is-pure` |
 | 51 | Highlighted clip that is ALSO selected | Selected ring takes precedence; no yellow glow | `audiolane-selection-beats-highlight` |
-| 52 | Drop clip exactly at existing clip boundary (`dropped.start === c.end_time`) | **undefined** — touch-but-not-overlap treated as no-overlap per `!(c.end_time <= dropped.start ...)`, but symmetry of drop onto zero-gap is untested | → [OQ-1](#open-questions) |
-| 53 | Trim that would collapse clip to zero duration | **undefined** | → [OQ-2](#open-questions) |
-| 54 | Drop onto muted track | **undefined** (drop is accepted; no special behavior coded) | → [OQ-3](#open-questions) |
-| 55 | Drop of non-audio pool_segment (e.g. video pool-path) | **undefined** — `AudioLane` accepts the MIME regardless of segment kind | → [OQ-4](#open-questions) |
-| 56 | AudioTrack unmounted mid-playback | **undefined** — refs nulled, but caller's stale `seekRef.current?.()` becomes no-op; playback stall semantics are not contracted here (see audit leak #3) | → [OQ-5](#open-questions) |
-| 57 | Clip spans negative time (`start_time < 0`) | **undefined** — renderer computes negative `left`; clamping not specified | → [OQ-6](#open-questions) |
-| 58 | Left-trim whose computed `source_offset` becomes negative (existing had small `source_offset`, trim advances past 0 … but formula is `c.source_offset + (dropped.end − c.start_time)`, always ≥ `c.source_offset`, so negative would require negative delta) | **undefined** — resolver does not clamp, but currently no input can drive it negative given the overlap precondition | → [OQ-7](#open-questions) |
+| 52 | Drop clip exactly at existing clip boundary (`dropped.start === c.end_time`) | Touch = no overlap (no op). Not a merge, not a crossfade. Symmetric with existing predicate | `resolve-touch-is-no-overlap` |
+| 53 | Trim that would collapse clip to zero duration | Clamped to 1-frame minimum (≈0.0333s at 30fps); mirrors video-track clamp | `trim-clamps-to-one-frame-min` |
+| 54 | Drop onto muted track | New clip inherits track's mute state (`clip.muted = track.muted`); no blocking | `drop-on-muted-track-inherits-mute` |
+| 55 | Drop of non-audio pool_segment (e.g. video pool-path) | Client-side validation rejects non-audio kind; `onDropPoolAudio` NOT called | `audiolane-rejects-non-audio-pool-segment` |
+| 56 | AudioTrack unmounted mid-playback | Playback stalls silently (symmetric with timeline-composition OQ-1); user presses Play to resume | `audiotrack-unmount-stalls-silently` |
+| 57 | Clip spans negative time (`start_time < 0`) | Clamped at `start_time ≥ 0`; insertions that would violate are rejected | `clip-start-time-clamps-to-zero` |
+| 58 | Left-trim computed `source_offset` negative | Unreachable under valid inputs (resolver precondition); negative-assertion test guards against regressions | `source-offset-never-negative` |
 
 ## Behavior
 
@@ -623,6 +629,52 @@ Caller appends a terminal insert for the dropped clip.
 
 *(Negative assertion: locks future refactors from silently introducing concurrency without updating this spec.)*
 
+#### Test: resolve-touch-is-no-overlap (covers R20, OQ-1 resolution)
+**Given**: `existing=[{start:1, end:3, source_offset:0}]`, `dropped={start:3, end:5}` (touch at 3).
+**Then**:
+- **no-ops**: `resolveOverlapsWithSplit` returns `[]` for the touching clip.
+- **no-crossfade**: no merge/crossfade op emitted.
+
+#### Test: trim-clamps-to-one-frame-min (covers R29, OQ-2 resolution)
+**Given**: a left-trim gesture whose computed `newStart` would equal or exceed `clip.end_time`.
+**When**: trim commits.
+**Then**:
+- **span-at-least-one-frame**: persisted `(end_time - start_time) >= 0.0333` seconds.
+
+#### Test: drop-on-muted-track-inherits-mute (covers R30, OQ-3 resolution)
+**Given**: `track.muted === true`; drop a valid audio pool-path.
+**When**: `onDropPoolAudio` fires.
+**Then**:
+- **callback-invoked**: `onDropPoolAudio(track.id, startTime, poolPath)` called.
+- **new-clip-muted**: the newly-created clip's `muted === true` (inherited).
+
+#### Test: audiolane-rejects-non-audio-pool-segment (covers R31, OQ-4 resolution)
+**Given**: drag of `application/x-scenecraft-pool-path = "pool/foo.mp4"` (video) over the lane.
+**When**: dragover + drop.
+**Then**:
+- **no-drop-active**: `poolDropActive` stays `false`.
+- **on-drop-pool-audio-not-called**: `onDropPoolAudio` NOT invoked.
+
+#### Test: audiotrack-unmount-stalls-silently (covers R34, OQ-5 resolution)
+**Given**: AudioTrack mounted and playing.
+**When**: AudioTrack unmounts mid-playback.
+**Then**:
+- **seek-ref-nulled**: `seekRef.current === null`.
+- **stale-seek-is-noop**: a subsequent `seekRef.current?.(t)` is a no-op (not a crash).
+- **playback-does-not-advance**: `currentTime` stops advancing; no auto-resume on remount.
+
+#### Test: clip-start-time-clamps-to-zero (covers R32, OQ-6 resolution)
+**Given**: an overlap-resolver op or drop that would produce `start_time < 0`.
+**When**: `AudioLane` is about to persist.
+**Then**:
+- **rejected**: op is dropped (not persisted); `start_time` never goes below 0 in the lane's committed state.
+
+#### Test: source-offset-never-negative (covers R33, OQ-7 resolution)
+**Given**: any valid resolver input (non-overlapping and overlapping cases in a fuzz/property test).
+**When**: `resolveOverlapsWithSplit` runs.
+**Then**:
+- **no-negative-offset**: every emitted `{op:'trim'|'insert', ..., source_offset}` has `source_offset >= 0`.
+
 ## Non-Goals
 
 - Spec does NOT define the mixer graph (see `local.webaudio-mixer-and-mix-graph` target).
@@ -635,13 +687,17 @@ Caller appends a terminal insert for the dropped clip.
 
 ## Open Questions
 
-- **OQ-1** — Drop exactly at existing clip boundary (`dropped.start === c.end_time`): The predicate `!(c.end_time <= dropped.start || c.start_time >= dropped.end)` evaluates `overlaps = false` at exact touch, so no op is emitted. Is this the intended behavior (touch = no overlap), or should adjacency trigger a merge/crossfade? Not decided.
-- **OQ-2** — Trim to zero duration: If a left-trim advances `start_time` past `end_time` (or vice versa for right-trim), the resulting clip has `end_time <= start_time`. Resolver does not guard. Should callers clamp, should the resolver emit `delete` instead, or should zero-duration be a permitted transient state?
-- **OQ-3** — Drop onto muted track: Current code accepts the drop and fires callbacks unchanged — muting is purely visual. Should drop be prevented, or should the new clip be auto-muted to match the track's state?
-- **OQ-4** — Drop of non-audio pool_segment: `AudioLane` accepts any `application/x-scenecraft-pool-path` regardless of segment kind (video, image, etc.). `onDropPoolAudio` is invoked with the raw path; the backend decides. Should `AudioLane` pre-validate the MIME/kind, or is backend-side rejection the contract?
-- **OQ-5** — AudioTrack unmount mid-playback: Refs are nulled on unmount; `CurrentTimeContext`'s last `currentTime` persists. Audit §3 leak #3 flags this as a known coupling issue. Is the contract "playback stalls silently" or "playhead is reset"? Currently unspecified.
-- **OQ-6** — Clip spans negative time: Renderer produces negative `left`; no clamp. Is this allowed input (bug-tolerance) or a precondition violation?
-- **OQ-7** — `source_offset` negative after left-trim: Given the resolver formula `c.source_offset + (dropped.end - c.start_time)` and the overlap precondition (`dropped.end > c.start_time`), the delta is always positive and the result is always `>= c.source_offset`. A negative result is only reachable if `c.source_offset` is already negative — which itself is undefined. Should resolver clamp to `0` or error?
+*(all resolved — see `### Resolved` below)*
+
+### Resolved
+
+- **OQ-1 (row 52) — Touch at boundary**: Resolved as **codify** — touch = no overlap (no op). Not a merge, not a crossfade. Symmetric with existing predicate. Test `resolve-touch-is-no-overlap`.
+- **OQ-2 (row 53) — Trim to zero duration**: Resolved as **fix** — clamp to 1-frame minimum (mirror video-track fix). R29 added; test `trim-clamps-to-one-frame-min`.
+- **OQ-3 (row 54) — Drop onto muted track**: Resolved as **fix** — new clip inherits track's mute state. R30 added; test `drop-on-muted-track-inherits-mute`.
+- **OQ-4 (row 55) — Drop non-audio pool_segment**: Resolved as **fix** — client-side validation rejects non-audio kind. R31 added; test `audiolane-rejects-non-audio-pool-segment`.
+- **OQ-5 (row 56) — AudioTrack unmount mid-playback**: Resolved as **codify** — playback stalls silently, mirroring Timeline remount. R34 added; test `audiotrack-unmount-stalls-silently`.
+- **OQ-6 (row 57) — Clip spans negative time**: Resolved as **fix** — clamp `start_time ≥ 0`; reject violating insertions. R32 added; test `clip-start-time-clamps-to-zero`.
+- **OQ-7 (row 58) — Negative `source_offset`**: Resolved as **codify** — unreachable under valid inputs. R33 added; negative-assertion test `source-offset-never-negative`.
 
 ## Related Artifacts
 

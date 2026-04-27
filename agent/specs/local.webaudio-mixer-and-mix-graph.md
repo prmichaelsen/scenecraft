@@ -10,7 +10,19 @@
 
 ## Purpose
 
-Define the exact observable behavior of scenecraft's live WebAudio mixer (`AudioMixer`), the shared mix-graph scheduling helpers, the offline mix renderer (`renderMixToBuffer`), and the module-level `audio-mixer-ref` singleton, such that a reviewer can proof every scenario that matters before implementation drift accumulates — and such that the "Audio = Frontend" / "bit-identical live vs. offline" invariant from audit #2 §2 is made precise and testable.
+Define the exact observable behavior of scenecraft's live WebAudio mixer (`AudioMixer`), the shared mix-graph scheduling helpers, and the module-level `audio-mixer-ref` singleton, such that a reviewer can proof every scenario that matters before implementation drift accumulates.
+
+**On `mix-render.ts` (clarification, 2026-04-27)**: this module is NOT a general
+"offline audio mixdown" path and does NOT participate in playback. It is the
+purpose-built offline renderer used by the bounce/analyze chat round-trip
+(`chat-client.ts::handleMixRenderRequest` / `handleBounceAudioRequest`) which
+builds a one-shot `OfflineAudioContext`, encodes a WAV, and POSTs it to
+`/mix-render-upload` or `/bounce-upload`. Verification: ripgrep shows it is
+imported only by `chat-client.ts` (production) and by its own tests. It is NOT
+vestigial; it IS narrowly-scoped to bounce+analyze. Any "bit-identical live
+vs. offline parity (R20)" invariant previously asserted in this spec has been
+removed — there is no general-purpose offline mixdown path in scenecraft, and
+the bounce/analyze renderer's contract lives in `local.bounce-and-analysis.md`.
 
 ## Source
 
@@ -19,8 +31,8 @@ Define the exact observable behavior of scenecraft's live WebAudio mixer (`Audio
 **Primary sources**:
 - `/home/prmichaelsen/.acp/projects/scenecraft/src/lib/audio-mixer.ts`
 - `/home/prmichaelsen/.acp/projects/scenecraft/src/lib/mix-graph.ts`
-- `/home/prmichaelsen/.acp/projects/scenecraft/src/lib/mix-render.ts`
 - `/home/prmichaelsen/.acp/projects/scenecraft/src/lib/audio-mixer-ref.ts`
+- `mix-render.ts` is referenced only as a collaborator (bounce/analyze round-trip); its contract is in `local.bounce-and-analysis.md`.
 
 **Context**: `agent/reports/audit-2-architectural-deep-dive.md` §1E units 1–3, 10–11; §2 invariant "Audio = Frontend"; §3 leaks #6 (decode cache module-global) and #15 (no LRU).
 
@@ -33,14 +45,14 @@ Define the exact observable behavior of scenecraft's live WebAudio mixer (`Audio
 - Playhead ↔ AudioContext clock alignment: `when = ctx.currentTime + max(0, clip.start_time - playhead)`.
 - Crossfade scheduling: equal-power cos/sin (length 128) on overlapping clips on the **same track**.
 - Mute / solo rules: `trackGain = 0` when the track is muted; when **any** track is solo, non-solo tracks are forced to 0.
-- `MixRender` (`renderMixToBuffer`) offline equivalence: reuses `mix-graph.ts` helpers on an `OfflineAudioContext`, with bit-identical output as the north-star invariant.
-- Module-global decode cache keyed by `source_path`; `pendingDecodes` dedup map; lack of LRU eviction (audit leak #6/#15).
+- Module-global decode cache keyed by `source_path`; `pendingDecodes` dedup map; LRU eviction policy (resolved per OQ-7).
 - `audio-mixer-ref` singleton for cross-panel access to the live graph's master analysers.
+- Multi-window ownership of the live audio playback graph (INV-5).
 
 **Out of scope** (covered elsewhere or deferred):
-- Effect registry + per-effect param curves (`audio-effect-types.ts`, `audio-graph.ts`) — see the separate `audio-effects-and-curve-scheduling` spec target. This spec only asserts that the master-bus fx chain is **wired** identically live vs. offline and that `reevaluateMasterChain` swaps it atomically.
+- Effect registry + per-effect param curves (`audio-effect-types.ts`, `audio-graph.ts`) — see the separate `audio-effects-and-curve-scheduling` spec target. This spec only asserts that the master-bus fx chain is wired correctly in live and that `reevaluateMasterChain` swaps it atomically.
 - Send-bus topology (reverb/delay/echo buses) — referenced as collaborators; exact topology is covered in the effects spec.
-- Bounce / WAV encoding end-to-end (`encodePCMToWav` is defined in `mix-render.ts` but is a pure byte-level encoder; its spec belongs in the `bounce-and-analysis` target). This spec only asserts that `renderMixToBuffer` returns interleaved float PCM in the shape documented.
+- Bounce / analyze offline render (`renderMixToBuffer`, `encodePCMToWav`, upload round-trip) — fully covered in `local.bounce-and-analysis.md`. This spec no longer asserts any live/offline parity.
 - Waveform cache (separate UI path).
 - Timeline ↔ mixer wiring (Timeline seeks via `seekRef`; out of scope here — covered in `timeline-composition-and-playback-loop`).
 
@@ -67,8 +79,13 @@ For every clip in every track:
 ### R5 — Decode cache
 A module-level `Map<source_path, AudioBuffer>` named `decodeCache` caches decoded buffers across **all** mixer instances in the page. An in-flight `pendingDecodes` map dedup-coalesces concurrent fetches of the same `source_path` within a single mixer instance.
 
-### R6 — Decode cache has no eviction
-The cache is unbounded. No LRU, no TTL, no size cap. (Documented audit leak #6/#15; codified here so future refactors don't silently introduce eviction.) `__clearDecodeCacheForTest` is a test-only helper.
+### R6 — Decode cache LRU + project-switch clear
+The cache is LRU-bounded at **512 MB total decoded audio** (sum of
+`numberOfChannels × length × 4` across cached `AudioBuffer`s). On overflow, the
+least-recently-used entries are evicted until the total is under cap. On project
+switch the entire cache is cleared (and with it any `pendingDecodes`). HMR reload
+of the page is covered by project-switch semantics. `__clearDecodeCacheForTest`
+is a test-only helper. (Resolves OQ-7 + OQ-10.)
 
 ### R7 — Seek semantics (single-use source nodes)
 Every `seek(seconds)` call:
@@ -150,32 +167,14 @@ When effectively muted, the track's gain param is set to `0` at the anchor time 
 - Calls `AudioContext.close()` and nulls the reference.
 - Subsequent `dispose()` calls are no-ops.
 
-### R18 — Offline renderer matches live topology
-`renderMixToBuffer(tracks, options)` builds, on an `OfflineAudioContext`, exactly the same chain shape as the live mixer:
-`source → clipGain → crossfadeGain → trackGain → masterGain → masterFxChain → destination`.
-The offline path differs from live only by:
-(a) **no analyser taps**,
-(b) **no activation bookkeeping** (every intersecting clip is scheduled up front),
-(c) `paramAnchorTime = 0` with `playhead = startTimeS`.
+### R18–R22 — REMOVED
 
-### R19 — Offline clip window math
-For each clip where `end_time > startTimeS && start_time < endTimeS`:
-- `whenInOffline = max(0, clip.start_time − startTimeS)`.
-- `sourceOffset = max(0, effective_source_offset + max(0, startTimeS − clip.start_time) × rate)`.
-- `timelineDuration = min(clip.end_time, endTimeS) − max(clip.start_time, startTimeS)`.
-- `effectiveDuration = min(timelineDuration × rate, max(0, buf.duration − sourceOffset))`.
-- `source.start(whenInOffline, sourceOffset, effectiveDuration)` is called iff `effectiveDuration > 0`.
-
-### R20 — Offline bit-identical parity
-Given the same tracks, same master-effect chain, and a render window `[startTimeS, endTimeS)` during which no DB-side state changes, the PCM produced by `renderMixToBuffer` MUST match — sample-for-sample within floating-point determinism of the browser's `OfflineAudioContext` — what the live mixer would produce playing the same window at the same sample rate. (Both paths call the identical `buildEffectChain`, `scheduleClipCurveOnParam`, `scheduleTrackCurveOnParam`, `scheduleCrossfadeOnParams`, `isTrackEffectivelyMuted`, `COS_CURVE`, `SIN_CURVE`.)
-
-### R21 — Offline tolerates asset failure
-When a clip's asset cannot be fetched or decoded in the offline path, `resolveClipBuffer` returns `null` and the clip is silently skipped (with a `console.warn`). The render does NOT throw; other clips and tracks render normally.
-
-### R22 — Offline input validation
-`renderMixToBuffer` throws synchronously (via a rejected promise) when:
-- `endTimeS <= startTimeS`.
-- `channels` is neither 1 nor 2.
+Previously R18–R22 specified the offline renderer (`renderMixToBuffer`) and its
+"bit-identical live/offline parity" invariant. There is no general-purpose
+offline audio mixdown path in scenecraft. `renderMixToBuffer` is exclusively
+used by the bounce/analyze chat round-trip and is fully specified in
+`local.bounce-and-analysis.md`. These requirements are intentionally removed
+from this spec; the R-numbers are preserved as placeholders to avoid renumbering.
 
 ### R23 — `audio-mixer-ref` singleton contract
 - `setActiveAudioMixer(m)` sets the module-level `activeMixer` to `m`.
@@ -192,6 +191,31 @@ When two activations for the same `source_path` are in flight simultaneously wit
 - If `clip.muted`: sets value `0` at `paramAnchorTime` and returns.
 - Otherwise anchors at `dbToLinear(sampleClipDbAtPlayhead(clip, playhead))` at `paramAnchorTime`.
 - Emits `linearRampToValueAtTime(dbToLinear(db), paramAnchorTime + (xSec − playhead))` for each curve point `[xNorm, db]` in sorted order where `xSec = start_time + xNorm × (end_time − start_time)` satisfies `playhead < xSec ≤ end_time`.
+
+### R27 — Multi-window exclusive playback ownership (INV-5)
+The live `AudioMixer` + active `HTMLAudioElement` master clock are exclusive
+browser resources. Only one browser window/tab may own the live audio playback
+graph at a time. Secondary windows MUST receive read-only playhead updates over
+the unified WS (INV-4) rather than building their own `AudioMixer` instance.
+Ownership transfer uses a "Take playback control" modal that gracefully releases
+the previous owner's `AudioMixer` (via `dispose()`) and installs a new one in
+the requesting window. Closing the owning window transparently releases the
+resource; the next interaction in any remaining window claims it.
+
+Multi-window DB-backed state (tracks, clips, curves, master effects) stays
+synchronized across windows via unified WS events; all windows that render
+Timeline/waveforms reflect the same underlying DB state.
+
+Implementation details deferred per INV-5 to the multi-window workspaces design
+doc; this spec states the black-box ownership contract only.
+
+### R28 — Solo/mute change requires updateTrack or rebuild
+`isTrackEffectivelyMuted(track, allTracks)` reads the caller-supplied array at
+call time; the mixer does NOT subscribe to mutations on the track objects.
+Callers (React/Timeline) MUST invoke `updateTrack(trackId)` or `rebuild()` to
+propagate a mute/solo change to audible output. Negative-assertion test
+codifies this: "solo flag change in DB without updateTrack does NOT silently
+re-schedule." (Resolves OQ-6.)
 
 ### R26 — Track curve scheduling semantics (shared helper)
 `scheduleTrackCurveOnParam(param, track, playhead, paramAnchorTime, effectiveMuted)`:
@@ -304,16 +328,18 @@ getActiveAudioMixer(): AudioMixer | null
 | 39 | `seek` with no `AudioContext` yet | Updates `lastPlayhead`; returns without graph work | `seek-before-play-updates-playhead-only` |
 | 40 | Decode failure during graph build (background fetch throws) | Logged via `console.debug`/`console.warn`; no exception propagates; clip is not activated; other clips unaffected | `decode-error-contained` |
 | 41 | `AudioContext.state === 'suspended'` when `ensureCtx` runs | `ctx.resume()` is invoked; rejection is swallowed | `resume-suspended-ctx` |
-| 42 | `seek` during an active live crossfade | `undefined` | → [OQ-1](#open-questions) |
-| 43 | `play()` with zero tracks | `undefined` | → [OQ-2](#open-questions) |
-| 44 | `rebuild` called while sources are actively playing | `undefined` regarding audible artifact (click / silence gap) | → [OQ-3](#open-questions) |
-| 45 | Asset fetch 404 in live path (not offline) | `undefined` (code path only logs — no UI surface defined) | → [OQ-4](#open-questions) |
-| 46 | Decoded buffer's native sample rate ≠ AudioContext sample rate | `undefined` regarding resampling strategy, pitch, and parity with offline | → [OQ-5](#open-questions) |
-| 47 | User toggles `solo` on a track mid-playback without `updateTrack` / `rebuild` | `undefined` (solo is read from `allTracks` at call time; no re-evaluation is triggered automatically) | → [OQ-6](#open-questions) |
-| 48 | Decode cache grows to hundreds of MB over a long session | `undefined` (no LRU; page eventually OOMs) — documented as leak, but no behavior is specified | → [OQ-7](#open-questions) |
-| 49 | `renderMixToBuffer` with `sampleRate` different from the live `AudioContext` sample rate | `undefined` regarding bit-identical parity (R20 assumes matching rates) | → [OQ-8](#open-questions) |
-| 50 | `renderMixToBuffer` with master effects producing tails beyond `endTimeS` (e.g. reverb) | `undefined` (tails are truncated at `frames`; no length extension) | → [OQ-9](#open-questions) |
-| 51 | HMR reload while mixer is playing | `undefined` (module-global decode cache survives; mixer instance disposed by React cleanup; new graph builds — no regression test) | → [OQ-10](#open-questions) |
+| 42 | `seek` during an active live crossfade | In-flight crossfade curves cancelled on seek; no crossfade carries across seek boundary; rescheduled fresh from the new position | `seek-cancels-in-flight-crossfade` |
+| 43 | `play()` with zero tracks | Master graph still built; master analysers report silence; no exception | `play-with-zero-tracks-builds-silence` |
+| 44 | `rebuild` called while sources are actively playing | Brief audible click at teardown boundary is accepted; not further constrained | `rebuild-midplay-click-accepted` |
+| 45 | Asset fetch 404 in live path | No retry within mixer instance; clip marked inactive + `console.warn`; rebuild required to retry | `live-asset-404-no-retry-within-instance` |
+| 46 | (moot) Decoded buffer's native sample rate ≠ AudioContext | Out of scope; no offline mixdown path to compare against | `removed-per-no-offline-path` |
+| 47 | User toggles `solo` on a track mid-playback without `updateTrack` / `rebuild` | Contract: caller MUST invoke `updateTrack(trackId)` or `rebuild()` to propagate; bare-field mutation does NOT reschedule | `solo-without-updatetrack-no-reschedule` |
+| 48 | Decode cache grows over a long session | LRU evicts when total decoded audio exceeds 512 MB; project switch clears | `decode-cache-lru-evicts-at-512mb`, `decode-cache-cleared-on-project-switch` |
+| 49 | (moot) Offline sample rate mismatch | Removed per no-offline-path | `removed-per-no-offline-path` |
+| 50 | (moot) Offline master-effect tails | Removed per no-offline-path | `removed-per-no-offline-path` |
+| 51 | HMR reload while mixer is playing | Same as project switch: cache cleared; mixer instance disposed by React cleanup; new graph builds fresh | `hmr-reload-clears-cache-like-project-switch` |
+| 52 | Second browser window attempts to build an AudioMixer while window A owns playback | Take-over modal in window B; on confirm, window A's `AudioMixer.dispose()` runs and window B installs a fresh one; read-only playhead streams to window A via unified WS | `take-playback-control-modal-transfers` |
+| 53 | Owning window closes while playback is active | Exclusive resource released; next interaction in any remaining window claims playback | `owning-window-close-releases-playback` |
 
 ---
 
@@ -368,14 +394,12 @@ getActiveAudioMixer(): AudioMixer | null
 
 ## Acceptance Criteria
 
-- [ ] Every requirement R1–R26 has at least one named test in §Tests.
-- [ ] The live mixer and offline renderer both call the exact same `buildEffectChain`, `scheduleClipCurveOnParam`, `scheduleTrackCurveOnParam`, `scheduleCrossfadeOnParams`, `isTrackEffectivelyMuted` helpers (source-grep asserts this explicitly).
+- [ ] Every live-mixer requirement R1–R17, R23–R28 has at least one named test in §Tests.
 - [ ] `COS_CURVE` and `SIN_CURVE` are imported by the live mixer and used verbatim; no recomputation anywhere.
-- [ ] A parity test renders the same window live and offline at the same sample rate and asserts PCM equality within `|ε| ≤ 1e-4` (allowing for non-determinism across browser implementations; the spec demands bit-identical where the two share the same underlying implementation).
-- [ ] No LRU eviction is introduced on the decode cache without a new spec revision.
+- [ ] Decode cache obeys LRU cap (512 MB) + project-switch clear.
 - [ ] `dispose()` is idempotent and no public method throws post-dispose.
-- [ ] `renderMixToBuffer` rejects with a descriptive `Error` for `endTimeS <= startTimeS` and for `channels ∉ {1,2}`.
-- [ ] Every `undefined` scenario (rows 42–51) remains `undefined` or is resolved via a spec amendment and corresponding Open Question closure.
+- [ ] All previously-undefined scenarios on rows 42–51 are resolved; rows 46/49/50 are removed per the no-offline-path correction.
+- [ ] Multi-window ownership (R27) honors take-over + close-releases behavior.
 
 ---
 
@@ -597,46 +621,8 @@ getActiveAudioMixer(): AudioMixer | null
 - **second-noop**: second call performs no disconnects; no throws.
 - **close-once**: `AudioContext.close()` was called exactly once total.
 
-#### Test: offline-single-clip-renders (covers R18, R19, R25)
-
-**Given**: One track, one clip `[0, 2]` with a constant-1 PCM buffer; window `[0, 2]`; sampleRate=48000; channels=2; no master fx; no track curve.
-**When**: `await renderMixToBuffer([track], options)`.
-**Then**:
-- **length**: `pcm.length === 48000 * 2 * 2` (frames × channels).
-- **samples-unity**: every sample ≈ 1 (after track+clip unity gain).
-- **duration**: `durationSeconds ≈ 2`.
-- **sample-rate**: `sampleRate === 48000`.
-
-#### Test: offline-rejects-zero-window (covers R22)
-
-**Given**: `startTimeS=5, endTimeS=5`.
-**When**: `await renderMixToBuffer([], options)`.
-**Then**:
-- **rejects**: promise rejects with `Error` whose message mentions `endTimeS` and `startTimeS`.
-- **no-ctx**: `offlineCtxFactory` is NOT called.
-
-#### Test: offline-rejects-bad-channels (covers R22)
-
-**Given**: `channels = 3`.
-**When**: `await renderMixToBuffer([], options)`.
-**Then**:
-- **rejects**: promise rejects with `Error` mentioning `channels`.
-
-#### Test: offline-skips-missing-asset (covers R21)
-
-**Given**: One track, one clip whose `fetchBytes` throws (simulated 404).
-**When**: Render.
-**Then**:
-- **completes**: promise resolves.
-- **warn-emitted**: `console.warn` contains `skipping clip` and the clip id.
-- **silent-window**: PCM covering that clip's window is all zeros.
-
-#### Test: live-offline-parity (covers R18, R20)
-
-**Given**: One track, one clip with a non-trivial volume curve; window `[0, 1]`; same sample rate as live ctx.
-**When**: Render offline. Render live into an `OfflineAudioContext` (using the live graph's scheduling identically).
-**Then**:
-- **pcm-equal**: every sample in the offline result matches the live-equivalent within `|ε| ≤ 1e-4`.
+*(Offline-render tests removed — offline bounce/analyze renderer is specified in
+`local.bounce-and-analysis.md`; this spec no longer asserts those behaviors.)*
 
 #### Test: ref-set-get (covers R23)
 
@@ -687,53 +673,7 @@ getActiveAudioMixer(): AudioMixer | null
 - **resume-called**: `ctx.resume()` invoked.
 - **rejection-swallowed**: if `resume()` rejects, no exception escapes `ensureCtx`.
 
-#### Test: offline-skips-hidden-track (covers R18)
-
-**Given**: Tracks `[A(hidden=true), B]`.
-**When**: Render.
-**Then**:
-- **a-no-gain**: no trackGain for A.
-- **b-rendered**: B produces non-zero PCM in its window.
-
-#### Test: offline-skips-outside-window (covers R19)
-
-**Given**: Clip `[0, 1]`; render window `[5, 10]`.
-**When**: Render.
-**Then**:
-- **no-source-created**: `ctx.createBufferSource` count for this clip is 0.
-- **silence**: PCM is all zeros.
-
-#### Test: offline-mid-clip-start (covers R19)
-
-**Given**: Clip `[−2, 2]` (starts before window); render window `[0, 2]`; rate=1; `effective_source_offset=0`.
-**When**: Render.
-**Then**:
-- **when-zero**: `source.start(0, _, _)` — `whenInOffline === 0`.
-- **offset-2**: source offset is `2` (the 2s already consumed before window start).
-
-#### Test: offline-mid-clip-end (covers R19)
-
-**Given**: Clip `[0, 10]`; render window `[0, 3]`; rate=1.
-**When**: Render.
-**Then**:
-- **duration-3**: `source.start(0, 0, 3)` — `effectiveDuration` clamped.
-- **pcm-length**: `pcm.length === 3 * sampleRate * channels`.
-
-#### Test: offline-same-crossfade (covers R20, R11)
-
-**Given**: Two overlapping clips on one track; window covers the overlap.
-**When**: Render.
-**Then**:
-- **crossfade-scheduled**: both `crossfadeGain.gain`s received `setValueCurveAtTime` with COS/SIN curves respectively.
-- **equal-power-sum**: summed squared magnitudes across overlap ≈ unity (equal-power invariant holds in rendered PCM).
-
-#### Test: offline-solo-honored (covers R12, R20)
-
-**Given**: Track A solo'd, track B not.
-**When**: Render.
-**Then**:
-- **b-silent**: PCM segments from B's window are zero.
-- **a-audible**: PCM segments from A's window are non-zero.
+*(Offline-render edge cases removed — see `local.bounce-and-analysis.md`.)*
 
 #### Test: rebuild-mid-playback-undefined-artifact (covers R15)
 
@@ -752,13 +692,91 @@ getActiveAudioMixer(): AudioMixer | null
 - **no-reschedule**: `trackGain.gain` is not re-scheduled by the mixer; the audible balance does not change until a subsequent `updateTrack`, `rebuild`, `play`, or hard `seek` occurs.
 - **undefined-semantics**: whether this is correct behavior is deferred to OQ-6.
 
-#### Test: decode-cache-unbounded (covers R6)
+#### Test: decode-cache-lru-evicts-at-512mb (covers R6)
 
-**Given**: Many sequential rebuilds each introducing distinct `source_path`s.
-**When**: `decodeCache.size` is observed.
+**Given**: Many sequential decodes pushing total decoded audio past 512 MB.
+**When**: `decodeCache` is observed after the cap is exceeded.
 **Then**:
-- **no-eviction**: size grows monotonically with distinct source paths; never shrinks between rebuilds.
-- **no-automatic-clear**: `__clearDecodeCacheForTest` is the only supported way to clear; production code MUST NOT call it.
+- **total-bytes-capped**: `sum(numberOfChannels × length × 4)` across cached buffers is ≤ 512 MB.
+- **lru-evicted-first**: the least-recently-used entries are the ones missing.
+- **still-functional**: re-decoding an evicted path incurs a fresh fetch + decode.
+
+#### Test: decode-cache-cleared-on-project-switch (covers R6)
+
+**Given**: A populated `decodeCache` (HMR reload is treated identically).
+**When**: The project is switched (or the page HMR-reloads, which collapses to the same event).
+**Then**:
+- **cache-empty**: `decodeCache.size === 0`.
+- **pending-decodes-empty**: `pendingDecodes` is likewise empty.
+
+#### Test: seek-cancels-in-flight-crossfade (covers R11, OQ-1)
+
+**Given**: A crossfade between two clips on the same track is partway through.
+**When**: `seek(t)` with a hard delta is called.
+**Then**:
+- **cancel-on-both-crossfade-gains**: both `crossfadeGain.gain.cancelScheduledValues` observed.
+- **no-cross-boundary-carry**: neither clip's crossfade curve continues past the seek.
+- **reschedule-if-overlap-still-covers-t**: if the new playhead still falls inside the overlap window, a fresh COS/SIN pair is scheduled at the new anchor.
+
+#### Test: play-with-zero-tracks-builds-silence (covers R3, OQ-2)
+
+**Given**: Mixer constructed with `tracks = []`.
+**When**: `mixer.play()`.
+**Then**:
+- **master-graph-built**: master analyser pair is non-null.
+- **silence-from-analysers**: `getByteTimeDomainData` yields mid-rail (silent) samples.
+- **no-exception**: `play()` returns normally.
+
+#### Test: rebuild-midplay-click-accepted (covers R15, OQ-3)
+
+**Given**: Playing mixer with an actively-ringing source.
+**When**: `rebuild([...])` runs.
+**Then**:
+- **teardown-observed**: old source's `.stop()` / `.disconnect()` called.
+- **click-is-not-constrained**: spec explicitly accepts a brief audible click at the teardown boundary — test asserts only that teardown + fresh build completed without exception.
+
+#### Test: live-asset-404-no-retry-within-instance (covers OQ-4)
+
+**Given**: A clip whose `fetchBytes` throws in the live path.
+**When**: Activation attempts fire over several seeks within the same mixer instance.
+**Then**:
+- **warn-logged**: `console.warn` contains `decode failed` and the clip id.
+- **active-false**: the clip's `active` flag stays `false` across subsequent seeks.
+- **no-auto-retry**: `fetchBytes` is called at most once per activation attempt; no exponential-backoff retry loop fires.
+- **rebuild-resets**: after `rebuild([...])`, a fresh `fetchBytes` attempt is allowed.
+
+#### Test: solo-without-updatetrack-no-reschedule (covers R12, R28, OQ-6)
+
+**Given**: Playing mixer; track T with `solo=false`. User mutates `track.solo = true` on the underlying object without calling `updateTrack`.
+**When**: Audio continues playing; no mixer method is invoked.
+**Then**:
+- **no-reschedule**: no `trackGain.gain.cancelScheduledValues` / `setValueAtTime` is observed on the mixer's internal nodes as a result of the mutation.
+- **audible-balance-unchanged**: output balance does not change until a subsequent `updateTrack`, `rebuild`, `play`, or hard `seek` occurs.
+
+#### Test: hmr-reload-clears-cache-like-project-switch (covers R6, OQ-10)
+
+**Given**: Mixer + populated decodeCache.
+**When**: Vite/webpack HMR reloads the module.
+**Then**:
+- **cache-cleared-by-module-reinit**: the new module-scope `decodeCache` starts empty (module-level re-initialization, same as project-switch path).
+- **no-dangling-pendingdecodes**: `pendingDecodes` is empty.
+
+#### Test: take-playback-control-modal-transfers (covers R27)
+
+**Given**: Window A owns the live `AudioMixer` (playback active); window B is another tab of the same project.
+**When**: Window B attempts to start playback.
+**Then**:
+- **modal-shown-in-b**: window B displays a "Take playback control" modal.
+- **on-confirm-a-disposes**: window A's `AudioMixer.dispose()` is invoked and window A transitions to read-only playhead streaming.
+- **b-builds-fresh-mixer**: window B constructs a new `AudioMixer`, calls `play()`, and becomes the owner.
+
+#### Test: owning-window-close-releases-playback (covers R27)
+
+**Given**: Window A owns playback; window B is open as a peer (read-only playhead).
+**When**: Window A closes (page unload).
+**Then**:
+- **resource-released**: `AudioMixer.dispose()` runs in window A's unload handler.
+- **next-action-claims**: window B's next Play interaction claims the playback role without a take-over modal (since no owner remained).
 
 ---
 
@@ -768,33 +786,25 @@ getActiveAudioMixer(): AudioMixer | null
 - **Send-bus topology** (reverb/delay/echo buses): referenced but not specified here.
 - **Pitch-preservation during `playback_rate ≠ 1`**: WebAudio BufferSource has no native pitch preservation; a phase-vocoder shim is TODO (M15 task N — see comment in `audio-mixer.ts:484-486`).
 - **Timeline integration**: `Timeline.tsx` seeking into the mixer via `seekRef`, HTMLAudioElement master clock, panel remount handling — covered in `timeline-composition-and-playback-loop`.
-- **WAV encoder byte-level correctness** (`encodePCMToWav`): split into `bounce-and-analysis`.
+- **WAV encoder byte-level correctness** (`encodePCMToWav`) + offline `renderMixToBuffer`: fully in `bounce-and-analysis`.
 - **Waveform cache and peaks fetching**: split into `waveform-cache-and-rendering`.
-- **LRU decode-cache eviction**: explicitly not in scope; adding it requires a new spec revision (see OQ-7).
 
 ---
 
 ## Open Questions
 
-- **OQ-1 — Seek during active crossfade**: When `seek` is called while a `setValueCurveAtTime` crossfade is partway through, the current code calls `cancelScheduledValues(paramAnchorTime)` on the crossfadeGain and re-sets value to 1 for the newly activated clip, but the **incumbent** clip (if still in-window after the seek) has its `crossfadeGain` reset too by `activateClip` and then separately receives a new crossfade curve via `scheduleCrossfade`. The exact ordering and whether audible artifacts can occur (zipper, click, or silent gap) is not tested. Resolution: add a test that seeks mid-crossfade and either codify "no audible artifact" or acknowledge the gap as acceptable.
+### Resolved
 
-- **OQ-2 — `play()` with zero tracks**: `ensureGraph` intentionally builds the master graph even with zero tracks (comment at `audio-mixer.ts:321-325`), so master analysers would report silence and a master fx preview could run. But no test asserts this path. Resolution: either add a test codifying "master chain processes even with zero tracks" or remove the path.
-
-- **OQ-3 — `rebuild` mid-playback**: The current code tears down and re-activates clips; an audible click at the teardown boundary is plausible but not specified. Resolution: decide whether a short ramp-down is required or the click is tolerated.
-
-- **OQ-4 — Live-path asset 404**: Offline has explicit `resolveClipBuffer → null + console.warn + skip` semantics (R21). Live path logs via `decode failed`, but the clip's `active` state and retry semantics across subsequent seeks are not specified. Resolution: codify retry-on-seek or mark as "never retries within a mixer instance".
-
-- **OQ-5 — Sample-rate mismatch**: If a decoded buffer's native sample rate differs from the `AudioContext`'s, WebAudio resamples transparently — but that resampling is browser-dependent and may not match across live vs. offline if the OfflineAudioContext is created at a different rate than the live context. R20 (bit-identical parity) implicitly assumes matching rates. Resolution: either make same-rate a precondition of R20 or specify a canonical resampling contract.
-
-- **OQ-6 — Solo toggle mid-playback without `updateTrack`**: `isTrackEffectivelyMuted` reads `allTracks` at call time, but nothing re-triggers a schedule when `solo` changes. Timeline callers are expected to call `updateTrack` or `rebuild`, but this is undocumented. Resolution: codify "mute/solo changes require `updateTrack(trackId)` to take effect".
-
-- **OQ-7 — Decode cache growth**: No LRU, no max size. A user editing a large project over hours will accumulate `AudioBuffer` memory. Audit leaks #6 + #15 flag this. Resolution options: (a) accept and document "session-scoped growth is acceptable", (b) add LRU with a size/time cap, (c) clear cache on project switch.
-
-- **OQ-8 — Offline sample rate ≠ live**: `MixRenderOptions.sampleRate` defaults to 48000, but live `AudioContext` sample rate depends on the OS/device (44.1k, 48k, 96k, etc.). R20's bit-identical parity assumes matching rates. Resolution: either always render at the live ctx's rate or make the parity invariant conditional.
-
-- **OQ-9 — Master-effect tails in offline**: A reverb / delay with a 3s tail and a render window of exactly 10s will be truncated at frame `10 * sampleRate`. There's no `tailSeconds` option. Resolution: decide whether to auto-extend the buffer by the longest tail or codify truncation.
-
-- **OQ-10 — HMR-surviving decode cache**: Module-global cache survives Vite/webpack HMR, but mixer instances are disposed by React. No regression test exists. Resolution: add a smoke test and codify the lifecycle.
+- **OQ-1 — Seek during active crossfade**: **Resolved (fix)**. Seek cancels in-flight crossfade curves and reschedules from the new position; no curve carries across the seek boundary. Test: `seek-cancels-in-flight-crossfade`.
+- **OQ-2 — `play()` with zero tracks**: **Resolved (codify)**. Master graph built; master analysers report silence; no exception. Test: `play-with-zero-tracks-builds-silence`.
+- **OQ-3 — `rebuild` mid-playback**: **Resolved (codify)**. Audible click at the teardown boundary is accepted; not further constrained. Test: `rebuild-midplay-click-accepted`.
+- **OQ-4 — Live-path asset 404**: **Resolved (codify)**. No retry within a mixer instance; clip marked inactive + `console.warn`; rebuild required to retry. Test: `live-asset-404-no-retry-within-instance`.
+- **OQ-5 — Sample-rate mismatch (live vs offline)**: **Removed**. There is no offline audio mixdown path in scenecraft (mix-render.ts is bounce/analyze-only). The question is moot in this spec.
+- **OQ-6 — Solo toggle without `updateTrack`**: **Resolved (codify)**. Contract is "mute/solo changes require `updateTrack(trackId)` or `rebuild()` to take effect." Requirement R28. Test: `solo-without-updatetrack-no-reschedule`.
+- **OQ-7 — Decode cache growth**: **Resolved (fix)**. LRU cap at 512 MB total decoded audio; clear on project switch. Requirement R6. Tests: `decode-cache-lru-evicts-at-512mb`, `decode-cache-cleared-on-project-switch`.
+- **OQ-8 — Offline sample rate ≠ live**: **Removed**. No offline mixdown path; bounce/analyze spec owns any sample-rate semantics in that context.
+- **OQ-9 — Master-effect tails offline**: **Removed**. No offline mixdown path.
+- **OQ-10 — HMR-surviving decode cache**: **Resolved via OQ-7**. Project-switch clear covers HMR reload (module re-init). Test: `hmr-reload-clears-cache-like-project-switch`.
 
 ---
 
@@ -817,4 +827,8 @@ getActiveAudioMixer(): AudioMixer | null
 
 ---
 
-**Status**: Retroactive spec. Behavior Table rows 42–51 are `undefined` — resolve via follow-up clarifications or spec amendments before introducing behavior changes in those scenarios.
+**Status**: Retroactive spec. All previously-`undefined` Behavior Table rows
+(42–51) have been resolved per OQ resolution 2026-04-27; offline-mixdown rows
+(46/49/50) are removed as out-of-scope. Multi-window INV-5 behavior added
+(rows 52–53) with implementation details deferred to
+`agent/design/local.multi-window-workspaces.md`.

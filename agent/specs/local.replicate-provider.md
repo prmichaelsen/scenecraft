@@ -64,7 +64,7 @@ Define the observable contract of the Replicate typed provider: a plugin-facing 
 14. **R14**: Prediction output that is `None`, or contains no http(s) URL strings (after filtering), MUST yield `output_paths == []`. The ledger row is still written.
 15. **R15**: `attach_polling(prediction_id, source, on_complete, poll_interval=5.0)` MUST resume polling an existing prediction, run synchronously in the calling thread, and invoke `on_complete` exactly once with either a `PredictionResult` or a `ReplicateError` subclass.
 16. **R16**: `attach_polling` MUST NOT re-create the prediction (no POST `/v1/predictions`).
-17. **R17**: `attach_polling` MUST record spend via `_record_spend` on `succeeded`, before attempting download. If download fails, `on_complete` receives a `ReplicateDownloadFailed` carrying the just-written `spend_ledger_id`. This may double-record if called for a prediction that was already charged once; dedup is the caller's responsibility.
+17. **R17**: `attach_polling` MUST record spend via `_record_spend` on `succeeded`, before attempting download. If download fails, `on_complete` receives a `ReplicateDownloadFailed` carrying the `spend_ledger_id`. Per R30, `record_spend` is idempotent on `(plugin_id, prediction_id)`, so re-attach on an already-charged prediction returns the existing ledger id and does NOT double-charge.
 18. **R18**: `get_balance()` MUST call `GET /v1/account` and return `None` on any `ReplicateError`. With the current Replicate API returning no numeric balance, it MUST return `None` even on success (stubbed for forward-compatibility). It MUST NEVER raise.
 19. **R19**: `_resolve_version(model)` MUST accept three forms: `"owner/model"` (resolves latest via `GET /v1/models/{owner}/{name}` → `latest_version.id`), `"owner/model:version"` (returns `version`), bare `"version"` hash (returns as-is).
 20. **R20**: `_resolve_version` on `"owner/model"` with no `latest_version` MUST raise `ReplicateError(f"model {model} has no latest_version")`.
@@ -73,6 +73,11 @@ Define the observable contract of the Replicate typed provider: a plugin-facing 
 23. **R23**: The `__all__` export list MUST include `run_prediction`, `attach_polling`, `get_balance`, `PredictionResult`, all four exception classes, and constants `REPLICATE_API_BASE`, `REPLICATE_TOKEN_ENV`.
 24. **R24**: The four exception classes MUST form a hierarchy rooted at `ReplicateError` (subclass of `Exception`); `ReplicateNotConfigured`, `ReplicatePredictionFailed`, `ReplicateDownloadFailed` MUST all subclass `ReplicateError`.
 25. **R25**: `ReplicatePredictionFailed` MUST carry attributes `prediction_id` and `error`; `ReplicateDownloadFailed` MUST carry `prediction_id` and `spend_ledger_id`.
+26. **R26 (rate-limit 3-attempt contract)**: The 3-attempt backoff budget `(1.0, 2.0, 4.0)` is the intentional contract. No jitter, no circuit breaker, no 4th attempt. Persistent 429 → `ReplicateError`. Higher-level retry is the caller's responsibility.
+27. **R27 (non-URL outputs surfaced)**: `_download_outputs` filters `output` for http(s) URL strings. Non-URL entries (dicts, numbers, non-http strings) MUST be surfaced on `PredictionResult.raw_output` for caller inspection. If `output` contains zero URLs AND at least one non-URL entry, raise `ReplicatePredictionFailed("no downloadable outputs; caller should inspect raw_output")`. If `output` is `None` or empty list, continue to return an empty `output_paths` (unchanged).
+28. **R28 (token read per HTTP call)**: `_auth_headers()` reads `REPLICATE_API_TOKEN` from the environment on EVERY HTTP call, never cached on provider construction. Token rotation takes effect on the next attempt. This is intentional fast-cutover behavior.
+29. **R29 (concurrent run_prediction)**: Per INV-1, concurrent `run_prediction` calls from the same user/project are accepted-undefined. No internal lock; caller's responsibility.
+30. **R30 (attach_polling idempotency via INV-3)**: `attach_polling` on a terminal prediction is safe: `record_spend` is idempotent on `(plugin_id, source_external_id)` where Replicate always passes `prediction_id` as `source_external_id`. A second call does not double-charge. Caller-side dedup is no longer required.
 
 ---
 
@@ -181,11 +186,11 @@ Exception
 | 28 | Module exports | `__all__` contains the 7 public names + 2 constants | `module-exports-complete` |
 | 29 | R9a compliance — no raw DB import | Module does not import `scenecraft.db` at top level | `no-raw-db-import` |
 | 30 | Token read timing | Token is read per HTTP call, not cached at import | `token-read-per-call` |
-| 31 | Rate-limit retry beyond 3 attempts | **undefined** | → [OQ-1](#open-questions) |
-| 32 | Prediction `output` is non-URL JSON (dict, number) | **undefined** | → [OQ-2](#open-questions) |
-| 33 | `attach_polling` on already-completed prediction | **undefined** | → [OQ-3](#open-questions) |
-| 34 | Concurrent `run_prediction` calls in same process | **undefined** | → [OQ-4](#open-questions) |
-| 35 | Token rotated mid-poll (different value between calls) | **undefined** | → [OQ-5](#open-questions) |
+| 31 | Rate-limit retry beyond 3 attempts | 3-attempt budget is the contract; persistent 429 raises `ReplicateError` | `rate-limit-3-attempt-contract` (covers R26, OQ-1) |
+| 32 | Prediction `output` is non-URL JSON (dict, number) | Non-URL entries surfaced on `PredictionResult.raw_output`; zero-URL-with-non-URL-entries raises | `non-url-output-surfaced-on-raw-output` (covers R27, OQ-2) |
+| 33 | `attach_polling` on already-completed prediction | Idempotent via INV-3; `record_spend` returns existing ledger id; no double-charge | `attach-polling-idempotent-on-terminal` (covers R30, OQ-3) |
+| 34 | Concurrent `run_prediction` calls in same process | Accepted-undefined per INV-1 | `no-internal-lock-on-run-prediction` (covers R29, OQ-4, INV-1) |
+| 35 | Token rotated mid-poll (different value between calls) | Intentional fast-cutover; next HTTP attempt uses new token | `token-read-per-http-call-not-cached` (covers R28, OQ-5) |
 
 ---
 
@@ -532,6 +537,59 @@ Iterate `(1.0, 2.0, 4.0, None)`:
 **Then**:
 - **header-uses-latest**: the POST request's `Authorization` header is `Bearer B`, not `Bearer A`.
 
+#### Test: `rate-limit-3-attempt-contract` (covers R26, OQ-1)
+
+**Given**: POST returns 429 on 4 consecutive attempts.
+**When**: `run_prediction(...)` is called.
+**Then**:
+- **raises-replicate-error**: raises generic `ReplicateError` (not a new subclass).
+- **no-fifth-attempt**: exactly 4 POST attempts were made (3 retries after initial).
+- **no-jitter**: sleeps observed were exactly `1.0`, `2.0`, `4.0` (no jitter).
+
+#### Test: `non-url-output-surfaced-on-raw-output` (covers R27, OQ-2)
+
+**Given**: prediction `output = ["https://x/a.wav", {"metadata": "json"}, 42]`; download of a.wav succeeds.
+**When**: `run_prediction(...)` is called.
+**Then**:
+- **one-path**: `len(result.output_paths) == 1`.
+- **raw-output-has-non-url-entries**: `result.raw_output == [{"metadata":"json"}, 42]`.
+- **ledger-written-once**: `record_spend` invoked exactly once.
+
+#### Test: `zero-url-with-non-url-entries-raises` (covers R27, OQ-2)
+
+**Given**: prediction `output = [{"analysis": "foo"}, 42]` (zero URLs, non-empty non-URL entries).
+**When**: `run_prediction(...)` is called.
+**Then**:
+- **raises-prediction-failed**: raises `ReplicatePredictionFailed`.
+- **message-mentions-raw-output**: error message contains `"no downloadable outputs"`.
+- **no-ledger**: `record_spend` NOT invoked.
+
+#### Test: `attach-polling-idempotent-on-terminal` (covers R30, OQ-3)
+
+**Given**: a prediction `pred_abc` that is already terminal-succeeded; `record_spend` has already recorded ledger id `sl_1` for `(plugin_id=source, source_external_id="pred_abc")`.
+**When**: `attach_polling(prediction_id="pred_abc", source="gf", on_complete=cb)` is called.
+**Then**:
+- **cb-called-once**: `cb` invoked once with a `PredictionResult`.
+- **ledger-id-reused**: `result.spend_ledger_id == "sl_1"` (existing row returned; no new insert).
+- **no-double-charge**: the spend_ledger table still has exactly one row for this `(plugin_id, pred_abc)` pair.
+
+#### Test: `no-internal-lock-on-run-prediction` (covers R29, OQ-4, INV-1)
+
+**Given**: source inspection of `run_prediction`.
+**When**: static analysis.
+**Then**:
+- **no-lock-acquired**: no `threading.Lock` / `asyncio.Lock` is held across the call.
+- **single-writer-contract**: concurrent callers from the same user/project are undefined per INV-1.
+
+#### Test: `token-read-per-http-call-not-cached` (covers R28, OQ-5)
+
+**Given**: `REPLICATE_API_TOKEN=A`; `run_prediction(...)` initiates; between POST and first poll, env changes to `B`.
+**When**: polling begins.
+**Then**:
+- **post-used-A**: the POST request's Authorization header is `Bearer A`.
+- **poll-used-B**: the first poll GET's Authorization header is `Bearer B`.
+- **no-import-time-cache**: module-level `_provider_cached_token` or similar does NOT exist.
+
 #### Test: `exception-hierarchy-and-attrs` (covers R24, R25)
 
 **Given**: the four exception classes.
@@ -562,11 +620,17 @@ Iterate `(1.0, 2.0, 4.0, None)`:
 
 ## Open Questions
 
-- **OQ-1**: Rate-limit retry beyond the 3-attempt budget. The source exhausts after attempts at `(1,2,4)` and raises `ReplicateError`. It does NOT distinguish between persistent rate-limiting and transient spikes, and there is no longer fallback, no jitter, no circuit breaker. Should a 5th attempt exist? Should backoff jitter? Should persistent 429 get its own exception subclass? Source: unresolved. Behavior today: raise a generic `ReplicateError` and bubble up.
-- **OQ-2**: Non-URL prediction output. When Replicate returns `output` as a dict, a number, a non-http string, or a mixed list, `_download_outputs` silently filters all entries, producing `output_paths=[]`. The caller sees a `PredictionResult` with 0 outputs and `raw` holding the original dict. Should this be an error? Should there be a distinct `.json_output` field on `PredictionResult`? Source: silent-filter today.
-- **OQ-3**: `attach_polling` on a prediction that is ALREADY in a terminal state at first poll. Today: `_poll_to_completion` returns immediately; ledger is written again (possible double-charge attribution); download runs once. Source code comments acknowledge this may double-record, and push responsibility to the caller. Should there be a `get_prediction_no_side_effects` variant? Should spend be idempotent on `job_ref`?
-- **OQ-4**: Concurrent `run_prediction` calls in the same process. The provider uses no locks; `httpx` is thread-safe. `plugin_api.record_spend` attribution is per-call. But: tempdirs are per-call, so no collision there. Are there failure modes around shared connection pools, per-token rate-limit budget, or log-ordering? Source: not addressed.
-- **OQ-5**: Token rotation mid-poll. `_auth_headers()` reads the env on every call, so a rotation DURING a `run_prediction` takes effect on the next HTTP attempt. Is that desired (fast cutover) or dangerous (polls with mixed identities)? Source: implicit behavior — not called out as a contract.
+### Resolved
+
+**OQ-1 (resolved)**: Rate-limit retry beyond the 3-attempt budget. **Decision**: Accept current — 3-attempt budget with `(1,2,4)` backoff is the contract. No jitter, no circuit breaker. Persistent 429 raises generic `ReplicateError`. Spec codifies as intentional; caller retries at a higher level if needed. **Tests**: `rate-limit-3-attempt-contract`.
+
+**OQ-2 (resolved)**: Non-URL prediction output. **Decision**: Fix — `_download_outputs`'s silent filter is a bug. New behavior: if `output` contains ≥1 URL, those are downloaded and any non-URL entries are surfaced on `PredictionResult.raw_output` for caller inspection. If `output` contains zero URLs AND at least one non-URL entry, raise `ReplicatePredictionFailed("no downloadable outputs; caller should inspect raw_output")`. **Tests**: `non-url-output-surfaced-on-raw-output`, `zero-url-with-non-url-entries-raises`.
+
+**OQ-3 (resolved)**: `attach_polling` on a prediction that is ALREADY in a terminal state. **Decision**: Resolved via INV-3 — `record_spend` is idempotent on `(plugin_id, source_external_id)`. Replicate always passes `prediction_id` as `source_external_id`, so re-charging is a no-op returning the existing ledger id. Caller no longer needs to dedup. **Tests**: `attach-polling-idempotent-on-terminal`.
+
+**OQ-4 (resolved)**: Concurrent `run_prediction` calls. **Decision**: Accepted-undefined per INV-1 (single-writer per user/project). No internal lock at the provider layer. **Tests**: `no-internal-lock-on-run-prediction`.
+
+**OQ-5 (resolved)**: Token rotation mid-poll. **Decision**: Codify current — `_auth_headers()` reads env per HTTP call; rotation takes effect on the next attempt. Not a bug; intentional fast-cutover. **Tests**: `token-read-per-http-call-not-cached`.
 
 ---
 

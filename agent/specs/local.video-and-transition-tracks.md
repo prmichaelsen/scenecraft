@@ -154,6 +154,7 @@ type GhostOverflow = { topCount: number; bottomCount: number }
   - `maxTime = nextKf.time − 0.1` (or `duration || Infinity`).
   - `trim-out` further clamps `maxTime` so left clip's `trimOut` cannot exceed `sourceVideoDuration`, converted through current speed factor.
   - `trim-in` further clamps `minTime` so right clip's `trimIn` cannot fall below 0.
+  - **Any resulting clip span is additionally clamped to a 1-frame minimum (≈ 0.0333s at 30fps) so no clip collapses to zero/negative duration.**
 - **R19**. Drag is considered "did drag" only if `|deltaX| > 2 px`; on no-drag mouseup the synthetic click is allowed to propagate normally.
 - **R20**. On drag commit (`didDrag && projectName`):
   - Remap: `postUpdateTransitionTrim(projectName, { transitionId, {from|to}KfTimestamp })` on `leftTr ?? rightTr`.
@@ -173,8 +174,8 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 - **R26**. Mode:
   - `copy` when Cmd or Ctrl held at mousedown; else `move`.
 - **R27**. Drag "locks" when `hypot(dx, dy) ≥ 4 px`; below threshold the gesture is treated as a click.
-- **R28**. `timeDelta` is clamped so `min(clip.fromTimeSeconds) + delta ≥ 0` (no clip can start before t=0). Unbounded in the positive direction.
-- **R29**. `trackDelta` is computed by DOM hit-test: walk up from `elementFromPoint(clientX, clientY)` looking for `[data-track-id]`; the delta is `hitIndex − primary.sourceTrackIndex`. When the cursor is not over a track row, `trackDelta` is 0. Unclamped: values outside `[0, numTracks-1]` indicate overflow onto auto-created tracks.
+- **R28**. `timeDelta` is clamped so `min(clip.fromTimeSeconds) + delta ≥ 0` (no clip can start before t=0). Unbounded in the positive direction. On the same track, `timeDelta` is additionally clamped so a clip's moved span cannot cross an adjacent keyframe on the same track (clamp to adjacent-keyframe edge).
+- **R29**. `trackDelta` is computed by DOM hit-test: walk up from `elementFromPoint(clientX, clientY)` looking for `[data-track-id]`; the delta is `hitIndex − primary.sourceTrackIndex`. **When the cursor is not over a track row, `trackDelta` holds its last-known value** (does not reset to 0). Unclamped: values outside `[0, numTracks-1]` indicate overflow onto auto-created tracks.
 - **R30**. Per mousemove (throttled via `requestAnimationFrame`), `TransitionTrack` publishes:
   - `onTargetTracksChange(Set<track_id>)` — set of existing-track ids receiving at least one dropped clip.
   - `onOverlapPreviewChange(OverlapPreview)` — classification per existing transition on each target track:
@@ -207,9 +208,9 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 ### TransitionTrack — pool-path drop
 
 - **R36**. Bar body accepts drop of `application/x-scenecraft-pool-path`:
-  - `onDragOver` sets dropEffect `'copy'` and marks `dropTarget = tr.id` only when that MIME is present.
-  - `onDrop` calls `onDropVideo(tr.id, poolPath, sourceTrId)` where `sourceTrId` is the optional `application/x-scenecraft-source-tr` value.
-  - Non-video pool segments (e.g., images, audio) are forwarded as-is — the component does NOT filter by extension (unlike VideoTrack). **[undefined — see OQ-3]**
+  - `onDragOver` sets dropEffect `'copy'` and marks `dropTarget = tr.id` only when that MIME is present AND the path is a video kind (ext matches `/\.(mp4|mov|webm|mkv|avi|m4v)$/i`).
+  - `onDrop` calls `onDropVideo(tr.id, poolPath, sourceTrId)` only when the path is a video kind; non-video drops are rejected (no callback).
+  - Non-video pool segments (images, audio) surface a brief rejection indicator (red tint during drag; no drop target on drop).
 
 ### TransitionTrack — click vs drag disambiguation
 
@@ -262,7 +263,7 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 | 25 | Body-drag with Cmd held | Mode copy; green tint + `+` badge on ghost | `body-drag-copy-mode` |
 | 26 | Body-drag movement < 4px | Not locked; click still fires | `body-drag-threshold` |
 | 27 | Body-drag timeDelta into negative | Clamped so min(from)+delta ≥ 0 | `body-drag-clamps-to-zero` |
-| 28 | Body-drag cursor off all track rows | trackDelta = 0 held | `body-drag-no-hit-holds-row` |
+| 28 | Body-drag cursor off all track rows | trackDelta holds last-known value (not reset to 0) | `body-drag-holds-last-track-delta` |
 | 29 | Body-drag past top of stack | Reports topCount overflow; renders "New track" tooltip | `body-drag-overflow-top` |
 | 30 | Body-drag overlaps existing tr fully | Preview consumed; red full-bar overlay on target | `overlap-case-a-consumed` |
 | 31 | Body-drag new_from inside target | Preview trimmedLeft; red tint on right portion | `overlap-case-b-trim-left` |
@@ -284,13 +285,14 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 | 47 | isActiveTrack=false | Body-drag & boundary handles disabled; click still works | `inactive-track-disables-drag` |
 | 48 | Highlighted but not selected | Yellow glow (distinct from orange selected ring) | `highlight-vs-select-distinct` |
 | 49 | renderProgress set | Progress bar rendered; click retries | `render-progress-retry` |
-| 50 | Trim drag to zero timeline duration | `undefined` | → [OQ-1](#open-questions) |
-| 51 | Body-drag past adjacent keyframe on same track | `undefined` (swap vs stop vs overlap not defined in component) | → [OQ-2](#open-questions) |
-| 52 | Drop non-video pool segment (audio/image) on transition | `undefined` (component forwards without filtering) | → [OQ-3](#open-questions) |
-| 53 | Snap target missing (no beats/sections detected) | `undefined` (component does not implement snapping in current code) | → [OQ-4](#open-questions) |
-| 54 | Drag initiated while candidate render in progress | `undefined` | → [OQ-5](#open-questions) |
-| 55 | Body-drag of mixed selection across tracks with multi-select | Partial-coverage (trackDelta uniform across all clips) — exact target-row choice when selection spans multiple source tracks is `undefined` for overflow edge | → [OQ-6](#open-questions) |
-| 56 | VideoTrack multi-select drag | `undefined` (no drag gesture implemented on VideoTrack; only click selection) | → [OQ-7](#open-questions) |
+| 50 | Trim drag to zero timeline duration | Clamped to 1 frame minimum (assuming 30fps ≈ 0.0333s) before persist; resolver never produces ≤0-duration result | `trim-clamps-to-one-frame-min` |
+| 51 | Body-drag past adjacent keyframe on same track | Clamped at adjacent-keyframe edge (cannot cross a same-track keyframe boundary) | `body-drag-clamps-to-adjacent-keyframe` |
+| 52 | Drop non-video pool segment (audio/image) on transition | Client-side MIME/kind validation rejects: `onDropVideo` NOT called for non-video kinds | `transition-drop-rejects-non-video` |
+| 53 | Snap target missing (no beats/sections detected) | **Deferred**: snap feature not shipped; revisit when it is | → [OQ-4](#open-questions) |
+| 54 | Drag initiated while candidate render in progress | Drag allowed; render-state UI shows in-progress indicator on the transition; not blocked | `drag-during-candidate-render-allowed` |
+| 55 | Body-drag of mixed selection across tracks with multi-select | **Deferred**: multi-select body-drag not supported; single-clip drag only | → [OQ-6](#open-questions) |
+| 56 | VideoTrack multi-select drag | **Deferred**: no drag gesture implemented on VideoTrack | → [OQ-7](#open-questions) |
+| 57 | Body-drag cursor leaves all track rows mid-gesture | `trackDelta` holds the last-known value (not reset to 0) until cursor re-enters a row | `body-drag-holds-last-track-delta` |
 
 ---
 
@@ -694,12 +696,6 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 - **retry-called**: `onRetryRender(tr1)` fires.
 - **propagation-stopped**: bar click handler not also triggered.
 
-#### Test: body-drag-no-hit-holds-row (covers R29)
-**Given**: cursor outside any `[data-track-id]` element.
-**When**: mousemove.
-**Then**:
-- **track-delta-zero**: `trackDelta === 0`.
-
 #### Test: filmstrip-thumb-error-hides (covers R42)
 **Given**: filmstrip rendered; one img URL returns 404.
 **When**: `error` event on that img.
@@ -739,6 +735,39 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 **Then**:
 - **remap-wins**: takes remap path (Cmd/Ctrl branch checked first in code); no `mode:'ripple'` field set, ripple flag has no effect.
 
+#### Test: trim-clamps-to-one-frame-min (covers R18, OQ-1 resolution)
+**Given**: trim drag that would produce a resulting clip span < 1 frame (e.g., ≤ 0.033s at 30fps)
+**When**: mouseup fires
+**Then**:
+- **clip-span-≥-one-frame**: persisted `(end - start)` ≥ 0.0333s for both affected clips
+
+#### Test: body-drag-clamps-to-adjacent-keyframe (covers R28, OQ-2 resolution)
+**Given**: a clip on track T with an adjacent keyframe on the same track at `t = kfNext`
+**When**: body-drag moves the clip past `kfNext`
+**Then**:
+- **timedelta-clamped**: final `timeDelta` clamps to keep clip's trailing edge at `kfNext` (no cross)
+
+#### Test: transition-drop-rejects-non-video (covers R36, OQ-3 resolution)
+**Given**: drag of `application/x-scenecraft-pool-path = "pool/foo.wav"` (audio) over a transition bar
+**When**: dragover + drop
+**Then**:
+- **no-drop-target-highlight**: no green tint
+- **on-drop-video-not-called**: `onDropVideo` NOT invoked
+
+#### Test: drag-during-candidate-render-allowed (covers OQ-5 resolution)
+**Given**: `renderProgress[tr.id] = 0.5` on the dragged transition
+**When**: body-drag mousedown + lock + mouseup with delta
+**Then**:
+- **drag-commits**: `postMoveTransitions` called normally
+- **progress-preserved**: renderProgress entry still present for tr.id after drag (drag does not cancel render)
+
+#### Test: body-drag-holds-last-track-delta (covers R29, body-drag=0 bug fix)
+**Given**: body-drag locked with `trackDelta=2`; cursor then moves off all track rows
+**When**: mousemove after cursor leaves rows
+**Then**:
+- **trackdelta-held**: `trackDelta === 2` (NOT reset to 0)
+- **ghost-position-stable**: ghost rects do not snap back to original rows
+
 *Note*: No concurrency tests — the component is single-threaded, DOM-event-driven. Drag state is held in a ref and a single in-flight drag at a time is guaranteed by mousedown → mousemove/up listener lifecycle.
 
 ---
@@ -756,26 +785,17 @@ type GhostOverflow = { topCount: number; bottomCount: number }
 
 ## Open Questions
 
-**OQ-1 — Trim drag to zero-or-negative timeline duration.**
-The clamps use `neighbor ± 0.1 s`, which prevents crossing, but do they guarantee `timelineDur > 0` for both sides in the `roll` case when `startTime - 0.1 > fromTime` is false? What happens if a rolling edit shrinks one side to exactly `0.1 s` — does the backend accept or reject? The component sends the call; reject-handling is not defined. (Behavior Table row #50.)
+- **OQ-4 — Snap when no beats/sections detected** (row 53). **Deferred**: snap feature not shipped; revisit when it is.
+- **OQ-6 — Multi-select body-drag spanning multiple source tracks with overflow** (row 55). **Deferred**: multi-select body-drag not supported; current codified contract is single-clip drag only.
+- **OQ-7 — VideoTrack multi-select drag** (row 56). **Deferred**: no drag gesture implemented on VideoTrack; revisit if multi-select-drag is a product requirement.
 
-**OQ-2 — Body-drag past adjacent keyframe on the same track.**
-On the same track, if a clip drags such that its new span overlaps an adjacent transition on the same track (not just another track), the overlap preview classifies it as Cases A/B/C/D identically — but "swap" vs "stop" vs "overlap commit" is unclear from the component; the backend's `postMoveTransitions` determines outcome. (Row #51.)
+### Resolved
 
-**OQ-3 — Drop non-video pool_segment on a transition.**
-`onDropVideo` fires for any `pool-path`, regardless of extension. Whether the receiving code (Timeline / backend) rejects audio/image paths, or silently accepts and selects a broken candidate, is not defined here. (Row #52.)
-
-**OQ-4 — Snap when no beats/sections detected.**
-Component has no snap implementation. If snapping is later added and beat data is missing, what happens — free drag, disabled drag, or error? Out of current scope. (Row #53.)
-
-**OQ-5 — Drag initiated while a candidate render is in progress.**
-`renderProgress` is rendered as a clickable retry affordance. A body-drag mousedown on the bar while the progress fill is rendered — does the drag start, or does the click-to-retry take precedence? Code suggests drag wins on non-progress-bar pixels but the progress-bar div covers the top 24px; exact interaction depends on layout. (Row #54.)
-
-**OQ-6 — Multi-select body-drag spanning multiple source tracks with overflow.**
-Uniform `trackDelta` is applied to all clips; per-clip target row = `sourceTrackIndex + trackDelta`. When the selection already spans rows 0 and 2 and `trackDelta = -1`, row-0 clip overflows top while row-2 clip stays in range. The code reports both (overflow + target set), but which `targetTrackName` shows in the tooltip is primary-clip only. (Row #55.)
-
-**OQ-7 — VideoTrack multi-select drag.**
-No drag gesture is implemented on `VideoTrack` cells (only click selection + drop). If multi-select-drag of keyframes is required later, behavior is fully `undefined`. (Row #56.)
+- **OQ-1 (row 50) — Trim drag to zero duration**: Resolved as **fix** — clamp to 1-frame minimum (≈0.0333s at 30fps). R18 updated; test `trim-clamps-to-one-frame-min`.
+- **OQ-2 (row 51) — Body-drag past adjacent keyframe on same track**: Resolved as **fix** — clamp to adjacent keyframe edge; clip cannot cross a same-track keyframe. R28 updated; test `body-drag-clamps-to-adjacent-keyframe`.
+- **OQ-3 (row 52) — Drop non-video pool_segment on transition**: Resolved as **fix** — client-side MIME/kind validation rejects non-video drops. R36 updated; test `transition-drop-rejects-non-video`.
+- **OQ-5 (row 54) — Drag during candidate render in progress**: Resolved as **codify** — drag is allowed; render-state UI shows in-progress indicator on the transition; drag is not blocked. Test `drag-during-candidate-render-allowed`.
+- **body-drag trackDelta=0 bug (beyond numbered OQs)**: Resolved as **fix** — hold last-known `trackDelta` rather than resetting to 0 when cursor leaves track rows. R29 updated; test `body-drag-holds-last-track-delta`; Behavior Table row 28 updated.
 
 ---
 

@@ -50,9 +50,9 @@ Specify the server-side authentication surface of scenecraft: JWT session tokens
 
 **R1. JWT signing key material**: The server MUST load its HS256 signing secret from `<.scenecraft>/secret.key`. If the file is missing at first read, the server MUST generate a new 32-byte (64-hex-char) secret via `secrets.token_hex(32)`, write it to `secret.key` with mode `0o600`, and use it thereafter. The file is never rotated automatically.
 
-**R2. JWT payload schema**: `generate_token(sc_root, username, expiry_hours=24)` MUST produce an HS256 JWT whose payload contains exactly: `sub` (username), `fingerprint` (users.pubkey_fingerprint, possibly `""`), `role` (users.role), `iat` (UTC unix seconds), `exp` (iat + expiry_hours·3600). Unknown user → `ValueError` with a message that includes the admin remediation command.
+**R2. JWT payload schema**: `generate_token(sc_root, username, expiry_hours=24)` MUST produce an HS256 JWT whose payload contains exactly: `sub` (username), `fingerprint` (users.pubkey_fingerprint, possibly `""`), `role` (users.role), `iat` (UTC unix seconds), `exp` (iat + expiry_hours·3600), and `jti` (freshly-generated `uuid4().hex`, per OQ-3 resolution — guarantees byte-distinct tokens even when issued in the same second). Unknown user → `ValueError` with a message that includes the admin remediation command.
 
-**R3. JWT validation**: `validate_token` MUST decode with the current secret, verify HS256, and raise `jwt.ExpiredSignatureError` on expiry or `jwt.InvalidTokenError` on signature / structural failure. `get_username_from_token` MUST swallow both and return `None`.
+**R3. JWT validation**: `validate_token` MUST decode with the current secret, verify HS256, and pass `leeway=30` to `jwt.decode` (per OQ-7 — accepts tokens whose `exp` is past by up to 30 seconds to absorb clock skew). Raises `jwt.ExpiredSignatureError` on expiry beyond leeway or `jwt.InvalidTokenError` on signature / structural failure. `get_username_from_token` MUST swallow both and return `None`. Tokens signed with a now-replaced secret fail signature verification and are treated as expired → force re-login (per OQ-2 — secret regen is a nuke-sessions event; no grace period).
 
 **R4. Cookie build/clear**: `build_cookie_header(token, max_age, secure=False)` MUST emit `scenecraft_jwt=<token>; Path=/; HttpOnly; SameSite=Lax; Max-Age=<n>`; `Secure` appended iff `secure=True`. `build_clear_cookie_header()` MUST emit the same cookie name with empty value, Max-Age=0, HttpOnly, SameSite=Lax, Path=/.
 
@@ -60,15 +60,15 @@ Specify the server-side authentication surface of scenecraft: JWT session tokens
 
 **R6. Login-code handshake**: `create_login_code(sc_root, token)` MUST insert a row into `login_codes (code, token, expires_at)` where `code = secrets.token_urlsafe(24)` and `expires_at = now_utc + 300s`. On every insert, rows with `expires_at < now` MUST be deleted (opportunistic GC).
 
-**R7. Login-code consumption**: `consume_login_code(sc_root, code)` MUST delete the row on lookup (single-use). Returns the stored JWT if the row existed and had not expired; returns `None` if the row was missing OR expired (even though the row is always deleted when found).
+**R7. Login-code consumption**: `consume_login_code(sc_root, code)` MUST wrap SELECT→DELETE in a `BEGIN IMMEDIATE` transaction (per OQ-6 — SQLite's only real at-most-once guarantee). Concurrent double-submits serialize: one consumer gets the JWT and deletes the row, the other sees the row gone and returns `None`. Returns the stored JWT if the row existed and had not expired; returns `None` if the row was missing OR expired (row is always deleted when found).
 
-**R8. API key issuance**: `scenecraft auth keys issue <username> --expires YYYY-MM-DD [--label …]` MUST: (a) verify user exists (else exit 1), (b) parse `--expires` as UTC midnight (else exit 1), (c) generate `raw_key = secrets.token_urlsafe(32)`, `salt = os.urandom(16)`, `key_id = "ak_" + uuid4().hex[:12]`, (d) compute `key_hash = PBKDF2-HMAC-SHA256(raw_key, salt, 600_000)` hex-encoded, (e) INSERT `(id, username, key_hash, salt_hex, issued_by=username, issued_at=now_utc_iso, expires_at=iso, label)`, (f) print `Key ID`, `API Key`, `Expires`, optional `Label`, and a warning line stating the key will not be shown again. The raw key MUST NOT be logged or persisted anywhere else.
+**R8. API key issuance**: `scenecraft auth keys issue <username> --expires YYYY-MM-DD [--label …]` MUST: (a) verify user exists (else exit 1), (b) parse `--expires` as UTC midnight (else exit 1), (c) generate `raw_key = "sck_" + secrets.token_urlsafe(32)` (per OQ-14 — `sck_` prefix enables GitHub secret-scanning), `salt = os.urandom(16)`, `key_id = "ak_" + uuid4().hex[:12]`, (d) compute `key_hash = PBKDF2-HMAC-SHA256(raw_key, salt, 600_000)` hex-encoded, (e) INSERT `(id, username=<target>, key_hash, salt_hex, issued_by=<caller>, issued_at=now_utc_iso, expires_at=iso, label)` — `issued_by` is the CLI caller (may differ from `username` when an admin issues on behalf of another user, per OQ-13), (f) print `Key ID`, `API Key`, `Expires`, optional `Label`, and a warning line stating the key will not be shown again. The raw key MUST NOT be logged or persisted anywhere else.
 
-**R9. API key listing**: `scenecraft auth keys list <username>` MUST print only `id, issued_at, expires_at, revoked_at, label` (never `key_hash` or `salt`). Revoked keys show `status=revoked`; active keys (including expired — see OQ-8) show `status=active`.
+**R9. API key listing**: `scenecraft auth keys list <username>` MUST print only `id, issued_at, expires_at, revoked_at, label, status` (never `key_hash` or `salt`). `status` is computed (per OQ-8): `revoked` if `revoked_at IS NOT NULL`, else `expired` if `expires_at < now_utc_iso`, else `active`. Pure display; does not mutate DB.
 
-**R10. API key revocation**: `scenecraft auth keys revoke <key_id>` MUST set `revoked_at = now_utc_iso` on a non-revoked key. Already-revoked keys MUST produce an idempotent message without error. Missing key MUST exit 1.
+**R10. API key revocation**: `scenecraft auth keys revoke <key_id>` MUST set `revoked_at = now_utc_iso` on a non-revoked key. Already-revoked keys MUST produce an idempotent success message WITHOUT updating `revoked_at` (per OQ-15 — CI-friendly; preserves original revocation timestamp). Missing key MUST exit 1.
 
-**R11. Double-gate middleware — Gate 1 (JWT)**: `require_paid_plugin_auth` MUST first look for a bearer token in `Authorization`; if absent, fall back to the `scenecraft_jwt` cookie. Missing token → 401 `UNAUTHORIZED` "Missing session token". Invalid/expired token → 401 "Invalid or expired session token". Valid token with no `sub` claim → 401 "Malformed session token".
+**R11. Double-gate middleware — Gate 1 (JWT)**: `require_paid_plugin_auth` MUST first look for a bearer token in `Authorization`; if present, the cookie is ignored entirely (per OQ-1 — bearer wins as canonical; no mismatch detection). If bearer is absent, fall back to the `scenecraft_jwt` cookie. Missing token → 401 `UNAUTHORIZED` "Missing session token". Invalid/expired token → 401 "Invalid or expired session token". Valid token with no `sub` claim → 401 "Malformed session token".
 
 **R12. Double-gate middleware — Gate 2 (API key)**: After JWT success, the middleware MUST require `X-Scenecraft-API-Key`. Missing → 401. Present → middleware loads all `api_keys` WHERE `username = JWT.sub AND revoked_at IS NULL AND expires_at > now_utc_iso`, and for each row computes `PBKDF2(raw, salt_from_row, 600_000)` comparing to stored `key_hash`. First equal hash wins; no match → 401 "Invalid API key or session/key user mismatch".
 
@@ -78,9 +78,9 @@ Specify the server-side authentication surface of scenecraft: JWT session tokens
 
 **R15. Auth context attachment**: On success, middleware MUST set `handler_self._paid_auth_ctx = PaidPluginAuthContext(username, org, api_key_id)` and invoke the wrapped handler. Wrapper MUST preserve `__name__` and `__doc__`.
 
-**R16. User creation flag**: `bootstrap.create_user(root, username, pubkey="", role="editor")` MUST insert a row with `must_change_password = 1` (always), `pubkey_fingerprint = sha256(pubkey).hexdigest()[:16]` iff pubkey given else `""`. `init_root` MUST insert its admin user without setting `must_change_password` (uses the default `0` path because it does not go through `create_user`). `user_set_password` MUST clear the flag.
+**R16. User creation flag**: `bootstrap.create_user(root, username, pubkey="", role="editor")` MUST insert a row with `must_change_password = 1` (always), `pubkey_fingerprint = sha256(pubkey).hexdigest()[:16]` iff pubkey given else `""`. The `users.pubkey_fingerprint` column carries a `UNIQUE` constraint (per OQ-5 — 2^64 space is safe for <10k users; free safety); duplicate fingerprint inserts raise `sqlite3.IntegrityError`. `init_root` MUST insert its admin user without setting `must_change_password` (uses the default `0` path because it does not go through `create_user`). `user_set_password` MUST clear the flag.
 
-**R17. Role enum**: `users.role` MUST be one of `admin | editor | viewer` (CLI `--role` choice). `org_members.role` MUST default to `member`; `admin` is valid at org-member level (set during `init_root` for the founding admin).
+**R17. Role enum**: `users.role` MUST be one of `admin | editor | viewer` (CLI `--role` choice). `org_members.role` MUST be one of `admin | editor | viewer` — canonical enum per OQ-12 (the legacy `member` value is dropped). CLI default + `init_root` for a non-founding admin use `editor`; `init_root` for the founding admin uses `admin`. A `CHECK` constraint on the column enforces the enum.
 
 **R18. Schema preservation**: `get_server_db` MUST be idempotent: on every call it applies `SERVER_DB_SCHEMA` with `CREATE TABLE IF NOT EXISTS`, and — as a live migration — adds `must_change_password INTEGER NOT NULL DEFAULT 0` to `users` if a probe SELECT raises `OperationalError`.
 
@@ -224,16 +224,16 @@ class PaidPluginAuthContext:
 | 43 | Migration: existing `users` table without `must_change_password` | `get_server_db` adds the column with default 0 | `schema-migration-must-change` |
 | 44 | Exempt paths outside double-gate | `/auth/login`, `/auth/logout`, `/oauth/callback` reachable without JWT | `exempt-paths-reachable` |
 | 45 | Role values accepted by CLI | Exactly `admin`, `editor`, `viewer` | `role-enum-cli` |
-| 46 | Bearer AND cookie both present with different tokens | `undefined` (bearer wins by implementation but not by contract) | → [OQ-1](#open-questions) |
-| 47 | JWT signed with an old secret after `secret.key` is regenerated | `undefined` (today would raise InvalidTokenError but no explicit contract) | → [OQ-2](#open-questions) |
-| 48 | Two concurrent `generate_token` calls for the same user in the same second | `undefined` (both succeed; `iat`/`exp` can collide) | → [OQ-3](#open-questions) |
-| 49 | API key used after its owning user is deleted | `undefined` (`ON DELETE CASCADE` removes the key, but deletion itself is undefined) | → [OQ-4](#open-questions) |
-| 50 | Pubkey fingerprint collision within 16-char SHA-256 truncation | `undefined` (no enforcement of uniqueness) | → [OQ-5](#open-questions) |
-| 51 | Login code submitted a second time (explicit double-submit race) | Single-use by R7, but concurrent consumption race is `undefined` | → [OQ-6](#open-questions) |
-| 52 | JWT expired within clock-skew window (±a few seconds) | `undefined` (no leeway configured) | → [OQ-7](#open-questions) |
-| 53 | API key `expires_at < now` on list | `undefined` — list does not filter by expiry, status still says "active" | → [OQ-8](#open-questions) |
-| 54 | Sliding cookie expiration — does server re-issue cookie on each auth'd request? | `undefined` — R20 says SHOULD but the audited code does not show the re-issue path | → [OQ-9](#open-questions) |
-| 55 | Two concurrent API-key issuances for the same user with the same raw key (secrets collision) | `undefined` (practically 0, but no uniqueness constraint on `key_hash`) | → [OQ-10](#open-questions) |
+| 46 | Bearer AND cookie both present with different tokens | Bearer wins; cookie ignored when `Authorization` header is present (codified per OQ-1) | `bearer-and-cookie-bearer-wins` |
+| 47 | JWT signed with an old secret after `secret.key` is regenerated | Stale-secret tokens treated as expired → force re-login; no grace period (secret regen nukes sessions) | `old-secret-token-forces-relogin` |
+| 48 | Two concurrent `generate_token` calls for the same user in the same second | Distinct tokens via added `jti` (uuid4) claim | `concurrent-token-generation-jti-differs` |
+| 49 | API key used after its owning user is deleted | **Deferred** — user-deletion feature not built yet | → [OQ-4](#open-questions) |
+| 50 | Pubkey fingerprint collision within 16-char SHA-256 truncation | Prevented by `UNIQUE` constraint on `users.pubkey_fingerprint`; colliding insert raises IntegrityError | `fingerprint-unique-constraint-enforced` |
+| 51 | Login code submitted a second time (explicit double-submit race) | `BEGIN IMMEDIATE` wraps SELECT→DELETE; at-most-once guaranteed; losing call returns `None` | `login-code-concurrent-double-submit-at-most-once` |
+| 52 | JWT expired within clock-skew window (±30s) | Accepted within 30s leeway via `jwt.decode(..., leeway=30)` | `clock-skew-within-leeway-accepted` |
+| 53 | API key `expires_at < now` on list | `keys list` shows computed `status` = `expired` (alongside `revoked` / `active`) | `keys-list-computes-expired-status` |
+| 54 | Sliding cookie expiration — does server re-issue cookie on each auth'd request? | **Deferred** — verify actual api_server.py behavior first | → [OQ-9](#open-questions) |
+| 55 | Two concurrent API-key issuances for the same user with the same raw key (secrets collision) | No UNIQUE index on `(username, key_hash)`; both rows persist; Gate 2 returns whichever sorts first (cost > benefit to enforce) | `api-key-hash-no-uniqueness-constraint` |
 
 ---
 
@@ -306,6 +306,7 @@ class PaidPluginAuthContext:
 - **fingerprint-matches**: `payload["fingerprint"] == users.pubkey_fingerprint`.
 - **exp-is-iat-plus-24h**: `payload["exp"] - payload["iat"] == 86400`.
 - **iat-within-second**: `abs(payload["iat"] - T_unix) <= 1`.
+- **jti-present**: `payload["jti"]` is a 32-char hex string (uuid4).
 
 #### Test: generate-token-unknown-user (covers R2 bad path)
 
@@ -665,75 +666,116 @@ class PaidPluginAuthContext:
 
 ### Edge Cases
 
-#### Test: jwt-signed-with-old-secret (covers OQ-2)
+#### Test: old-secret-token-forces-relogin (covers OQ-2, R3)
 
-**Given**: A JWT signed with a previous `secret.key`; `secret.key` is now replaced with a different value.
-**When**: `validate_token` called.
+**Given**: JWT signed with secret S1; `secret.key` is replaced with S2.
+**When**: `validate_token(token)` called with the old token.
 **Then**:
-- **undefined**: behavior is not contractually pinned in this spec. Today: raises `InvalidTokenError`. DO NOT assert this outcome until OQ-2 is resolved.
+- **raises-invalid**: raises `jwt.InvalidTokenError` (signature mismatch)
+- **username-helper-returns-none**: `get_username_from_token` returns `None` — caller treats as force-re-login
+- **no-grace**: no code path accepts the old-secret token after regen
 
-#### Test: concurrent-token-generation (covers OQ-3)
+#### Test: concurrent-token-generation-jti-differs (covers OQ-3, R2)
 
 **Given**: Two threads call `generate_token(sc_root, "alice")` at the same wall-clock second.
 **When**: Both complete.
 **Then**:
-- **undefined**: whether `iat`/`exp` collide or differ, and whether the two tokens are byte-identical or not, is undefined.
+- **tokens-distinct**: the two returned token strings are NOT byte-identical
+- **jti-differs**: decoded `payload["jti"]` differs between the two
+- **both-valid**: both pass `validate_token`
 
-#### Test: api-key-after-user-deleted (covers OQ-4)
+#### Test: jwt-payload-includes-jti (covers R2, OQ-3)
 
-**Given**: User `alice` owns API key `ak_x`; user is deleted from `users`.
-**When**: Request arrives with `ak_x` and any JWT claim.
+**Given**: Fresh `generate_token` call.
 **Then**:
-- **undefined**: Schema cascades the API key deletion (`ON DELETE CASCADE`), but today no supported code path deletes a user. Behavior is undefined until deletion is designed.
+- **jti-uuid4-hex**: `payload["jti"]` matches `^[0-9a-f]{32}$` (uuid4 hex)
 
-#### Test: fingerprint-collision (covers OQ-5)
+#### Test: fingerprint-unique-constraint-enforced (covers R16, OQ-5)
 
-**Given**: Two users with distinct pubkeys that happen to share the first 16 hex chars of SHA-256.
-**When**: Both users authenticate via tokens carrying `fingerprint`.
+**Given**: User `alice` already has `pubkey_fingerprint='deadbeefcafef00d'`.
+**When**: `create_user(root, "bob", pubkey=<crafted pubkey whose sha256 prefix collides>)` is called with a pubkey whose sha256 first-16 would equal alice's fingerprint.
 **Then**:
-- **undefined**: `fingerprint` claim is not a unique index; future pubkey-revocation checks may treat the two users as one or not. Undecided.
+- **raises-integrity**: raises `sqlite3.IntegrityError` (UNIQUE violation)
+- **no-bob-row**: `users` has no row for `bob`
 
-#### Test: login-code-concurrent-double-submit (covers OQ-6)
+#### Test: login-code-concurrent-double-submit-at-most-once (covers R7, OQ-6)
 
-**Given**: Two concurrent `/auth/login?code=c` requests arrive within microseconds.
-**When**: Both call `consume_login_code`.
+**Given**: A valid login-code `c` in the table. Two threads / connections call `consume_login_code(sc_root, c)` concurrently.
+**When**: Both complete.
 **Then**:
-- **undefined**: SQLite row-level serialization may allow both SELECTs to succeed before either DELETE; at-most-once isn't guaranteed.
+- **exactly-one-returns-token**: exactly one of the calls returns the JWT; the other returns `None`
+- **row-deleted**: row `c` is gone from `login_codes`
+- **no-dup-jwt**: only one successful browser login possible
 
-#### Test: clock-skew-window (covers OQ-7)
+#### Test: clock-skew-within-leeway-accepted (covers R3, OQ-7)
 
-**Given**: A JWT whose `exp` is in the past by 2 seconds.
-**When**: `validate_token` called.
+**Given**: JWT whose `exp` is 15 seconds in the past (within the 30s leeway).
+**When**: `validate_token(token)` called.
 **Then**:
-- **undefined**: no leeway is configured (`jwt.decode` default `leeway=0`). Whether any tolerance should exist is unresolved.
+- **returns-payload**: returns decoded payload
+- **no-raise**: does NOT raise `ExpiredSignatureError`
 
-#### Test: api-key-expired-listing (covers OQ-8)
+#### Test: clock-skew-beyond-leeway-rejected (covers R3, OQ-7)
 
-**Given**: A key whose `expires_at < now` and `revoked_at IS NULL`.
-**When**: `scenecraft auth keys list <owner>`.
+**Given**: JWT whose `exp` is 60 seconds in the past (beyond leeway).
+**When**: `validate_token(token)` called.
 **Then**:
-- **undefined**: current code prints `status=active` (only `revoked_at` drives status), but the key will fail Gate 2 at request time. The listing contract is undefined.
+- **raises-expired**: raises `jwt.ExpiredSignatureError`
 
-#### Test: cookie-sliding-reissue (covers OQ-9, R20)
+#### Test: keys-list-computes-expired-status (covers R9, OQ-8)
 
-**Given**: A valid cookie token whose `iat` was 23h 45m ago.
-**When**: An authenticated request arrives.
+**Given**: Three keys for `alice`: one active (expires tomorrow, revoked_at NULL), one expired (expires yesterday, revoked_at NULL), one revoked (revoked_at set).
+**When**: `scenecraft auth keys list alice`.
 **Then**:
-- **undefined**: Whether the response carries a new `Set-Cookie` header extending the session, and whether the refresh uses the same or a freshly-minted JWT, is undefined. R20 says SHOULD, source does not show the re-issue path.
+- **active-status**: active key's printed status is `active`
+- **expired-status**: expired-but-not-revoked key's printed status is `expired`
+- **revoked-status**: revoked key's printed status is `revoked`
 
-#### Test: api-key-hash-collision (covers OQ-10)
+#### Test: api-key-hash-no-uniqueness-constraint (covers OQ-10)
 
-**Given**: Two concurrent `keys issue` calls for the same user produce the same `raw_key` (probability ~2^-256 — theoretical only).
-**When**: Both INSERT.
+**Given**: The `api_keys` table schema.
+**When**: inspected.
 **Then**:
-- **undefined**: no uniqueness constraint on `(username, key_hash)`. Both succeed; future Gate 2 lookup returns whichever row sorts first.
+- **no-unique-hash-index**: no `UNIQUE` index / constraint on `(username, key_hash)` or on `key_hash` alone
+- **rationale-in-spec**: this is codified as intentional per OQ-10 resolution
 
-#### Test: bearer-and-cookie-both-present (covers OQ-1)
+#### Test: bearer-and-cookie-bearer-wins (covers R11, OQ-1)
 
-**Given**: Request has BOTH `Authorization: Bearer a.b.c` AND `Cookie: scenecraft_jwt=x.y.z` where a.b.c ≠ x.y.z.
-**When**: Double-gate invoked.
+**Given**: Request with BOTH `Authorization: Bearer <tokenA>` AND `Cookie: scenecraft_jwt=<tokenB>` where `tokenA != tokenB`; `tokenA` is valid for alice; `tokenB` is valid for bob.
+**When**: Double-gate invoked (with matching `X-Scenecraft-API-Key` for alice).
 **Then**:
-- **undefined**: Current implementation prefers bearer (code path: bearer first, cookie only if bearer missing). The contract does not pin this; malicious mismatches are not detected.
+- **handler-called**: handler runs
+- **ctx-username-alice**: `_paid_auth_ctx.username == "alice"` (bearer path)
+- **cookie-ignored**: bob's cookie token is never decoded
+
+#### Test: keys-issue-raw-has-sck-prefix (covers R8, OQ-14)
+
+**Given**: `scenecraft auth keys issue alice --expires 2027-01-01` runs.
+**Then**:
+- **raw-starts-with-sck**: printed `API Key:` begins with `sck_`
+- **length**: total length is `4 + 43 = 47` chars (prefix + urlsafe 32-byte)
+
+#### Test: keys-issue-admin-on-behalf-issued-by-admin (covers R8, OQ-13)
+
+**Given**: Admin `root` runs `scenecraft auth keys issue alice --expires 2027-01-01`.
+**When**: Row is persisted.
+**Then**:
+- **username-is-target**: `api_keys.username = "alice"`
+- **issued-by-is-caller**: `api_keys.issued_by = "root"`
+
+#### Test: org-members-role-enum-accepted (covers R17, OQ-12)
+
+**Given**: `create_user("alice")` + `create_org("acme")`.
+**When**: inserting `org_members` rows with `role` ∈ `{admin, editor, viewer}`.
+**Then**:
+- **all-accepted**: each insert succeeds
+
+#### Test: org-members-role-enum-rejected (covers R17, OQ-12)
+
+**Given**: Same fixtures.
+**When**: inserting `org_members` row with `role='member'` (legacy value).
+**Then**:
+- **raises-check**: raises `sqlite3.IntegrityError` (CHECK violation)
 
 #### Test: no-concurrency-invariant (covers R1–R19 negative)
 
@@ -757,21 +799,37 @@ class PaidPluginAuthContext:
 
 ## Open Questions
 
-- **OQ-1 — Bearer + Cookie mismatch resolution** (behavior row 46): If both headers are present with different tokens, which wins? Proposal: treat bearer as canonical and ignore cookie. Needs product confirmation — current behavior is "bearer wins" only because it's checked first.
-- **OQ-2 — JWT signed under old secret after regen** (row 47): Do we treat a stale-secret token as "expired session → force re-login" or is key rotation an explicit milestone that requires a grace period?
-- **OQ-3 — Concurrent token generation for same user** (row 48): Accept that two tokens may be byte-identical when issued in the same second? Or mint a `jti` (nonce claim)?
-- **OQ-4 — API key after user deletion** (row 49): We don't support user deletion yet; once we do, does `ON DELETE CASCADE` on `api_keys.username` cover the case, or do we need a revocation audit entry?
-- **OQ-5 — Fingerprint collision** (row 50): 16-char truncation = 64-bit space. Do we enforce uniqueness on `pubkey_fingerprint` or accept collisions as tolerable given <10k users?
-- **OQ-6 — Login code double-submit race** (row 51): SQLite does not guarantee single-row consumption under two concurrent SELECT→DELETE flows. Wrap in a transaction with `BEGIN IMMEDIATE`?
-- **OQ-7 — Clock skew** (row 52): Add `leeway=30s` to `jwt.decode`? Today the module passes no leeway.
-- **OQ-8 — Expired-key listing status** (row 53): Should `keys list` show `status=expired` (computed) alongside `revoked`? Today everything not revoked reads as "active".
-- **OQ-9 — Sliding cookie re-issue** (row 54): R20 says SHOULD but the audited sources do not show the re-issue path. Is sliding expiry in effect elsewhere (api_server handler?), or is this a missing requirement?
-- **OQ-10 — API key hash uniqueness** (row 55): Add a `UNIQUE (username, key_hash)` index? Benefit is ~zero; cost is minor index overhead.
-- **OQ-11 — `last_active_org` claim write path**: `require_paid_plugin_auth` reads `payload.last_active_org`, but `generate_token` never writes it. Where is it populated? (Likely a future re-issuance during a `/api/orgs/switch` call — needs spec'ing when that endpoint lands.)
-- **OQ-12 — `org_members.role` semantics**: `admin | member | editor | viewer`? CLI currently defaults to `"member"` without validation; `init_root` sets `"admin"`. Is there a canonical enum?
-- **OQ-13 — Self-issued vs admin-issued keys**: `keys_issue` sets `issued_by = username`. Should an admin issuing for another user set `issued_by = <admin>`? Currently it is unconditionally the target user.
-- **OQ-14 — Raw key format (`token_urlsafe(32)` ≈ 43 chars)**: should there be a prefix like Stripe's `sk_live_…` for accidental-commit detection?
-- **OQ-15 — Revoked-at timestamp as idempotency signal**: `keys revoke` on an already-revoked key returns success. Is that the correct contract for CI reruns?
+### Resolved
+
+**OQ-1 (resolved)**: Bearer + Cookie mismatch. **Decision**: bearer wins; cookie ignored entirely when `Authorization` header is present. Matches current code order. **Tests**: `bearer-and-cookie-bearer-wins`.
+
+**OQ-2 (resolved)**: JWT signed under old secret after regen. **Decision**: stale-secret tokens are treated as expired → force re-login. No grace period — secret regen is a nuke-sessions event. **Tests**: `old-secret-token-forces-relogin`.
+
+**OQ-3 (resolved)**: Concurrent token generation for same user. **Decision**: add `jti` (uuid4) claim to JWT payload. Same-second issuance produces byte-distinct tokens. **Tests**: `concurrent-token-generation-jti-differs`, `jwt-payload-includes-jti`.
+
+**OQ-5 (resolved)**: Fingerprint collision. **Decision**: add `UNIQUE` constraint on `users.pubkey_fingerprint`. 64-bit space is safe for <10k users; free safety. **Tests**: `fingerprint-unique-constraint-enforced`.
+
+**OQ-6 (resolved)**: Login-code double-submit race. **Decision**: wrap SELECT→DELETE in `BEGIN IMMEDIATE` — SQLite's only real at-most-once primitive. **Tests**: `login-code-concurrent-double-submit-at-most-once`.
+
+**OQ-7 (resolved)**: Clock skew. **Decision**: add `leeway=30` to `jwt.decode`. Industry standard. **Tests**: `clock-skew-within-leeway-accepted`, `clock-skew-beyond-leeway-rejected`.
+
+**OQ-8 (resolved)**: Expired-key listing. **Decision**: `keys list` shows computed `status` ∈ `{revoked, expired, active}`. Pure display. **Tests**: `keys-list-computes-expired-status`.
+
+**OQ-10 (resolved)**: API key hash uniqueness. **Decision**: no `UNIQUE` index on `(username, key_hash)`. Cost > benefit given collision probability of ~2^-256. **Tests**: `api-key-hash-no-uniqueness-constraint`.
+
+**OQ-12 (resolved)**: `org_members.role` semantics. **Decision**: canonical enum `admin | editor | viewer`; `member` dropped. CLI default + `init_root` (non-founding) use `editor`; founding admin uses `admin`. `CHECK` constraint enforces. **Tests**: `org-members-role-enum-accepted`, `org-members-role-enum-rejected`.
+
+**OQ-13 (resolved)**: Self-issued vs admin-issued keys. **Decision**: `issued_by = <CLI caller>`, `username = <target>`. Fixes audit trail for admin-issued keys. **Tests**: `keys-issue-admin-on-behalf-issued-by-admin`.
+
+**OQ-14 (resolved)**: Raw key format. **Decision**: prefix raw keys with `sck_` for GitHub secret-scanning. Final format: `sck_` + 43 urlsafe chars. **Tests**: `keys-issue-raw-has-sck-prefix`.
+
+**OQ-15 (resolved)**: Re-revoke idempotency. **Decision**: re-revoke returns success WITHOUT updating `revoked_at` (preserves original timestamp). CI-friendly. **Tests**: `keys-revoke-idempotent` (already present, with added `no-overwrite` assertion).
+
+### Deferred
+
+- **OQ-4 — API key after user deletion** (row 49): **Deferred**: awaiting user-deletion feature. When deletion is designed, `ON DELETE CASCADE` coverage and revocation-audit semantics will be revisited.
+- **OQ-9 — Sliding cookie re-issue** (row 54): **Deferred**: verify actual current behavior in `api_server.py` first. If the re-issue path is not shipped, mark R20 as explicit non-feature.
+- **OQ-11 — `last_active_org` claim write path**: **Deferred**: awaiting future `/api/orgs/switch` endpoint — the only path that populates this claim. Spec will pin the write path then.
 
 ---
 

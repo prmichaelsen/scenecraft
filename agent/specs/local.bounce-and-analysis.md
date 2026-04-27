@@ -29,7 +29,7 @@ bearing: the backend never reimplements the mixer.
 - Retroactive black-box spec (`--from-draft`, interactive) derived from:
   - `scenecraft/src/lib/mix-render.ts` (frontend render + WAV encoder)
   - `scenecraft/src/lib/chat-client.ts` (`handleMixRenderRequest`, `handleBounceAudioRequest`, `filterTracksForBounce`)
-  - `scenecraft-engine/src/scenecraft/chat.py` (`_exec_analyze_master_bus`, `_exec_bounce_audio`, `_MIX_RENDER_EVENTS`, `_BOUNCE_RENDER_EVENTS`)
+  - `scenecraft-engine/src/scenecraft/chat.py` — `_exec_analyze_master_bus` (line ~3036), `_exec_bounce_audio` (line ~3422), `_MIX_RENDER_EVENTS`, `_BOUNCE_RENDER_EVENTS`. **Note**: there are NO separate `bounce_audio.py` / `analyze_master_bus.py` modules; the logic is inlined in `chat.py`.
   - `scenecraft-engine/src/scenecraft/api_server.py` (`/mix-render-upload`, `/bounce-upload`)
 - Audit report: `agent/reports/audit-2-architectural-deep-dive.md` §1E unit 3; §2 invariant `Audio = Frontend`.
 
@@ -79,6 +79,12 @@ bearing: the backend never reimplements the mixer.
 17. **R17 — Frontend-as-source-of-truth invariant.** The backend MUST NOT contain any code that synthesizes or mixes PCM. Its only audio-production role is (a) storing bytes uploaded by the frontend at a content-addressed path, and (b) reading those bytes back for analysis. Any future feature that needs rendered PCM goes through the same WS round-trip.
 18. **R18 — Fire-and-forget handler.** The frontend WS handlers swallow all render/encode/upload errors (logged to `console.warn`); the backend times out on its own. The frontend never retries.
 19. **R19 — Pending-row cleanup on failure.** On WS send failure, upload timeout, WAV-still-missing race, or stat/wave-open failure, `_exec_bounce_audio` deletes the pending `audio_bounces` row before returning the error.
+20. **R20 — Single-writer per (user, project) (INV-1).** Concurrent `analyze_master_bus` or `bounce_audio` calls from the **same user on the same project** are explicitly out of scope and undefined. Concurrent calls from different users, or from the same user across different projects, MUST work. No per-project mutex is held across these tool calls; enforcement is by the session/working-copy model.
+21. **R21 — Hash-compute / cache-lookup atomicity.** `compute_mix_graph_hash` and the cache lookup execute back-to-back within a single request against the current DB snapshot. A concurrent write between the two steps naturally invalidates the hash on the next request (hash changes ⇒ new cache key). No transaction wraps compute+lookup.
+22. **R22 — WS handler vs ChatPanel unmount.** The backend's `asyncio.Event` for a request is popped in a `finally` block regardless of client lifecycle. If the ChatPanel unmounts while a handler is in flight, the frontend WS handler reference is lost, but the backend `set_mix_render_event` / `set_bounce_render_event` call on upload completes without side effects (no callback fires on the stale handler).
+23. **R23 — Interrupted upload.** The `/mix-render-upload` and `/bounce-upload` handlers require `content-length` and validate that the full body was read. A client disconnect mid-body raises `BounceUploadInterrupted` (bounce) or the equivalent mix-render error. No partial WAV is persisted; any bytes already staged are unlinked.
+24. **R24 — Live-playback pause/resume pair.** The frontend `handleMixRenderRequest` / `handleBounceAudioRequest` pause the live mixer **before** triggering the render and resume it in a `finally` block **after** upload completes (or fails). The pause/resume pair is symmetric and already present in shipped code — spec codifies it as a stable contract.
+25. **R25 — Late upload is a no-op.** When an upload arrives with a `request_id` whose event has already been popped from `_MIX_RENDER_EVENTS` / `_BOUNCE_RENDER_EVENTS` (e.g., because the tool already timed out), `set_*_event` returns `False`, the server persists the WAV (content-addressed, harmless), but no waiter is notified. Orphan WAV is acceptable under the content-addressed model; no GC is specified.
 
 ---
 
@@ -221,13 +227,13 @@ Same shape, `composite_hash` + `bit_depth`; writes to `pool/bounces/<composite_h
 | 36 | Bounce: WS send fails | Pending row deleted; error returned | `bounce-ws-send-fail-cleanup` |
 | 37 | Bounce: upload times out | Pending row deleted; timeout error returned | `bounce-upload-timeout-cleanup` |
 | 38 | Backend synthesizes PCM anywhere | MUST NOT happen — structural invariant | `backend-never-synthesizes-pcm` |
-| 39 | Two concurrent `analyze_master_bus` calls with same mix_graph_hash | `undefined` — ordering/dedup behavior is not specified in source | → [OQ-1](#open-questions) |
-| 40 | Two concurrent bounces with same composite_hash | `undefined` — second call's behavior re: UNIQUE constraint not specified | → [OQ-2](#open-questions) |
-| 41 | Project DB mutates between cache-key compute and cache lookup | `undefined` — no transaction wraps compute+lookup | → [OQ-3](#open-questions) |
-| 42 | WS message arrives while ChatPanel is unmounting | `undefined` — handler lifetime vs. panel lifetime not specified | → [OQ-4](#open-questions) |
-| 43 | PCM upload interrupted mid-stream (connection reset) | `undefined` — partial bytes handling / retry policy not specified | → [OQ-5](#open-questions) |
-| 44 | User starts playback while offline render is in-flight | `undefined` — handler snapshots `isPlaying` at entry, but mid-render user-initiated play is not specified | → [OQ-6](#open-questions) |
-| 45 | Upload arrives after timeout (WAV written post-hoc) | `undefined` — event is gone from map; WAV lingers on disk as orphan | → [OQ-7](#open-questions) |
+| 39 | Two concurrent `analyze_master_bus` calls with same mix_graph_hash from the SAME user + project | Out of scope per INV-1 (single-writer); undefined by design | `analyze-same-user-same-project-undefined-per-inv1` |
+| 40 | Two concurrent bounces with same composite_hash from the SAME user + project | Out of scope per INV-1 (single-writer); undefined by design | `bounce-same-user-same-project-undefined-per-inv1` |
+| 41 | Project DB mutates between cache-key compute and cache lookup | Hash + lookup execute back-to-back; mutation invalidates next request naturally (hash changes ⇒ new cache key). No transaction wraps compute+lookup. | `analyze-hash-lookup-no-internal-lock` |
+| 42 | WS message arrives while ChatPanel is unmounting | `asyncio.Event` popped in `finally`; stale frontend handler reference is lost without side effects on the backend | `unmount-mid-handler-no-side-effects` |
+| 43 | PCM upload interrupted mid-stream (connection reset) | Upload validator enforces `content-length`; mid-stream disconnect raises `BounceUploadInterrupted`; no partial WAV persisted | `upload-interrupted-raises-no-partial-wav` |
+| 44 | User starts playback while offline render is in-flight | Frontend handlers pause live playback before triggering the render and resume after in `finally`. Pair is symmetric. | `pause-resume-pair-around-render` |
+| 45 | Upload arrives after timeout (WAV written post-hoc) | Event already popped; `set_*_event` returns False; WAV persists (content-addressed, harmless); no GC specified | `late-upload-after-timeout-is-noop` |
 | 46 | Analyze called on empty project (no audio_clips, `end_time_s=null`) | Error: "end_time_s (0.0) must be greater than start_time_s" | `analyze-empty-project-errors` |
 | 47 | Bounce called on empty project | Same end-time validation error as analyze | `bounce-empty-project-errors` |
 | 48 | `request_id` absent from upload form | Upload still succeeds; no event signalled; WAV is a no-op orphan for any waiter | `upload-without-request-id-noop` |
@@ -641,6 +647,68 @@ Same as above for `_exec_bounce_audio`.
 - **file-written**: WAV present at expected path
 - **no-event-set**: no entry in `_MIX_RENDER_EVENTS` was touched
 
+#### Test: analyze-same-user-same-project-undefined-per-inv1 (covers R20)
+
+**Given**: Two analyze calls initiated by the same user against the same project concurrently
+**When**: Both enter `_exec_analyze_master_bus`
+**Then**:
+- **no-internal-lock**: no per-project mutex is acquired across the API call (negative assertion — future refactors must update the spec if this changes).
+- **undefined-outcome**: the spec does not constrain which call "wins"; the cache UNIQUE constraint may cause one to error or race; behavior is accepted-undefined per INV-1.
+
+#### Test: bounce-same-user-same-project-undefined-per-inv1 (covers R20)
+
+**Given**: Two bounce calls initiated by the same user against the same project concurrently with the same `composite_hash`
+**When**: Both enter `_exec_bounce_audio`
+**Then**:
+- **no-internal-lock**: no per-project mutex is held.
+- **undefined-outcome**: behavior accepted-undefined per INV-1; one call may raise on the `audio_bounces` UNIQUE constraint.
+
+#### Test: analyze-hash-lookup-no-internal-lock (covers R21)
+
+**Given**: `_exec_analyze_master_bus` is called
+**When**: Hash compute and cache lookup run sequentially
+**Then**:
+- **no-transaction-wrap**: no `BEGIN ... COMMIT` wraps the two steps (inspection of code / lack of cursor transaction).
+- **hash-from-current-state**: the hash is computed against the DB state at read time.
+- **next-request-self-corrects**: if a write lands after hash compute but before lookup, the next request recomputes the hash against the new state and uses the new cache key.
+
+#### Test: unmount-mid-handler-no-side-effects (covers R22)
+
+**Given**: A `mix_render_request` is in flight; ChatPanel unmounts; upload arrives
+**When**: Server calls `set_mix_render_event(request_id)`
+**Then**:
+- **event-popped-in-finally**: the `asyncio.Event` entry is removed from `_MIX_RENDER_EVENTS` in the tool's `finally` block regardless of client state.
+- **no-exception**: no backend exception from the stale client handler.
+- **no-frontend-side-effect**: the (now-unmounted) ChatPanel's handler reference is not invoked because its component tree no longer exists.
+
+#### Test: upload-interrupted-raises-no-partial-wav (covers R23)
+
+**Given**: Client begins multipart upload; connection drops mid-body
+**When**: Server attempts to read `content-length` bytes
+**Then**:
+- **raises-interrupted**: handler raises `BounceUploadInterrupted` (bounce) or equivalent for mix-render.
+- **no-partial-file**: `pool/bounces/<hash>.wav` (or `pool/mixes/<hash>.wav`) is NOT left on disk; any staged bytes are unlinked.
+- **event-not-set**: no corresponding `set_*_event(request_id)` call succeeds.
+
+#### Test: pause-resume-pair-around-render (covers R24)
+
+**Given**: Live mixer is playing (`isPlaying === true`) when a render request arrives
+**When**: `handleMixRenderRequest` runs to completion (or failure)
+**Then**:
+- **pause-before-render**: `mixer.pause()` is invoked before `renderMixToBuffer`.
+- **resume-in-finally**: `mixer.play()` is invoked in a `finally` block — symmetric with pause — even when the render or upload throws.
+- **pair-is-idempotent-under-user-replay**: if the user presses Play mid-render, the resume still fires at end-of-handler; there is no duplicate resume.
+
+#### Test: late-upload-after-timeout-is-noop (covers R25)
+
+**Given**: A `_exec_analyze_master_bus` call timed out 30 seconds ago and popped its `_MIX_RENDER_EVENTS` entry. Client finally finishes rendering and POSTs the WAV
+**When**: Server processes the upload
+**Then**:
+- **wav-persisted**: WAV is written to `pool/mixes/<hash>.wav` (content-addressed; harmless).
+- **set-event-returns-false**: `set_mix_render_event(request_id)` returns `False` (no waiter).
+- **no-log-error**: the "late" arrival is not logged as an error.
+- **no-gc**: the orphan WAV persists on disk (no garbage collection of orphan mix/bounce renders is specified).
+
 #### Test: upload-unknown-request-id-ok (covers R10)
 
 **Given**: `request_id = "unknown-uuid"` with no matching pending event
@@ -665,26 +733,28 @@ Same as above for `_exec_bounce_audio`.
 
 ## Open Questions
 
+### Resolved
+
 - **OQ-1 — Concurrent analyze_master_bus calls for the same mix_graph_hash.**
-  Two in-flight analyses with identical cache keys would both miss, both register events, both request renders; the second upload would arrive to find the WAV already present. Behavior is not specified: does the second call re-run librosa and race on the cache row UNIQUE constraint? (Table row 39.)
+  **Resolved**: closed per INV-1 (single-writer per user+project). Concurrent calls from the same user on the same project are out of scope; from different users or different projects they proceed independently. Test: `analyze-same-user-same-project-undefined-per-inv1`.
 
 - **OQ-2 — Concurrent bounces with identical composite_hash.**
-  `audio_bounces` has a UNIQUE constraint on `composite_hash`. Second concurrent `create_bounce` would raise. Not handled in `_exec_bounce_audio`. (Table row 40.)
+  **Resolved**: closed per INV-1. Test: `bounce-same-user-same-project-undefined-per-inv1`.
 
 - **OQ-3 — Project mutation between hash compute and cache lookup.**
-  `compute_mix_graph_hash` reads the DB, then cache lookup runs; no transaction bounds the two. A write between them (e.g. live edit) leaves open what "cache hit" means. (Table row 41.)
+  **Resolved (codify)**: hash + lookup run back-to-back against the current DB state with no transaction wrapping; later mutations invalidate naturally via hash change on next request. Spec requirement R21. Test: `analyze-hash-lookup-no-internal-lock`.
 
 - **OQ-4 — WS message during ChatPanel unmount.**
-  `handleMixRenderRequest` / `handleBounceAudioRequest` are fire-and-forget async. If ChatPanel unmounts mid-handler, the mixer pause/resume may happen against a stale `mixer` ref or a new one. (Table row 42.)
+  **Resolved (codify)**: `asyncio.Event` popped in `finally`; stale frontend handler reference is silently discarded; backend proceeds without side effects. Spec requirement R22. Test: `unmount-mid-handler-no-side-effects`.
 
 - **OQ-5 — Interrupted PCM upload.**
-  Server reads `content_length` and expects the full body. A truncated request leaves `audio_data` short; the WAV parse step would reject it and the file would be deleted. But whether the server-side `rfile.read(content_length)` blocks forever on a dropped connection vs. returns short is implementation-dependent. (Table row 43.)
+  **Resolved (fix)**: upload validator enforces `content-length`; mid-stream disconnect raises `BounceUploadInterrupted`; no partial WAV is persisted. Spec requirement R23. Test: `upload-interrupted-raises-no-partial-wav`.
 
 - **OQ-6 — User plays during offline render.**
-  `wasPlaying` is snapshotted at entry. If the user clicks Play mid-render, the handler will still call `pause()` on completion (no-op if stopped) but may also not resume correctly if playback is expected to persist across the render. (Table row 44.)
+  **Resolved (codify)**: frontend pauses live playback before triggering render and resumes in `finally`. Pair is symmetric and already present in code. Spec requirement R24. Test: `pause-resume-pair-around-render`.
 
 - **OQ-7 — Upload after timeout.**
-  If the upload arrives after `_MIX_RENDER_EVENTS[request_id]` has been popped, the event set is a no-op and the WAV becomes an orphan on disk (though content-addressed, so harmless unless the cache key is never re-requested). No GC of orphan WAVs is specified. (Table row 45.)
+  **Resolved (codify)**: late upload with no matching `request_id` is a no-op; `set_*_event` returns False; WAV persists content-addressed; no GC specified. Spec requirement R25. Test: `late-upload-after-timeout-is-noop`.
 
 ---
 
@@ -692,7 +762,7 @@ Same as above for `_exec_bounce_audio`.
 
 - **Source code**:
   - Frontend: `scenecraft/src/lib/mix-render.ts`, `scenecraft/src/lib/chat-client.ts`
-  - Backend: `scenecraft-engine/src/scenecraft/chat.py` (`_exec_analyze_master_bus`, `_exec_bounce_audio`), `scenecraft-engine/src/scenecraft/api_server.py` (`/mix-render-upload`, `/bounce-upload`), `db_mix_cache.py`, `db_bounces.py`, `mix_graph_hash.py`, `bounce_hash.py`
+  - Backend: `scenecraft-engine/src/scenecraft/chat.py` — `_exec_analyze_master_bus` at ~line 3036, `_exec_bounce_audio` at ~line 3422 (no separate `bounce_audio.py` / `analyze_master_bus.py` modules exist); `scenecraft-engine/src/scenecraft/api_server.py` (`/mix-render-upload`, `/bounce-upload`), `db_mix_cache.py`, `db_bounces.py`, `mix_graph_hash.py`, `bounce_hash.py`
 - **Existing tests**:
   - `scenecraft/src/lib/__tests__/mix-render.test.ts`
   - `scenecraft/src/lib/__tests__/mix-live-vs-offline-fidelity.test.ts`

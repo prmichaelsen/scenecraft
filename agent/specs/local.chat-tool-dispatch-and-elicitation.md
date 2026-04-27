@@ -28,9 +28,9 @@ Define the exact contract by which the scenecraft chat subsystem (a) advertises 
 ### In Scope
 
 - The **tool registry shape** advertised to Claude (`{name, description, input_schema}`), its three contribution sources (built-in `TOOLS`, plugin-contributed via `PluginHost.list_mcp_tools`, MCP bridge tools), and how they are concatenated for each stream call.
-- The **tool dispatch flow**: Claude emits `tool_use` → `_is_destructive` check → optional elicitation round-trip → `_execute_tool` (or `bridge.call_tool`) → `tool_result` event → loop back to Claude.
+- The **tool dispatch flow**: Claude emits `tool_use` → `_is_destructive` check → optional elicitation round-trip → `_execute_tool` (or `bridge.call_tool`) → `core__chat__tool_result` event → loop back to Claude.
 - The **destructive-op gate**: which tool names are considered destructive (substring patterns, allowlist, plugin `destructive` flag), and what happens on accept / decline / timeout.
-- The **WS event protocol**: exact event types emitted by the backend (`chunk`, `tool_call`, `tool_progress`, `tool_result`, `elicitation`, `message`, `complete`, `error`, `halted`) and the exact client-initiated message types consumed (`message`, `elicitation_response`, `stop`, `ping`).
+- The **WS event protocol**: exact event types emitted by the backend per INV-4 namespacing (`core__chat__chunk`, `core__chat__tool_call`, `core__chat__tool_progress`, `core__chat__tool_result`, `core__chat__tool_loop_exceeded`, `core__chat__elicitation`, `core__chat__elicitation_timeout`, `core__chat__message`, `core__chat__complete`, `core__chat__error`, `core__chat__halted`) and the exact client-initiated message types consumed (`core__chat__message`, `core__chat__elicitation_response`, `core__chat__stop`, `core__chat__ping`). All chat traffic multiplexes over the unified `/ws` socket per INV-4.
 - The **plugin-namespaced tool dispatch branch**: `name` contains `__` → `PluginHost.get_mcp_tool(name)` lookup → handler called with `(input_data, context)` → result wrapped as `(result, is_error)`.
 - The **10-iteration tool loop cap** and the **50-message history window** fed to Claude.
 - The **elicitation timeout** (300s) and the single-reader-ws / elicitation futures dict pattern.
@@ -82,20 +82,22 @@ The order determines shadow precedence: built-ins listed first; a duplicate tool
 
 ### WS event protocol — server → client
 
-Emitted over `/ws/chat/{project}`.
+Emitted over the unified `/ws` socket per INV-4 (the legacy `/ws/chat/{project}` path is deprecated).
 
 | `type` | Shape (JSON) | Emitted when |
 |---|---|---|
-| `chunk` | `{ type, content: string }` | Claude streams a `text_delta`. |
-| `tool_call` | `{ type, toolCall: { id, name, input: {} } }` | First `content_block_start` of a `tool_use` block. `input` is always `{}` — final input is in `tool_result`. Emitted at most once per tool id. |
-| `tool_progress` | `{ type, toolProgress: { id, phase: string, pct: number, message: string } }` | Forwarded by generation-job awaits mid-execution. |
-| `tool_result` | `{ type, toolResult: { id, output: unknown, isError?: boolean }, durationMs: number }` | After handler returns (or after decline — see below). |
-| `elicitation` | `{ type, elicitation: { id, tool_use_id, tool_name, title, message, summary_items } }` | Before executing a destructive tool. |
-| `message` | `{ type, message: PersistedMessage }` | User message echoed back (post-persist) and final assistant message on turn completion. |
-| `complete` | `{ type }` | End of a stream, success or error. |
-| `error` | `{ type, error: string }` | Claude API error, bridge error, or unhandled exception inside `_stream_response`. Followed by `complete`. |
-| `halted` | `{ type, reason: "interrupted_by_user" }` | `_stream_response` was cancelled mid-flight (new user message or explicit `stop`). Followed by `complete`. |
-| `pong` | `{ type }` | Reply to a client `ping`. |
+| `core__chat__chunk` | `{ type, content: string }` | Claude streams a `text_delta`. |
+| `core__chat__tool_call` | `{ type, toolCall: { id, name, input: {} } }` | First `content_block_start` of a `tool_use` block. `input` is always `{}` — final input is in `core__chat__tool_result`. Emitted at most once per tool id. |
+| `core__chat__tool_progress` | `{ type, toolProgress: { id, phase: string, pct: number, message: string } }` | Forwarded by generation-job awaits mid-execution. |
+| `core__chat__tool_result` | `{ type, toolResult: { id, output: unknown, isError?: boolean }, durationMs: number }` | After handler returns (or after decline — see below). |
+| `core__chat__tool_loop_exceeded` | `{ type, iterations: 10 }` | Emitted when the 10-iteration tool-loop cap is hit (before `core__chat__complete`). |
+| `core__chat__elicitation` | `{ type, elicitation: { id, tool_use_id, tool_name, title, message, summary_items } }` | Before executing a destructive tool. |
+| `core__chat__elicitation_timeout` | `{ type, elicitation_id: string }` | Emitted when the 300s elicitation wait times out without a client response. Client renders "Timed out — re-run the action" error. |
+| `core__chat__message` | `{ type, message: PersistedMessage }` | User message echoed back (post-persist) and final assistant message on turn completion. |
+| `core__chat__complete` | `{ type }` | End of a stream, success or error. |
+| `core__chat__error` | `{ type, error: string }` | Claude API error, bridge error, or unhandled exception inside `_stream_response`. Followed by `core__chat__complete`. |
+| `core__chat__halted` | `{ type, reason: "interrupted_by_user" }` | `_stream_response` was cancelled mid-flight (new user message or explicit `core__chat__stop`). Followed by `core__chat__complete`. |
+| `core__chat__pong` | `{ type }` | Reply to a client `core__chat__ping`. |
 
 Plus three non-chat side-channel events documented in `chat-client.ts` but emitted by other backend paths that share the same WS (`mix_render_request`, `bounce_audio_request`, `master_bus_effects_changed`) — **out of scope** for this spec.
 
@@ -103,14 +105,14 @@ Plus three non-chat side-channel events documented in `chat-client.ts` but emitt
 
 | `type` | Shape | Semantics |
 |---|---|---|
-| `message` | `{ type, content: string, images?: string[] }` | New user turn. Halts any in-flight stream, persists the user message, starts a new `_stream_response` task. |
-| `elicitation_response` | `{ type, id: string, action: "accept" \| "decline" }` | Resolves the elicitation future keyed by `id`. |
-| `stop` | `{ type }` | Explicit halt of in-flight stream. Same persistence semantics as a new `message`. |
-| `ping` | `{ type }` | Liveness probe. |
+| `core__chat__message` | `{ type, content: string, images?: string[] }` | New user turn. Halts any in-flight stream, persists the user message, starts a new `_stream_response` task. |
+| `core__chat__elicitation_response` | `{ type, id: string, action: "accept" \| "decline" }` | Resolves the elicitation future keyed by `id`. |
+| `core__chat__stop` | `{ type }` | Explicit halt of in-flight stream. Same persistence semantics as a new user `core__chat__message`. |
+| `core__chat__ping` | `{ type }` | Liveness probe. |
 
-Invalid JSON from the client → server sends `{ type: "error", error: "Invalid JSON" }` and continues the read loop.
+Invalid JSON from the client → server sends `{ type: "core__chat__error", error: "Invalid JSON" }` and continues the read loop.
 
-### Elicitation request payload (`elicitation` event)
+### Elicitation request payload (`core__chat__elicitation` event)
 
 ```json
 {
@@ -150,11 +152,11 @@ A handler MUST return a `dict`. Any exception is translated to `{"error": f"{typ
 
 2. **R2 — Source ordering**. Merge order for each `_stream_response` call MUST be: `TOOLS` (built-ins), then `PluginHost.list_mcp_tools()`, then `bridge.all_tools()`. The list is re-materialized on every outer iteration? **No** — it is materialized once per `_stream_response` call and reused across the 10-iteration loop.
 
-3. **R3 — History window**. The Claude `messages` array MUST be built from at most the last 50 persisted messages (`_get_messages(..., limit=50)`), converted via `_history_to_claude_messages` (which splits assistant blocks at each `tool_use` boundary and injects synthetic `tool_result` messages from the `tool_calls` column).
+3. **R3 — History window**. The Claude `messages` array MUST be built from at most the last 50 persisted messages (`_get_messages(..., limit=50)`), converted via `_history_to_claude_messages` (which splits assistant blocks at each `tool_use` boundary and injects synthetic `core__chat__tool_result` messages from the `tool_calls` column).
 
 4. **R4 — Tool loop cap**. `_stream_response` MUST cap Claude's tool-use turns at **10 iterations per user message**. Exit conditions: (a) Claude's `stop_reason != "tool_use"`, (b) Claude returned no `tool_use` blocks this turn, or (c) loop counter reaches 10.
 
-5. **R5 — `tool_call` emission**. On `content_block_start` for a `tool_use` block, emit exactly one `tool_call` event per tool_use id (tracked via `announced_tool_ids` set). `input` in the event is `{}` — the final input is carried in the final message and surfaced via `tool_result`.
+5. **R5 — `core__chat__tool_call` emission**. On `content_block_start` for a `tool_use` block, emit exactly one `core__chat__tool_call` event per tool_use id (tracked via `announced_tool_ids` set). `input` in the event is `{}` — the final input is carried in the final message and surfaced via `core__chat__tool_result`.
 
 6. **R6 — Destructive classifier**. `_is_destructive(name)` MUST return `True` iff (a) `name` is not in the allowlist AND (b) the plugin flag says so (for `__`-namespaced tools with a registered plugin tool) OR any pattern substring appears in the lowercased name. `"__"` in the name without a registered plugin tool falls through to pattern matching.
 
@@ -164,44 +166,54 @@ A handler MUST return a `dict`. Any exception is translated to `{"error": f"{typ
 
 9. **R9 — Elicitation round-trip**. Before a destructive tool handler is invoked, the stream MUST:
    - Generate `elic_<uuid.uuid4().hex[:12]>`.
-   - Emit an `elicitation` event with `id`, `tool_use_id`, `tool_name`, humanized `title`, `message`, `summary_items`.
+   - Emit an `core__chat__elicitation` event with `id`, `tool_use_id`, `tool_name`, humanized `title`, `message`, `summary_items`.
    - Create an `asyncio.Future`, register it in the `elicitation_waiters` dict keyed by the elicitation id.
    - Await the future with `asyncio.wait_for(..., timeout=300)`.
    - On completion, pop the future from the dict.
 
-10. **R10 — Accept path**. If the resolved action equals `"accept"`, execute the tool normally (bridge if `bridge.has_tool(name)` else `_execute_tool`), emit `tool_result` with the real output and `durationMs`, record a `tool_calls_log` entry.
+10. **R10 — Accept path**. If the resolved action equals `"accept"`, execute the tool normally (bridge if `bridge.has_tool(name)` else `_execute_tool`), emit `core__chat__tool_result` with the real output and `durationMs`, record a `tool_calls_log` entry.
 
-11. **R11 — Decline path**. If the resolved action is anything other than `"accept"` (including `"decline"`, timeout, cancellation), emit `tool_result` with `output = {"error": "cancelled by user"}`, `isError: true`, `durationMs: 0`; append a `tool_result` block with the same error to `tool_result_blocks`; record a `tool_calls_log` entry with `cancelled: true` and `is_error: true`. The tool handler MUST NOT run.
+11. **R11 — Decline path**. If the resolved action is anything other than `"accept"` (including `"decline"`, timeout, cancellation), emit `core__chat__tool_result` with `output = {"error": "cancelled by user"}`, `isError: true`, `durationMs: 0`; append a `core__chat__tool_result` block with the same error to `tool_result_blocks`; record a `tool_calls_log` entry with `cancelled: true` and `is_error: true`. The tool handler MUST NOT run.
 
 12. **R12 — Elicitation timeout = decline**. `_recv_elicitation_response` MUST return `"decline"` on `asyncio.TimeoutError` (300s). `asyncio.CancelledError` MUST be re-raised (not swallowed).
 
 13. **R13 — Single-reader WS pattern**. Only `handle_chat_connection`'s main `async for raw in ws:` loop reads WS frames. Elicitation responses are routed to the waiting stream task through the shared `elicitation_waiters` futures dict. `_stream_response` MUST NOT call `ws.recv()` directly.
 
-14. **R14 — Stale elicitation response**. An `elicitation_response` whose `id` no longer appears in `elicitation_waiters` MUST be silently dropped (stream was cancelled / timed out). No error is surfaced.
+14. **R14 — Stale elicitation response**. An `core__chat__elicitation_response` whose `id` no longer appears in `elicitation_waiters` MUST be silently dropped (stream was cancelled / timed out). No error is surfaced.
 
 15. **R15 — Plugin-namespaced dispatch**. If `"__" in name`, `_execute_tool` MUST look up `PluginHost.get_mcp_tool(name)` FIRST and dispatch through the plugin handler if found. Only if not found does it fall through to the built-in switch (which will then return `{"error": f"unknown tool: {name}"}`).
 
 16. **R16 — Bridge precedence in stream**. In `_stream_response`, for non-declined tools, the bridge is consulted first: `if bridge and bridge.has_tool(name)` → `bridge.call_tool(...)`, else `_execute_tool(...)`. Built-in tools therefore cannot be shadowed by bridge tools unless the bridge claims the exact same name (undefined behavior — see Open Questions).
 
-17. **R17 — `tool_result` always emitted**. For every `tool_use` block Claude produced this turn, exactly one `tool_result` event MUST be emitted (accept path: real result; decline path: `{"error": "cancelled by user"}`), in the order Claude emitted them. No tool is silently skipped.
+17. **R17 — `core__chat__tool_result` always emitted**. For every `tool_use` block Claude produced this turn, exactly one `core__chat__tool_result` event MUST be emitted (accept path: real result; decline path: `{"error": "cancelled by user"}`), in the order Claude emitted them. No tool is silently skipped.
 
 18. **R18 — History feed-back**. After executing all of a turn's tool uses, `_stream_response` MUST append to `messages`: (a) one assistant message with `content = [...blocks]` from `final.content`, (b) one user message with `content = tool_result_blocks`, and then loop.
 
 19. **R19 — Persist at end of turn**. On successful completion, persist one assistant row via `_add_message`. If any non-text block is present, `content` is persisted as JSON-stringified `all_blocks`; otherwise it is persisted as the concatenated text. `tool_calls_log` is persisted on the `tool_calls` column (or omitted if empty).
 
-20. **R20 — Persist on interruption**. If `_stream_response` is cancelled (user sent a new message mid-flight, or client sent `stop`), any streamed text for the current turn is appended to `all_blocks`, and the partial is persisted via `_add_message`. A `message` event with `interrupted: true`, then `halted` (`reason: "interrupted_by_user"`), then `complete` are sent, and `CancelledError` is re-raised. Partial persistence MUST NOT raise — any failure there is logged, not propagated.
+20. **R20 — Persist on interruption**. If `_stream_response` is cancelled (user sent a new message mid-flight, or client sent `core__chat__stop`), any streamed text for the current turn is appended to `all_blocks`, and the partial is persisted via `_add_message`. A `message` event with `interrupted: true`, then `core__chat__halted` (`reason: "interrupted_by_user"`), then `core__chat__complete` are sent, and `CancelledError` is re-raised. Partial persistence MUST NOT raise — any failure there is logged, not propagated.
 
-21. **R21 — Error emission**. On `anthropic.APIError` or any other exception inside `_stream_response`, emit `error` (with the message) followed by `complete`. No `halted` in this path.
+21. **R21 — Error emission**. On `anthropic.APIError` or any other exception inside `_stream_response`, emit `error` (with the message) followed by `core__chat__complete`. No `core__chat__halted` in this path.
 
 22. **R22 — Connection teardown**. When the WS closes, `handle_chat_connection` MUST cancel the current stream (so R20 runs) and close the MCP bridge. Any exceptions from those two steps are logged, not propagated.
 
-23. **R23 — API key missing**. If `ANTHROPIC_API_KEY` is not set, `_stream_response` MUST emit `error` + `complete` and return without calling Claude. Same for missing `anthropic` SDK import.
+23. **R23 — API key missing**. If `ANTHROPIC_API_KEY` is not set, `_stream_response` MUST emit `error` + `core__chat__complete` and return without calling Claude. Same for missing `anthropic` SDK import.
 
-24. **R24 — Frontend accept/decline**. On accept or decline click in `ChatPanel`, the panel MUST send `{ type: "elicitation_response", id, action }` over the WS and mark the in-flight elicitation block's resolution as `"accepted"` or `"declined"` locally (optimistic, does NOT wait for the server).
+24. **R24 — Frontend accept/decline**. On accept or decline click in `ChatPanel`, the panel MUST send `{ type: "core__chat__elicitation_response", id, action }` over the WS and mark the in-flight elicitation block's resolution as `"accepted"` or `"declined"` locally (optimistic, does NOT wait for the server).
 
-25. **R25 — Frontend tool badge lifecycle**. A `tool_call` event inserts a `tool_use` streaming block with `status: "pending"`. `tool_progress` updates its `progress`. `tool_result` sets `status` to `"success"` (if `!isError`) or `"error"` (if `isError`), and clears `progress`. On non-error tool results the panel calls `onMutation?.()` so Timeline and panels refetch.
+25. **R25 — Frontend tool badge lifecycle**. A `core__chat__tool_call` event inserts a `tool_use` streaming block with `status: "pending"`. `core__chat__tool_progress` updates its `progress`. `core__chat__tool_result` sets `status` to `"success"` (if `!isError`) or `"error"` (if `isError`), and clears `progress`. On non-error tool results the panel calls `onMutation?.()` so Timeline and panels refetch.
 
-26. **R26 — Frontend ping cadence**. `ping` is consumed (server replies `pong`) but the current frontend client does NOT send any pings automatically. Reconnect logic uses browser WS close events; reconnect backoff is `min(2000 * 2^attempt, 5000) ms`, capped at 5 attempts.
+26. **R26 — Frontend ping cadence**. `core__chat__ping` is consumed (server replies `core__chat__pong`) but the current frontend client does NOT send any pings automatically. Reconnect logic uses browser WS close events; reconnect backoff is `min(2000 * 2^attempt, 5000) ms`, capped at 5 attempts.
+
+27. **R27 — Elicitation timeout distinguished from decline**. On 300s timeout without a client response, the backend MUST emit `{type: "core__chat__elicitation_timeout", elicitation_id}` (NOT a `core__chat__tool_result` with `"cancelled by user"`). Client renders a "Timed out — re-run the action" error card. Decline action still produces `core__chat__tool_result` with `{"error": "cancelled by user"}` per R11. This lets the UI distinguish user-decline from server-timeout.
+
+28. **R28 — Stale elicitation response dropped silently**. Backend validates `elicitation_response.id` against `elicitation_waiters` keys. If the id is not a live waiter (already resolved, already timed out), the response is silently dropped with a DEBUG log. No WS error is emitted.
+
+29. **R29 — Tool loop cap emits event**. When the 10-iteration tool loop cap is hit, the backend MUST emit `{type: "core__chat__tool_loop_exceeded", iterations: 10}` BEFORE `core__chat__complete`. Client renders "Tool loop exceeded 10 iterations — Claude stopped mid-thought. Continue?" error. The stream does NOT silently exit.
+
+30. **R30 — Tool name precedence**. Plugin-namespaced tools (`plugin__*`) take priority over built-ins; built-ins take priority over bridge (Remember MCP) tools. If a bridge tool name collides with a built-in, the bridge tool is hidden from the merged tool list with a log warning; built-in wins. If a plugin tool name collides with a built-in (only possible if the plugin manifest bypasses the `__` invariant), the plugin entry wins and a WARNING is logged.
+
+31. **R31 — WS disconnect mid-tool per INV-4/INV-5**. Per INV-4 (unified WS) and INV-5 (multi-window), WS reconnect resumes job tracking via `core__job__*` event namespace. In-flight generation jobs survive disconnect (existing invariant). Pending elicitations are NOT automatically resumed server-side; client surfaces "Connection lost — re-run the action" per chat-panel OQ-1.
 
 ---
 
@@ -211,40 +223,40 @@ A handler MUST return a `dict`. Any exception is translated to `{"error": f"{typ
 |---|----------|-------------------|-------|
 | 1 | Stream advertises tool list to Claude | Merged list `[TOOLS..., plugin_tools..., bridge_tools...]` with `{name, description, input_schema}` shape | `advertises-merged-tool-list`, `tool-entries-have-three-keys` |
 | 2 | User message triggers stream with 50-msg history | `_get_messages(limit=50)` loaded, converted via `_history_to_claude_messages`, passed to Claude | `history-window-50`, `history-splits-on-tool-use` |
-| 3 | Claude emits text_delta | `chunk` event emitted with the delta text | `emits-chunk-on-text-delta` |
-| 4 | Claude emits non-destructive tool_use | `tool_call` event emitted once; handler runs; `tool_result` emitted with real output | `non-destructive-tool-runs-without-elicitation` |
-| 5 | Claude emits destructive tool_use, user accepts | `tool_call` + `elicitation` emitted; handler runs on accept; `tool_result` with real output | `destructive-accept-runs-handler` |
-| 6 | Claude emits destructive tool_use, user declines | `tool_call` + `elicitation` emitted; handler does NOT run; `tool_result` has `{"error": "cancelled by user"}`, `isError: true`, `durationMs: 0`; `tool_calls_log` row marked `cancelled: true` | `destructive-decline-does-not-run`, `decline-emits-cancelled-tool-result` |
+| 3 | Claude emits text_delta | `core__chat__chunk` event emitted with the delta text | `emits-chunk-on-text-delta` |
+| 4 | Claude emits non-destructive tool_use | `core__chat__tool_call` event emitted once; handler runs; `core__chat__tool_result` emitted with real output | `non-destructive-tool-runs-without-elicitation` |
+| 5 | Claude emits destructive tool_use, user accepts | `core__chat__tool_call` + `core__chat__elicitation` emitted; handler runs on accept; `core__chat__tool_result` with real output | `destructive-accept-runs-handler` |
+| 6 | Claude emits destructive tool_use, user declines | `core__chat__tool_call` + `core__chat__elicitation` emitted; handler does NOT run; `core__chat__tool_result` has `{"error": "cancelled by user"}`, `isError: true`, `durationMs: 0`; `tool_calls_log` row marked `cancelled: true` | `destructive-decline-does-not-run`, `decline-emits-cancelled-tool-result` |
 | 7 | Tool in allowlist but matches destructive pattern | Classifier returns False; no elicitation; handler runs | `allowlist-overrides-pattern` (covers R7) |
 | 8 | Plugin tool with `destructive: true` flag | Classifier returns True; elicitation emitted before handler | `plugin-destructive-flag-triggers-elicitation` |
 | 9 | Plugin tool with `destructive: false` flag, name contains "delete" | Classifier returns False (plugin flag wins over pattern match); no elicitation | `plugin-flag-overrides-substring-pattern` |
 | 10 | Plugin-namespaced tool dispatched | `_execute_tool` routes to `PluginHost.get_mcp_tool` handler; context dict passed; dict result wrapped | `plugin-namespaced-dispatch` |
-| 11 | Plugin handler raises | `_execute_tool` returns `{"error": "<Exc>: <msg>"}` with `is_error=True`; stream emits `tool_result` with `isError: true` | `plugin-handler-exception-becomes-tool-result-error` |
+| 11 | Plugin handler raises | `_execute_tool` returns `{"error": "<Exc>: <msg>"}` with `is_error=True`; stream emits `core__chat__tool_result` with `isError: true` | `plugin-handler-exception-becomes-tool-result-error` |
 | 12 | Plugin handler returns non-dict | `_execute_tool` returns error dict; `is_error=True` | `plugin-handler-non-dict-is-error` |
 | 13 | Unknown built-in tool name | `_execute_tool` returns `{"error": "unknown tool: <name>"}`, `is_error=True` | `unknown-tool-errors` |
-| 14 | Tool loop hits 10 iterations | After 10th outer loop the stream exits, persists, emits `message` + `complete` | `ten-iteration-cap` |
-| 15 | Claude returns `stop_reason != "tool_use"` | Loop exits early; persist + `message` + `complete` | `early-exit-on-stop-reason` |
-| 16 | User sends new `message` mid-generation | In-flight stream cancelled; partial persisted as assistant message with `interrupted: true`; `halted` + `complete` emitted; new stream starts | `interrupt-by-new-message-persists-partial` |
-| 17 | Client sends `stop` message | Same as scenario 16 but no new stream starts | `explicit-stop-persists-partial` |
-| 18 | Client sends invalid JSON | Server replies `{type:"error", error:"Invalid JSON"}` and continues read loop | `invalid-json-does-not-kill-ws` |
-| 19 | Client sends `ping` | Server replies `{type:"pong"}` | `ping-pong` |
+| 14 | Tool loop hits 10 iterations | After 10th outer loop the stream exits, persists, emits `message` + `core__chat__complete` | `ten-iteration-cap` |
+| 15 | Claude returns `stop_reason != "tool_use"` | Loop exits early; persist + `message` + `core__chat__complete` | `early-exit-on-stop-reason` |
+| 16 | User sends new `message` mid-generation | In-flight stream cancelled; partial persisted as assistant message with `interrupted: true`; `core__chat__halted` + `core__chat__complete` emitted; new stream starts | `interrupt-by-new-message-persists-partial` |
+| 17 | Client sends `core__chat__stop` message | Same as scenario 16 but no new stream starts | `explicit-stop-persists-partial` |
+| 18 | Client sends invalid JSON | Server replies `{type:"core__chat__error", error:"Invalid JSON"}` and continues read loop | `invalid-json-does-not-kill-ws` |
+| 19 | Client sends `core__chat__ping` | Server replies `{type:"core__chat__pong"}` | `ping-pong` |
 | 20 | Elicitation response matches a live waiter | Future resolved with action; `_recv_elicitation_response` returns normalized `"accept"` / `"decline"` | `elicitation-response-resolves-future` |
 | 21 | Elicitation response after waiter is gone (stream cancelled) | Dropped silently; no error | `stale-elicitation-response-dropped` |
 | 22 | Elicitation response with action other than "accept" | Treated as decline | `non-accept-action-is-decline` |
-| 23 | ANTHROPIC_API_KEY missing | `error` + `complete` emitted; no Claude call | `no-api-key-errors-cleanly` |
-| 24 | Claude API raises | `error` (with message) + `complete` emitted | `api-error-surfaces-to-client` |
+| 23 | ANTHROPIC_API_KEY missing | `error` + `core__chat__complete` emitted; no Claude call | `no-api-key-errors-cleanly` |
+| 24 | Claude API raises | `error` (with message) + `core__chat__complete` emitted | `api-error-surfaces-to-client` |
 | 25 | WS disconnects cleanly | In-flight stream cancelled, partial persisted, bridge closed | `disconnect-cleans-up` |
-| 26 | `tool_result` fires `onMutation` on frontend | Non-error tool_result → `onMutation?.()` called; error → not called | `on-mutation-fires-on-success-only` |
-| 27 | Frontend accept click | Sends `elicitation_response` with `action:"accept"`; local block marked `accepted` | `frontend-accept-sends-ws-and-updates-ui` |
-| 28 | Frontend decline click | Sends `elicitation_response` with `action:"decline"`; local block marked `declined` | `frontend-decline-sends-ws-and-updates-ui` |
-| 29 | Two tool_uses in a single turn, one destructive | First gated / second not; both get `tool_result` in order | `mixed-turn-preserves-order` |
+| 26 | `core__chat__tool_result` fires `onMutation` on frontend | Non-error tool_result → `onMutation?.()` called; error → not called | `on-mutation-fires-on-success-only` |
+| 27 | Frontend accept click | Sends `core__chat__elicitation_response` with `action:"accept"`; local block marked `accepted` | `frontend-accept-sends-ws-and-updates-ui` |
+| 28 | Frontend decline click | Sends `core__chat__elicitation_response` with `action:"decline"`; local block marked `declined` | `frontend-decline-sends-ws-and-updates-ui` |
+| 29 | Two tool_uses in a single turn, one destructive | First gated / second not; both get `core__chat__tool_result` in order | `mixed-turn-preserves-order` |
 | 30 | Enrichment formatter raises for known destructive tool | Falls through to generic key/value summary; elicitation still emitted | `enrichment-failure-falls-through` |
-| 31 | Client sends no elicitation response for 300s | `undefined` | → [OQ-1](#open-questions) |
-| 32 | WS disconnects while tool handler is executing | `undefined` | → [OQ-2](#open-questions) |
-| 33 | Elicitation response arrives AFTER tool_result already emitted (race) | `undefined` | → [OQ-3](#open-questions) |
-| 34 | Tool loop exceeds 10 iterations because Claude keeps calling tools | `undefined` | → [OQ-4](#open-questions) |
-| 35 | Built-in tool name shadowed by plugin tool with same name | `undefined` | → [OQ-5](#open-questions) |
-| 36 | Bridge tool name collides with built-in | `undefined` | → [OQ-6](#open-questions) |
+| 31 | Client sends no elicitation response for 300s | Backend emits `core__chat__elicitation_timeout` event (not a tool_result); client shows timeout error card | `elicitation-timeout-emits-distinct-event` (covers R27, OQ-1) |
+| 32 | WS disconnects while tool handler is executing | Unified WS reconnect resumes tool tracking via `core__job__*`; in-flight jobs survive; elicitation resumption handled by client | `ws-disconnect-tool-survival` (covers R31, OQ-2) |
+| 33 | Elicitation response arrives AFTER tool_result already emitted (race) | Stale response silently dropped with DEBUG log; no error surfaced | `stale-elicitation-response-silently-dropped` (covers R28, OQ-3) |
+| 34 | Tool loop exceeds 10 iterations because Claude keeps calling tools | Backend emits `core__chat__tool_loop_exceeded` before `core__chat__complete` | `tool-loop-exceeded-emits-event` (covers R29, OQ-4) |
+| 35 | Built-in tool name shadowed by plugin tool with same name | Plugin wins; WARNING logged (only possible if plugin bypasses `__` invariant) | `plugin-tool-shadows-builtin` (covers R30, OQ-5) |
+| 36 | Bridge tool name collides with built-in | Bridge tool hidden from merged list with log warning; built-in wins | `bridge-collision-hidden` (covers R30, OQ-6) |
 
 ---
 
@@ -255,18 +267,18 @@ A handler MUST return a `dict`. Any exception is translated to `{"error": f"{typ
 1. On WS connect: instantiate `MCPBridge`, kick off `bridge.connect("remember", user_id=user_id)` as a background task (fire-and-forget — cannot block the read loop).
 2. Initialize `current_stream: asyncio.Task | None = None` and `elicitation_waiters: dict[str, asyncio.Future] = {}`.
 3. Enter `async for raw in ws:` read loop. This is the **only** consumer of WS frames for this connection.
-4. Parse JSON. Invalid → emit `{type:"error", error:"Invalid JSON"}` and continue.
+4. Parse JSON. Invalid → emit `{type:"core__chat__error", error:"Invalid JSON"}` and continue.
 5. Branch on `type`:
    - `message`: halt any `current_stream` (`cancel()` + `await`), persist the user message via `_add_message`, echo a `message` event back, then create `current_stream = asyncio.create_task(_stream_response(...))`.
-   - `elicitation_response`: pop `elicitation_waiters[id]` (if present) and set its result to `action`. If no waiter, drop silently.
-   - `stop`: halt `current_stream`.
-   - `ping`: reply `{type:"pong"}`.
+   - `core__chat__elicitation_response`: pop `elicitation_waiters[id]` (if present) and set its result to `action`. If no waiter, drop silently.
+   - `core__chat__stop`: halt `current_stream`.
+   - `core__chat__ping`: reply `{type:"core__chat__pong"}`.
 6. On WS close / exception: halt `current_stream`, close bridge, return. Log everything.
 
 ### Stream (`_stream_response`)
 
-1. Check `ANTHROPIC_API_KEY` — missing → emit `error` + `complete`, return.
-2. Import `anthropic` — missing → emit `error` + `complete`, return.
+1. Check `ANTHROPIC_API_KEY` — missing → emit `error` + `core__chat__complete`, return.
+2. Import `anthropic` — missing → emit `error` + `core__chat__complete`, return.
 3. Load history (50 msgs), convert to Claude shape, build system prompt.
 4. Merge `tools_for_claude = list(TOOLS) + plugin_contributed + mcp_tools`.
 5. Initialize `all_blocks = []`, `tool_calls_log = []`, `announced_tool_ids = set()`, `streamed_text_this_turn = ""`.
@@ -274,8 +286,8 @@ A handler MUST return a `dict`. Any exception is translated to `{"error": f"{typ
    - Reset `streamed_text_this_turn = ""`.
    - Open `client.messages.stream(model="claude-sonnet-4-20250514", max_tokens=4096, system=..., messages=..., tools=tools_for_claude)`.
    - Iterate events:
-     - `content_block_start` with `type=="tool_use"` → if new id, add to `announced_tool_ids`, emit `tool_call` with empty input.
-     - `content_block_delta` with `type=="text_delta"` → append to `streamed_text_this_turn`, emit `chunk`.
+     - `content_block_start` with `type=="tool_use"` → if new id, add to `announced_tool_ids`, emit `core__chat__tool_call` with empty input.
+     - `content_block_delta` with `type=="text_delta"` → append to `streamed_text_this_turn`, emit `core__chat__chunk`.
    - `final = await stream.get_final_message()`; clear `streamed_text_this_turn`.
    - Append `final.content` blocks (text / tool_use) to `all_blocks`.
    - Collect `turn_tool_uses`.
@@ -283,16 +295,16 @@ A handler MUST return a `dict`. Any exception is translated to `{"error": f"{typ
    - For each tool_use `tu`:
      - If `_is_destructive(tu["name"])`:
        - Build `elic_id`, `title`, `message`, `summary_items`.
-       - Emit `elicitation`.
+       - Emit `core__chat__elicitation`.
        - `action = await _recv_elicitation_response(elicitation_waiters, elic_id, timeout=300)`.
-       - If `action != "accept"`: emit `tool_result` with `cancel_result`, append `tool_result` block with `is_error: true`, append cancelled row to `tool_calls_log`, continue.
+       - If `action != "accept"`: emit `core__chat__tool_result` with `cancel_result`, append `core__chat__tool_result` block with `is_error: true`, append cancelled row to `tool_calls_log`, continue.
      - `t0 = time.monotonic()`.
      - Dispatch: `bridge.call_tool(name, input)` if `bridge.has_tool(name)`; else `_execute_tool(project_dir, name, input, ws=ws, tool_use_id=tu["id"], project_name=project_name)`.
      - `dt_ms = int((time.monotonic() - t0) * 1000)`.
-     - Emit `tool_result` with result, `isError`, `durationMs`.
-     - Append `tool_result` block to `tool_result_blocks`, append row to `tool_calls_log`.
+     - Emit `core__chat__tool_result` with result, `isError`, `durationMs`.
+     - Append `core__chat__tool_result` block to `tool_result_blocks`, append row to `tool_calls_log`.
    - Append to `messages`: `{"role":"assistant", "content":[_block_to_dict(b) for b in final.content]}`, then `{"role":"user", "content":tool_result_blocks}`.
-7. After loop: persist assistant row (JSON content if any non-text block present, else concatenated text), emit `message` + `complete`.
+7. After loop: persist assistant row (JSON content if any non-text block present, else concatenated text), emit `message` + `core__chat__complete`.
 
 ### Dispatch (`_execute_tool`)
 
@@ -320,11 +332,11 @@ See R6–R8 for exact rules.
 
 - [ ] Merged tool list has exactly three keys per entry and merge order TOOLS → plugin → bridge.
 - [ ] `_is_destructive` behaves per R6–R8 with table-driven coverage.
-- [ ] Destructive tool use always emits `elicitation` before running.
-- [ ] Decline path emits a synthetic `tool_result` with `{"error":"cancelled by user"}` and marks `cancelled:true` in the persisted `tool_calls` row.
+- [ ] Destructive tool use always emits `core__chat__elicitation` before running.
+- [ ] Decline path emits a synthetic `core__chat__tool_result` with `{"error":"cancelled by user"}` and marks `cancelled:true` in the persisted `tool_calls` row.
 - [ ] Plugin-namespaced tools dispatch through `PluginHost.get_mcp_tool` in both the destructive classifier and `_execute_tool`.
 - [ ] Elicitation timeout of 300s → decline; `CancelledError` re-raised.
-- [ ] Stale `elicitation_response` is dropped silently.
+- [ ] Stale `core__chat__elicitation_response` is dropped silently.
 - [ ] 10-iteration tool loop cap is observed.
 - [ ] 50-message history window is used in every stream call.
 - [ ] User interrupt persists partial assistant content with `interrupted:true`.
@@ -370,7 +382,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: An assistant row in history has content `[text, tool_use, text]` with a matching `tool_calls` entry.
 **When**: `_history_to_claude_messages` runs.
 **Then**:
-- **split-at-tool-use**: output contains an assistant message ending at the `tool_use` block, a synthetic user `tool_result` message, then another assistant message with the trailing text.
+- **split-at-tool-use**: output contains an assistant message ending at the `tool_use` block, a synthetic user `core__chat__tool_result` message, then another assistant message with the trailing text.
 
 #### Test: emits-chunk-on-text-delta (covers R5 implicitly)
 
@@ -384,20 +396,20 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: Claude emits a single `tool_use` for `sql_query` (non-destructive).
 **When**: The turn completes.
 **Then**:
-- **tool-call-emitted**: exactly one `tool_call` event was sent for this id.
-- **no-elicitation**: no `elicitation` event was sent.
+- **tool-call-emitted**: exactly one `core__chat__tool_call` event was sent for this id.
+- **no-elicitation**: no `core__chat__elicitation` event was sent.
 - **handler-called**: `_execute_tool` ran with the provided input.
-- **tool-result-emitted**: exactly one `tool_result` event with the handler's output and `isError:false`.
+- **tool-result-emitted**: exactly one `core__chat__tool_result` event with the handler's output and `isError:false`.
 - **duration-present**: `durationMs` field is an integer ≥ 0.
 
 #### Test: destructive-accept-runs-handler (covers R9, R10)
 
 **Given**: Claude emits a `tool_use` for `delete_keyframe`.
-**When**: Server sends `elicitation`; client responds `{action:"accept"}`.
+**When**: Server sends `core__chat__elicitation`; client responds `{action:"accept"}`.
 **Then**:
-- **elicitation-emitted**: `elicitation` event sent with `id`, `tool_use_id`, `tool_name`, `title` (humanized), `message`, `summary_items`.
+- **elicitation-emitted**: `core__chat__elicitation` event sent with `id`, `tool_use_id`, `tool_name`, `title` (humanized), `message`, `summary_items`.
 - **handler-ran**: the `delete_keyframe` handler was called with the provided input.
-- **tool-result-real**: `tool_result` emitted with handler's actual output.
+- **tool-result-real**: `core__chat__tool_result` emitted with handler's actual output.
 - **log-not-cancelled**: `tool_calls_log` entry has no `cancelled:true`.
 
 #### Test: destructive-decline-does-not-run (covers R11)
@@ -413,8 +425,8 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: Same as above.
 **When**: The turn continues past the decline.
 **Then**:
-- **tool-result-error**: a `tool_result` event was emitted with `output:{"error":"cancelled by user"}`, `isError:true`, `durationMs:0`.
-- **history-block-appended**: a `tool_result` block with `is_error:true` was appended to `tool_result_blocks` so Claude sees the cancellation next iteration.
+- **tool-result-error**: a `core__chat__tool_result` event was emitted with `output:{"error":"cancelled by user"}`, `isError:true`, `durationMs:0`.
+- **history-block-appended**: a `core__chat__tool_result` block with `is_error:true` was appended to `tool_result_blocks` so Claude sees the cancellation next iteration.
 
 #### Test: plugin-namespaced-dispatch (covers R15)
 
@@ -457,7 +469,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: Plugin tool `safe__zap` registered with `destructive=True`.
 **When**: Claude calls it.
 **Then**:
-- **elicitation-emitted**: `elicitation` event is sent before the handler runs.
+- **elicitation-emitted**: `core__chat__elicitation` event is sent before the handler runs.
 
 #### Test: plugin-flag-overrides-substring-pattern (covers R8)
 
@@ -469,7 +481,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 #### Test: elicitation-response-resolves-future (covers R9, R13)
 
 **Given**: A pending elicitation future registered for `id="elic_abc"`.
-**When**: Client sends `{type:"elicitation_response", id:"elic_abc", action:"accept"}`.
+**When**: Client sends `{type:"core__chat__elicitation_response", id:"elic_abc", action:"accept"}`.
 **Then**:
 - **future-set**: the future resolves with `"accept"`.
 - **returned-normalized**: `_recv_elicitation_response` returns `"accept"`.
@@ -477,7 +489,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 
 #### Test: stale-elicitation-response-dropped (covers R14)
 
-**Given**: Client sends an `elicitation_response` with an id not present in `elicitation_waiters`.
+**Given**: Client sends an `core__chat__elicitation_response` with an id not present in `elicitation_waiters`.
 **When**: The read loop processes it.
 **Then**:
 - **no-error-emitted**: no WS `error` event sent.
@@ -498,7 +510,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Then**:
 - **loop-exits**: no further `messages.stream(...)` calls.
 - **persisted**: assistant row persisted.
-- **complete-emitted**: `complete` event sent.
+- **complete-emitted**: `core__chat__complete` event sent.
 
 #### Test: ten-iteration-cap (covers R4)
 
@@ -507,14 +519,14 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Then**:
 - **stream-calls-ten**: exactly 10 `client.messages.stream(...)` calls are made.
 - **persisted**: assistant row persisted with all 10 turns' blocks.
-- **complete-emitted**: `complete` sent.
+- **complete-emitted**: `core__chat__complete` sent.
 
 #### Test: mixed-turn-preserves-order (covers R17)
 
 **Given**: Claude emits `[tool_use_A (destructive), tool_use_B (non-destructive)]` in one turn.
 **When**: User accepts A.
 **Then**:
-- **order-preserved**: WS events include a `tool_result` for A before a `tool_result` for B.
+- **order-preserved**: WS events include a `core__chat__tool_result` for A before a `core__chat__tool_result` for B.
 - **both-persisted**: `tool_calls_log` has rows for both, in order.
 
 #### Test: interrupt-by-new-message-persists-partial (covers R20)
@@ -524,12 +536,12 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Then**:
 - **partial-persisted**: an assistant row with content `"partial "` (or blocks ending in a `text` block with that text) exists.
 - **interrupted-flag**: the emitted `message` event has `interrupted:true`.
-- **halted-emitted**: `halted` event with `reason:"interrupted_by_user"` sent.
-- **complete-emitted**: `complete` sent.
+- **halted-emitted**: `core__chat__halted` event with `reason:"interrupted_by_user"` sent.
+- **complete-emitted**: `core__chat__complete` sent.
 
 #### Test: explicit-stop-persists-partial (covers R20)
 
-**Given**: `_stream_response` mid-flight; client sends `{type:"stop"}`.
+**Given**: `_stream_response` mid-flight; client sends `{type:"core__chat__stop"}`.
 **When**: The read loop handles it.
 **Then**:
 - **partial-persisted**: same as above.
@@ -540,23 +552,23 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: Client sends `"not json"`.
 **When**: Read loop parses it.
 **Then**:
-- **error-emitted**: `{type:"error", error:"Invalid JSON"}` sent.
+- **error-emitted**: `{type:"core__chat__error", error:"Invalid JSON"}` sent.
 - **loop-continues**: the next valid frame is still processed.
 
 #### Test: ping-pong
 
-**Given**: Client sends `{type:"ping"}`.
+**Given**: Client sends `{type:"core__chat__ping"}`.
 **When**: Read loop handles it.
 **Then**:
-- **pong-sent**: `{type:"pong"}` frame emitted.
+- **pong-sent**: `{type:"core__chat__pong"}` frame emitted.
 
 #### Test: no-api-key-errors-cleanly (covers R23)
 
 **Given**: `ANTHROPIC_API_KEY` unset in env.
 **When**: `_stream_response` is invoked.
 **Then**:
-- **error-emitted**: `{type:"error", error:"ANTHROPIC_API_KEY not configured on server"}`.
-- **complete-emitted**: `complete` follows.
+- **error-emitted**: `{type:"core__chat__error", error:"ANTHROPIC_API_KEY not configured on server"}`.
+- **complete-emitted**: `core__chat__complete` follows.
 - **no-claude-call**: `client.messages.stream` never called.
 
 #### Test: api-error-surfaces-to-client (covers R21)
@@ -564,9 +576,9 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: Claude SDK raises `anthropic.APIError` mid-stream.
 **When**: `_stream_response` catches it.
 **Then**:
-- **error-emitted**: `{type:"error", error:"Claude API error: <msg>"}`.
-- **complete-emitted**: `complete` follows.
-- **no-halted**: no `halted` frame.
+- **error-emitted**: `{type:"core__chat__error", error:"Claude API error: <msg>"}`.
+- **complete-emitted**: `core__chat__complete` follows.
+- **no-halted**: no `core__chat__halted` frame.
 
 #### Test: disconnect-cleans-up (covers R22)
 
@@ -579,7 +591,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 
 #### Test: on-mutation-fires-on-success-only (covers R25)
 
-**Given**: Frontend receives two successive `tool_result` events, one `isError:false`, one `isError:true`.
+**Given**: Frontend receives two successive `core__chat__tool_result` events, one `isError:false`, one `isError:true`.
 **When**: `handleMessage` runs for each.
 **Then**:
 - **mutation-called-once**: `onMutation` is called exactly once (for the non-error one).
@@ -589,7 +601,7 @@ The core dispatch contract: merged registry, tool_use round-trip, destructive ga
 **Given**: A pending elicitation block with `id="elic_1"` and `resolution:"pending"`.
 **When**: User clicks Accept.
 **Then**:
-- **ws-frame**: `ws.send({type:"elicitation_response", id:"elic_1", action:"accept"})` was called.
+- **ws-frame**: `ws.send({type:"core__chat__elicitation_response", id:"elic_1", action:"accept"})` was called.
 - **local-resolution**: the streaming block's resolution becomes `"accepted"`.
 
 #### Test: frontend-decline-sends-ws-and-updates-ui (covers R24)
@@ -609,7 +621,7 @@ Boundaries, concurrency, malformed inputs, ordering, enrichment failures, allowl
 **Given**: `_format_destructive_summary` raises for `delete_keyframe` (e.g. DB read fails).
 **When**: The gate runs.
 **Then**:
-- **generic-fallback**: the `elicitation` event is still emitted with a generic key/value `summary_items` list.
+- **generic-fallback**: the `core__chat__elicitation` event is still emitted with a generic key/value `summary_items` list.
 - **no-exception-propagated**: the stream continues normally.
 
 #### Test: empty-input-dict (covers R6, R9)
@@ -624,7 +636,7 @@ Boundaries, concurrency, malformed inputs, ordering, enrichment failures, allowl
 **Given**: Claude emits `generate_dsp`.
 **When**: Stream processes it.
 **Then**:
-- **no-elicitation**: no `elicitation` event sent.
+- **no-elicitation**: no `core__chat__elicitation` event sent.
 - **handler-ran**: handler executed directly.
 
 #### Test: bounce-audio-not-gated (covers R7)
@@ -632,14 +644,14 @@ Boundaries, concurrency, malformed inputs, ordering, enrichment failures, allowl
 **Given**: Claude emits `bounce_audio`.
 **When**: Stream processes it.
 **Then**:
-- **no-elicitation**: no `elicitation` event.
+- **no-elicitation**: no `core__chat__elicitation` event.
 
 #### Test: multiple-tool-calls-unique-ids (covers R5)
 
 **Given**: Claude streams the same `tool_use` id twice in `content_block_start` events (malformed stream).
 **When**: Both events fire.
 **Then**:
-- **one-tool-call-event**: only one `tool_call` event is emitted for that id.
+- **one-tool-call-event**: only one `core__chat__tool_call` event is emitted for that id.
 
 #### Test: destructive-pattern-case-insensitive (covers R6)
 
@@ -710,6 +722,60 @@ Boundaries, concurrency, malformed inputs, ordering, enrichment failures, allowl
 - **tools-equal-builtins-plus-plugin**: merged tool list is `TOOLS + plugin_contributed` only.
 - **no-error**: stream proceeds normally.
 
+#### Test: elicitation-timeout-emits-distinct-event (covers R27, OQ-1)
+
+**Given**: a destructive tool is awaiting elicitation; the client sends no response for 300 seconds.
+**When**: the 300s timeout fires.
+**Then**:
+- **timeout-event-emitted**: backend emits `{type:"core__chat__elicitation_timeout", elicitation_id:<id>}`.
+- **no-cancelled-tool-result**: backend does NOT emit a `core__chat__tool_result` with `"cancelled by user"` for this timeout (that shape is reserved for explicit decline).
+- **client-renders-timeout**: UI shows "Timed out — re-run the action" error card rather than a cancelled-tool card.
+- **waiter-cleared**: the elicitation entry is popped from `elicitation_waiters`.
+
+#### Test: ws-disconnect-tool-survival (covers R31, OQ-2)
+
+**Given**: an in-flight generation tool (e.g. `generate_keyframe_candidates`) dispatched via `_await_generation_job`; the client WS drops mid-job.
+**When**: the client reconnects.
+**Then**:
+- **job-still-running**: backend worker thread continued running past the disconnect.
+- **job-events-resume**: on reconnect, the unified WS emits `core__job__progress` / `core__job__completed` for the tracked job id.
+- **no-server-side-resume-of-elicitation**: backend does NOT auto-re-emit pending elicitations; client is responsible for surfacing "Connection lost" per chat-panel OQ-1.
+
+#### Test: stale-elicitation-response-silently-dropped (covers R28, OQ-3)
+
+**Given**: an elicitation with id `elic_1` has already been resolved or timed out (popped from `elicitation_waiters`).
+**When**: client sends `{type:"core__chat__elicitation_response", id:"elic_1", action:"accept"}`.
+**Then**:
+- **dropped-silently**: no WS error emitted.
+- **debug-log**: a DEBUG-level log line notes the stale elicitation id.
+- **loop-continues**: next valid frame still processed.
+
+#### Test: tool-loop-exceeded-emits-event (covers R29, OQ-4)
+
+**Given**: Claude returns `stop_reason:"tool_use"` with one tool_use every iteration, indefinitely.
+**When**: the loop completes its 10th iteration.
+**Then**:
+- **exceeded-event**: backend emits `{type:"core__chat__tool_loop_exceeded", iterations:10}` BEFORE `core__chat__complete`.
+- **ordered-emission**: the sequence is `…tool_result of iter 10 → core__chat__tool_loop_exceeded → core__chat__message → core__chat__complete`.
+- **client-renders-error**: UI shows "Tool loop exceeded 10 iterations — Claude stopped mid-thought. Continue?".
+
+#### Test: plugin-tool-shadows-builtin (covers R30, OQ-5)
+
+**Given**: a plugin registers a tool with name exactly equal to a built-in (e.g. `sql_query`) — possible only by bypassing the `__` namespace invariant.
+**When**: the merged tool list is computed.
+**Then**:
+- **plugin-wins**: the entry for `sql_query` in the final tools array is the plugin's, not the built-in's.
+- **warning-logged**: a WARNING log line notes the collision and which side won.
+
+#### Test: bridge-collision-hidden (covers R30, OQ-6)
+
+**Given**: bridge returns a tool named `sql_query` (colliding with a built-in).
+**When**: tool list is merged.
+**Then**:
+- **bridge-hidden**: no `sql_query` entry from the bridge appears in the final list.
+- **builtin-wins**: the built-in's `sql_query` is used.
+- **warning-logged**: a WARNING log line notes the hidden bridge tool.
+
 #### Negative: single-reader-ws (covers R13)
 
 **Given**: The running chat connection.
@@ -732,49 +798,27 @@ Boundaries, concurrency, malformed inputs, ordering, enrichment failures, allowl
 - **Guaranteeing tool name uniqueness across sources.** Collisions between built-ins, plugin tools, and bridge tools are handled by dispatch precedence (see OQ-5, OQ-6), not rejected up front.
 - **Enforcing schema validity in plugin `input_schema`.** Plugin-provided schemas flow to Claude unchanged; a malformed schema is a plugin bug.
 - **Rate-limiting or authorizing individual tools.** No quota, no per-user ACL beyond the destructive gate.
-- **Surfacing `tool_progress` for non-generation tools.** Only `_await_generation_job` emits progress frames today; regular DB tools emit none.
-- **Automatic retry of tool handlers.** A handler failure is reported as `tool_result` with `isError:true` and surfaced to Claude as-is.
-- **Front-end reconnect of in-flight elicitations.** If the WS drops while an elicitation is pending, the pending `StreamingBlock` is lost with the rest of `streamingBlocks` state (cleared on `complete`). Re-opening chat history shows the persisted partial turn instead.
+- **Surfacing `core__chat__tool_progress` for non-generation tools.** Only `_await_generation_job` emits progress frames today; regular DB tools emit none.
+- **Automatic retry of tool handlers.** A handler failure is reported as `core__chat__tool_result` with `isError:true` and surfaced to Claude as-is.
+- **Front-end reconnect of in-flight elicitations.** If the WS drops while an elicitation is pending, the pending `StreamingBlock` is lost with the rest of `streamingBlocks` state (cleared on `core__chat__complete`). Re-opening chat history shows the persisted partial turn instead.
 
 ---
 
 ## Open Questions
 
-### OQ-1 — Client sends no elicitation response for 300s
+### Resolved
 
-**Observed code path**: `_recv_elicitation_response` logs `"elicitation {id}: timeout, auto-declining"` and returns `"decline"`. The decline path (R11) then runs.
+**OQ-1 (resolved)**: Client sends no elicitation response for 300s. **Decision**: Codify current timeout behavior with a distinct event shape. On timeout, backend emits `core__chat__elicitation_timeout` (NOT a `core__chat__tool_result` with "cancelled by user"). Client renders "Timed out — re-run the action" error card so it can distinguish user-decline from server-timeout. **Tests**: `elicitation-timeout-emits-distinct-event`.
 
-**Unresolved**: Is auto-decline the intended product behavior, or should the client be notified of the timeout separately (e.g. a `timeout` WS event) so the UI can distinguish "user declined" from "server gave up"? Today the client sees only an `elicitation` event with no matching `tool_result` until the decline path runs — which DOES emit `tool_result` with `"cancelled by user"` — so the UI can't differentiate.
+**OQ-2 (resolved)**: WS disconnect mid-tool. **Decision**: Close per INV-4 + INV-5 — unified WS reconnect resumes tool tracking via `core__job__*`; in-flight generation jobs survive disconnect per existing invariant; elicitation resume handled by chat-panel OQ-1. **Tests**: `ws-disconnect-tool-survival`.
 
-### OQ-2 — WS disconnects mid-tool-execution
+**OQ-3 (resolved)**: Elicitation response after tool completed. **Decision**: Codify — backend validates `elicitation_id` against current waiters dict; stale responses silently dropped with DEBUG log. **Tests**: `stale-elicitation-response-silently-dropped`.
 
-**Observed code path**: `handle_chat_connection`'s `finally` block calls `_halt_current_stream()`, which cancels the task. `_execute_tool` handlers that are mid-`await` will receive `CancelledError`. Synchronous DB handlers (`_exec_delete_keyframe`, etc.) may have already committed before cancellation fires. Generation jobs (`_await_generation_job`) continue running in the background (per project memory: "Chat generation jobs survive disconnect").
+**OQ-4 (resolved)**: Tool loop cap. **Decision**: Fix — emit `core__chat__tool_loop_exceeded` event when the 10-iteration cap hits; client renders explicit error "Tool loop exceeded 10 iterations — Claude stopped mid-thought. Continue?" Don't silently exit. **Tests**: `tool-loop-exceeded-emits-event`.
 
-**Unresolved**: Should a partial DB write be rolled back? Should the job be left running or cancelled? The current code neither rolls back nor cancels — it just stops polling. This is likely the desired behavior but is not explicit.
+**OQ-5 (resolved)**: Built-in tool name shadowed by plugin. **Decision**: Codify precedence — plugin-namespaced tools (`plugin__*`) > built-ins > bridge (Remember MCP). If a plugin tool name collides with a built-in (only possible if `__` invariant bypassed), plugin wins with WARNING log. **Tests**: `plugin-tool-shadows-builtin`.
 
-### OQ-3 — Elicitation response after tool_result already emitted
-
-**Observed code path**: Only possible via a client bug or a rogue reconnect. `elicitation_waiters.pop(elic_id, None) if elic_id else None` returns None after the waiter has been resolved-and-popped; the response is dropped silently (R14). But: the response could, in principle, arrive during a narrow window after `pop` in the `finally` block of `_recv_elicitation_response` and before the decline path finishes — also dropped since the key was popped.
-
-**Unresolved**: Is silent drop the correct behavior, or should a stale response produce a warning / audit log entry?
-
-### OQ-4 — Tool loop exceeds 10 iterations because Claude keeps calling tools
-
-**Observed code path**: The `for _ in range(10)` exits after the 10th iteration and proceeds to persist + emit `message` + `complete`. The assistant's last turn (10th) has its `tool_use` blocks persisted WITHOUT matching `tool_result` blocks in `all_blocks` (those live in `tool_result_blocks`, which is discarded on loop exit rather than appended to `messages`). But `tool_calls_log` DOES capture the 10th iteration's results and is persisted, so `_history_to_claude_messages` can reconstruct the synthetic `tool_result` messages on the next session.
-
-**Unresolved**: Should the user be notified that the loop hit the cap (e.g. a `halted` event with `reason:"loop_cap"`)? Today it's silent — Claude may appear to "stop mid-thought" and the user has no hint why. Also: should the cap be configurable per-project?
-
-### OQ-5 — Built-in tool name shadowed by plugin tool with same name
-
-**Observed code path**: `tools_for_claude = list(TOOLS) + plugin_contributed + mcp_tools` — Claude sees both. Claude picks one (typically the first). In `_execute_tool`, `"__" in name` is the branch predicate — so a plugin tool named exactly the same as a built-in (which by convention has no `__`) cannot be registered anyway. Still, if a plugin registered a tool without `__` by bypassing the manifest guard, the built-in branch would shadow it.
-
-**Unresolved**: Should the merge de-dup on name, and if so, which side wins? Also: should the chat subsystem validate the double-underscore invariant before merging? Today it trusts `PluginHost` to enforce naming.
-
-### OQ-6 — Bridge tool name collides with built-in
-
-**Observed code path**: `bridge.all_tools()` can in principle return any name, including one matching a built-in. Claude sees both; dispatch uses `if bridge.has_tool(name)` FIRST (R16), so the bridge would win — but built-ins have been in `TOOLS` longer, so Claude would pick whichever it prefers.
-
-**Unresolved**: Should a collision raise at merge time? Should bridge tools be namespaced like plugin tools (e.g. `remember__…`)?
+**OQ-6 (resolved)**: Bridge tool name collides with built-in. **Decision**: Codify — bridge tool is hidden from the merged tool list with a log warning; built-in wins. **Tests**: `bridge-collision-hidden`.
 
 ---
 
@@ -786,7 +830,7 @@ Boundaries, concurrency, malformed inputs, ordering, enrichment failures, allowl
   - `src/components/editor/ChatPanel.tsx`
 - **Audit**: `agent/reports/audit-2-architectural-deep-dive.md` §1C (units 1–5)
 - **Related specs (out of scope but upstream/downstream)**:
-  - `job-manager-and-ws-events` (planned) — owns `/ws/jobs`, `tool_progress` payload origin
+  - `job-manager-and-ws-events` (planned) — owns `/ws/jobs`, `core__chat__tool_progress` payload origin
   - `plugin-host-and-manifest` (planned) — owns `PluginHost.list_mcp_tools` + `destructive` flag semantics
   - `plugin-api-surface-and-r9a` (planned) — handler context shape
   - Per-plugin specs (e.g. `local.music-generation-plugin.md`, `local.light-show-scene-editor.md`) — own their own tool-handler logic

@@ -72,16 +72,21 @@ rendered onto a horizontally-tiled canvas row inside the timeline editor.
 5. **R5** — On successful response, the body is decoded as little-endian uint16 (float16) and converted element-wise to `Float32Array` using IEEE-754 half-float rules (including subnormals, ±Inf, NaN).
 6. **R6** — On non-OK HTTP status (e.g. 404, 500), the returned Promise rejects with `Error("peaks fetch <status>")`; nothing is written to the cache.
 7. **R7** — `invalidatePeaks(project, clipId)` deletes every cache entry whose key begins with `${project}:${clipId}:`, across all resolutions.
-8. **R8** — `invalidatePeaks` does NOT cancel or evict in-flight requests; a fetch in flight when invalidate is called will still populate the cache when it lands (see OQ-3).
+8. **R8** — `invalidatePeaks(project, clipId)` cancels any in-flight fetches for keys matching `${project}:${clipId}:` by invoking `AbortController.abort()` on each in-flight request. The aborted Promises reject with `AbortError` and do NOT populate the cache.
 9. **R9** — `<AudioWaveform>` calls `fetchPeaks` once per `(projectName, clipId, durationSeconds, resolution)` tuple change; unmount/clip-change sets a `cancelled` flag so late fulfillments do not set state on an unmounted instance.
 10. **R10** — Rendering is performed by one `<canvas>` element per tile; each tile's CSS width is `min(TILE_WIDTH_CSS_PX, remaining)` where `TILE_WIDTH_CSS_PX = 2048`; total tiles = `ceil(width / TILE_WIDTH_CSS_PX)`.
 11. **R11** — Each canvas's backing-buffer dimensions are `floor(widthCss * dpr)` × `floor(height * dpr)` with `dpr = window.devicePixelRatio || 1`, and a minimum of 1 px per axis.
 12. **R12** — Each tile draws exactly `pxW` vertical lines; for output pixel `x`, the displayed peak is the **max** of peaks in index range `[floor(peakStart + (x/pxW)*peakSpan), max(i0+1, floor(peakStart + ((x+1)/pxW)*peakSpan))]` where `peakStart`, `peakSpan` are derived from the tile's CSS-coordinate slice of the full waveform.
 13. **R13** — Lines are drawn mirrored about the tile vertical midpoint (`mid = pxH/2`), extending `max(1, m * (pxH-2) * 0.5)` pixels up and down, with `strokeStyle = color`, `lineWidth = max(1, dpr * 0.8)`.
-14. **R14** — When `width < 16` OR `durationSeconds <= 0`, the component renders `null` (no DOM, no canvases, no fetch — `useEffect` fetch is also guarded).
+14. **R14** — When `width < 16` OR `durationSeconds <= 0`, the component renders `null` (no DOM, no canvases) AND does NOT issue a fetch — the `useEffect` gates on `clipId`, `durationSeconds > 0`, and `width >= 16`.
 15. **R15** — While `peaks === null` (loading) the component's outer `<div>` is rendered with `opacity: 0.9` and individual tile canvases are mounted but undrawn; on `failed === true` the outer div is rendered with `opacity: 0`.
 16. **R16** — The outer rendering container is `pointer-events: none` (non-interactive) and absolutely positioned to fill its parent (`absolute inset-0`).
-17. **R17** — The cache has no eviction policy; size is bounded only by editor-session lifetime.
+17. **R17** — The cache has an LRU cap at 100 entries; entries past 100 evict least-recently-used first. Cache is cleared on project switch.
+18. **R18** — `fetchPeaks` validates response bytes: body length must be even; bit patterns that decode to NaN or ±Inf in float16 reject the response with `WaveformDataInvalid`.
+19. **R19** — `fetchPeaks` rejects client-side when `resolution < 16`; the fetch is not issued.
+20. **R20** — `fetchPeaks` signature accepts either `{clipId}` or `{poolSegmentId}` and dispatches to the corresponding backend route; both routes share the cache namespace by kind prefix.
+21. **R21** — `<AudioWaveform>` mounts canvas tiles only for tiles inside the visible scroll window; off-screen tiles unmount (viewport virtualization).
+22. **R22** — When a fetch fails with 404 and the underlying source is a pool_segment, the component surfaces a "missing source" indicator (per pool-segments OQ-3 broken-link pattern), distinct from the generic error-opacity-0 path.
 
 ---
 
@@ -163,17 +168,18 @@ type AudioWaveformProps = {
 | 21 | Peaks array longer than output pixels (zoomed out) | Max-pool across peak slice per output pixel | `zoomed-out-max-pools-peaks` |
 | 22 | Container is non-interactive | Outer div has `pointer-events: none` | `container-pointer-events-none` |
 | 23 | Cache grows without bound | No eviction; entries persist for session lifetime | `cache-has-no-eviction-policy` |
-| 24 | `fetchPeaks` for a pool_segment id that was deleted upstream | `undefined` | → [OQ-4](#open-questions) |
-| 25 | Cache size limit / leak protection | `undefined` — no limit exists | → [OQ-2](#open-questions) |
-| 26 | `invalidatePeaks` fires while request in-flight | `undefined` — in-flight fetch still populates cache after invalidate returns | → [OQ-3](#open-questions) |
+| 24 | `fetchPeaks` for a pool_segment id that was deleted upstream | Resolved via pool-segments OQ-3 broken-link pattern: 404 → component surfaces "missing source" indicator | `fetch-deleted-pool-segment-surfaces-missing` |
+| 25 | Cache size limit / leak protection | LRU cap at 100 entries; clear on project switch | `cache-lru-cap-evicts-oldest`, `cache-clears-on-project-switch` |
+| 26 | `invalidatePeaks` fires while request in-flight | `invalidatePeaks` calls `AbortController.abort()` on matching in-flight fetch; the Promise rejects and does NOT populate cache | `invalidate-aborts-in-flight` |
 | 27 | Backend returns 404 specifically (vs any non-OK) | Same as non-OK rejection; no special retry or UI | `status-404-rejects` |
-| 28 | Malformed float16 bytes (odd length, NaN exponent fields) | `undefined` — `Uint16Array` truncates odd byte lengths; NaN/Inf propagate to canvas math | → [OQ-5](#open-questions) |
+| 28 | Malformed float16 bytes (odd length, NaN exponent fields) | Validation rejects odd byte-length or NaN/Inf bit patterns; throws `WaveformDataInvalid` | `malformed-float16-rejected` |
 | 29 | Canvas allocated with `width=0` (e.g. tile widthCss rounds to 0) | Clamped to 1 px internal buffer via `Math.max(1, …)`; tile drawn as single blank column | `canvas-min-1px-backing` |
 | 30 | `devicePixelRatio` is undefined or 0 | Falls back to 1 via `window.devicePixelRatio || 1` | `dpr-fallback-to-1` |
-| 31 | Scroll virtualization (render only visible tiles) | `undefined` — all tiles for full `width` mount simultaneously; no viewport culling | → [OQ-1](#open-questions) |
-| 32 | `resolution=0` passed to `fetchPeaks` | `undefined` — key is valid but backend behavior at resolution=0 unspecified | → [OQ-6](#open-questions) |
-| 33 | Pool-segment variant via `fetchPeaks` | `undefined` — `fetchPeaks` hits audio-clips route only; pool route not addressed | → [OQ-7](#open-questions) |
-| 34 | AbortController / cancellation of in-flight fetch | `undefined` — no AbortController wired; component cancels React state update only | → [OQ-8](#open-questions) |
+| 31 | Scroll virtualization (render only visible tiles) | Only tiles inside the visible scroll window are mounted; off-screen tiles unmount | `viewport-virtualization-mounts-visible-tiles-only` |
+| 32 | `resolution=0` passed to `fetchPeaks` | Client-side guard: `resolution < 16` rejected; early-return before fetch | `resolution-below-16-rejected` |
+| 33 | Pool-segment variant via `fetchPeaks` | Unified `fetchPeaks({clipId})` or `fetchPeaks({poolSegmentId})` signature; single entry point for both routes | `fetchpeaks-unified-signature` |
+| 34 | AbortController / cancellation of in-flight fetch | `AbortSignal` wired on every fetch; abort on component unmount, invalidate, and clip change | `abort-on-unmount`, `abort-on-clip-change`, `abort-on-invalidate` |
+| 35 | `<AudioWaveform>` with `width < 16` | Effect gates on `width >= 16` in addition to clipId/duration; no fetch issued for sub-16 widths | `width-below-16-skips-fetch` |
 
 ---
 
@@ -503,33 +509,152 @@ These are assertions that appear within other tests; repeated here for scannabil
 - `cache-not-populated` (R6): non-OK status does NOT write to cache.
 - `no-stale-state` (R9): late resolution of a cancelled fetch does NOT mutate component state.
 - `no-retry` (scenario 27): 404 does NOT trigger any automatic retry.
-- `inflight-unaffected-by-invalidate` (OQ-3): `invalidatePeaks` does NOT remove inflight Promises (behavior flagged undefined because the consequence — stale cache post-invalidate — is not decided).
-- `no-abort` (OQ-8): no `AbortController` is threaded through `fetchPeaks`.
+
+#### Test: cache-lru-cap-evicts-oldest (covers R17, OQ-2 resolution)
+
+**Given**: 100 distinct `(project, clipId, resolution)` keys populated into the cache via successful fetches.
+
+**When**: a 101st distinct key is fetched and resolved.
+
+**Then**:
+- **cache-size-eq-100**: cache size stays at 100.
+- **oldest-evicted**: the first-populated key is no longer in the cache; a subsequent call for it issues a new network request.
+
+#### Test: cache-clears-on-project-switch (covers R17, OQ-2 resolution)
+
+**Given**: cache populated with entries for `projectA`.
+
+**When**: project switch handler invokes the cache clear hook.
+
+**Then**:
+- **cache-empty**: `cache.size === 0`.
+- **next-fetch-network**: next call to `fetchPeaks` for any project issues a fresh network request.
+
+#### Test: invalidate-aborts-in-flight (covers R8, OQ-3 resolution)
+
+**Given**: `fetchPeaks(p, c, 400)` called; network response is pending.
+
+**When**: `invalidatePeaks(p, c)` is called before the response arrives.
+
+**Then**:
+- **abort-called**: the fetch's `AbortController.abort()` was invoked.
+- **promise-rejects-abort**: the original promise rejects with `AbortError`.
+- **cache-not-populated**: even if the response bytes arrive late, no cache entry is written for the aborted key.
+
+#### Test: malformed-float16-rejected (covers R18, OQ-5 resolution)
+
+**Given**: mocked 200 response with an odd-length body (3 bytes) OR a body with an element whose float16 bit pattern is `0x7C00` (positive infinity).
+
+**When**: `fetchPeaks` is awaited.
+
+**Then**:
+- **rejects-with-waveform-data-invalid**: promise rejects with `WaveformDataInvalid`.
+- **cache-not-populated**: no entry is cached under the key.
+
+#### Test: resolution-below-16-rejected (covers R19, OQ-6 resolution)
+
+**Given**: `fetchPeaks('projX', 'clipA', 0)` or `fetchPeaks('projX', 'clipA', 8)`.
+
+**When**: called.
+
+**Then**:
+- **no-fetch-issued**: `fetch` was not called.
+- **rejects-with-guard-error**: promise rejects with a guard error (`resolution must be >= 16`).
+
+#### Test: fetchpeaks-unified-signature (covers R20, OQ-7 resolution)
+
+**Given**: backend mocked for both `/audio-clips/:id/peaks` and `/pool/:id/peaks`.
+
+**When**: `fetchPeaks({project, clipId: 'c1', resolution: 400})` and `fetchPeaks({project, poolSegmentId: 'p1', resolution: 400})` are called.
+
+**Then**:
+- **clip-route-called**: the clip-id call hits `/audio-clips/c1/peaks`.
+- **pool-route-called**: the pool-segment call hits `/pool/p1/peaks`.
+- **keys-distinct**: cache keys are prefixed by kind (`clip:` vs `pool:`) to avoid collision.
+
+#### Test: abort-on-unmount (covers R8, OQ-8 resolution)
+
+**Given**: `<AudioWaveform>` mounted with a pending fetch.
+
+**When**: component unmounts before fetch resolves.
+
+**Then**:
+- **abort-called**: the fetch's `AbortController.abort()` was invoked.
+- **no-setstate**: no `setPeaks`/`setFailed` is observed post-unmount.
+
+#### Test: abort-on-clip-change (covers R8, OQ-8 resolution)
+
+**Given**: `<AudioWaveform clipId="A">` with a pending fetch.
+
+**When**: props change to `clipId="B"` before fetch A resolves.
+
+**Then**:
+- **abort-called-for-A**: fetch A's `AbortController.abort()` was invoked.
+- **new-fetch-for-B**: a new fetch is issued for B.
+
+#### Test: abort-on-invalidate (covers R8, OQ-8 resolution)
+
+**Given**: pending `fetchPeaks` for `(p, c, 400)`.
+
+**When**: `invalidatePeaks(p, c)` is called.
+
+**Then**:
+- **abort-called**: the in-flight controller is aborted.
+- **cache-not-populated**: no entry written post-invalidate.
+
+#### Test: width-below-16-skips-fetch (covers R14, OQ-9 resolution)
+
+**Given**: `<AudioWaveform width={15} durationSeconds={1} clipId="A">`.
+
+**When**: mounted.
+
+**Then**:
+- **no-fetch**: `fetch` was not called.
+- **renders-null**: component output is `null`.
+
+#### Test: viewport-virtualization-mounts-visible-tiles-only (covers R21, OQ-1 resolution)
+
+**Given**: `<AudioWaveform width={10000}>` (5 tiles at `TILE_WIDTH_CSS_PX=2048`); scroll container viewport exposes CSS x-range `[4000, 6048)`.
+
+**When**: mounted with scroll offset = 4000.
+
+**Then**:
+- **visible-tiles-mounted**: only the tile covering `[4096, 6144)` (and optionally buffer-adjacent) is mounted as `<canvas>`.
+- **offscreen-tiles-unmounted**: tiles outside the visible range have no canvas element in the DOM.
+
+#### Test: fetch-deleted-pool-segment-surfaces-missing (covers R22, OQ-4 resolution)
+
+**Given**: `<AudioWaveform poolSegmentId="missing">`; backend responds 404.
+
+**When**: fetch settles.
+
+**Then**:
+- **missing-indicator-rendered**: component renders a visible "missing source" indicator (per pool-segments OQ-3 broken-link pattern), not the generic opacity-0 error div.
 
 ---
 
 ## Non-Goals
 
-- **Scroll virtualization** — `<AudioWaveform>` does not observe viewport visibility or scroll offset; it mounts tiles for the entire `width` it was given. Virtualization, if desired, is a parent concern.
-- **Size-bounded cache** — no LRU, no max-entry-count, no per-entry TTL. Session-lifetime leak accepted.
-- **Cancellation of in-flight fetches** — `fetchPeaks` has no `signal` parameter; component-level cancellation only prevents `setState`.
-- **Pool-segment fetch via `fetchPeaks`** — the pool route exists server-side but `fetchPeaks` only hits `/audio-clips/:id/peaks`.
-- **Float16 fidelity across all IEEE edge cases** — subnormals/Inf/NaN decode per the canonical algorithm, but downstream canvas math may render NaN/Inf anomalously. We do not guarantee visual output for adversarial float16 bit patterns.
+- **Float16 fidelity across all IEEE edge cases** — subnormals decode per the canonical algorithm. NaN/Inf bit patterns are rejected at validation (R18). We do not guarantee visual output for subnormal edge cases.
 - **Custom rendering targets** — canvas-2D only. No WebGL, SVG, or offscreen-canvas worker path.
 
 ---
 
 ## Open Questions
 
-- **OQ-1 — Viewport virtualization**: Should `<AudioWaveform>` avoid mounting canvases outside the visible scroll window? Today all tiles for the full `width` mount simultaneously. Referenced by Behavior Table row 31.
-- **OQ-2 — Cache size limit**: Audit §1E unit 9 flags the cache as unbounded → editor-session leak. Is a cap / LRU required? Referenced by row 25.
-- **OQ-3 — Invalidate-during-inflight**: If `invalidatePeaks` is called while a fetch for that key is in flight, should the in-flight Promise be aborted or its result discarded? Current code leaves the in-flight fetch alone; it will populate the cache after `invalidatePeaks` returns, silently resurrecting "stale" data. Referenced by row 26.
-- **OQ-4 — Fetch for deleted pool_segment**: If the backend has removed the entity referenced by `clipId`, the fetch returns 404 → client rejects. Is that the desired UX (blank waveform) or should the component surface an explicit "missing source" indicator? Referenced by row 24.
-- **OQ-5 — Malformed float16 bytes**: If the backend returns an odd-length body or NaN/Inf bit patterns, `Uint16Array` silently truncates and the draw loop may compute NaN line lengths. No validation exists; should we detect and fall back to loading / error state? Referenced by row 28.
-- **OQ-6 — `resolution = 0`**: Client happily constructs a key and URL with `resolution=0`. Backend behavior is unspecified; current code has no client-side guard. Referenced by row 32.
-- **OQ-7 — Pool-segment variant**: `fetchPeaks` only addresses `/audio-clips/:id/peaks`. The `/pool/:seg_id/peaks` route is reached through a different code path (AudioIsolationsPanel). Should `fetchPeaks` be generalized, or is the parallel path intentional? Referenced by row 33.
-- **OQ-8 — AbortController**: No cancellation primitive is passed to `fetch`. When the component unmounts or clip changes mid-fetch, the network request continues and the response bytes are decoded and cached even if no consumer wants them. Acceptable, or should we wire `AbortSignal`? Referenced by row 34.
-- **OQ-9 — Sub-16 width and fetch**: `<AudioWaveform>` renders `null` when `width < 16`, but the `useEffect` only guards on `clipId` + `durationSeconds`, so a fetch is issued even when nothing will be drawn. Is that waste acceptable or should the effect also gate on `width`?
+*(all resolved — see `### Resolved` below)*
+
+### Resolved
+
+- **OQ-1 (row 31) — Viewport virtualization**: Resolved as **fix** — only tiles inside the visible scroll window are mounted; off-screen tiles unmount. R21 added; test `viewport-virtualization-mounts-visible-tiles-only`.
+- **OQ-2 (row 25) — Cache size limit**: Resolved as **fix** — LRU cap at 100 entries; cleared on project switch. R17 updated; tests `cache-lru-cap-evicts-oldest`, `cache-clears-on-project-switch`.
+- **OQ-3 (row 26) — Invalidate-during-inflight**: Resolved as **fix** — `invalidatePeaks` calls `AbortController.abort()` on any in-flight fetch for matching keys; aborted Promises reject and do not populate cache. R8 updated; test `invalidate-aborts-in-flight`.
+- **OQ-4 (row 24) — Fetch for deleted pool_segment**: Resolved via pool-segments OQ-3 broken-link pattern — component surfaces "missing source" indicator on 404 for pool_segment fetches. R22 added; test `fetch-deleted-pool-segment-surfaces-missing`.
+- **OQ-5 (row 28) — Malformed float16 bytes**: Resolved as **fix** — validate byte-length is even; reject NaN/Inf bit patterns with `WaveformDataInvalid`. R18 added; test `malformed-float16-rejected`.
+- **OQ-6 (row 32) — `resolution=0`**: Resolved as **fix** — client-side guard requires `resolution >= 16`; early reject. R19 added; test `resolution-below-16-rejected`.
+- **OQ-7 (row 33) — Pool-segment variant**: Resolved as **fix** — generalize `fetchPeaks` signature to accept `{clipId}` or `{poolSegmentId}`; single entry point. AudioIsolationsPanel routes through unified surface. R20 added; test `fetchpeaks-unified-signature`.
+- **OQ-8 (row 34) — AbortController**: Resolved as **fix** — wire `AbortSignal` on every fetch; abort on unmount, invalidate, and clip change. R8 updated; tests `abort-on-unmount`, `abort-on-clip-change`, `abort-on-invalidate`.
+- **OQ-9 (row 35) — Sub-16 width and fetch**: Resolved as **fix** — effect gate includes `width >= 16`; no fetch issued for sub-16 widths. R14 updated; test `width-below-16-skips-fetch`.
 
 ---
 

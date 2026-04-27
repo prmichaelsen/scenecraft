@@ -76,7 +76,7 @@ Define the observable behavior of the frontend chat surface: `ChatPanel` (React 
 ### WS connection lifecycle
 
 - **R13**: On mount, ChatPanel constructs a `ChatWebSocket(projectName, handleMessage, setConnected)` and calls `connect()`. On unmount, it calls `disconnect()` and nulls the ref.
-- **R14**: `ChatWebSocket.connect()` opens `${SCENECRAFT_WS_URL}/ws/chat/${encodeURIComponent(projectName)}`. On `open` it sets `reconnectAttempts=0` and fires `onConnectionChange(true)`. On `close` it fires `onConnectionChange(false)` and calls `attemptReconnect()`. On `error` it closes the socket (which triggers `close` → reconnect).
+- **R14**: `ChatWebSocket.connect()` opens the unified socket `${SCENECRAFT_WS_URL}/ws` (per INV-4; `/ws/chat/:project` is deprecated). Chat traffic multiplexes over the unified socket using the `core__chat__*` event namespace. On `open` it sets `reconnectAttempts=0` and fires `onConnectionChange(true)`. On `close` it fires `onConnectionChange(false)` and calls `attemptReconnect()`. On `error` it closes the socket (which triggers `close` → reconnect).
 - **R15**: Reconnect uses exponential backoff `min(2000 * 2^attempts, 5000)` ms, capped at `maxReconnectAttempts=5`. After 5 failed attempts, the client stops trying.
 - **R16**: `disconnect()` clears any pending reconnect timer, sets `reconnectAttempts = maxReconnectAttempts` (so no further reconnect fires), closes the socket, nulls the ref.
 - **R17**: The "Connected" / "Disconnected" badge and the textarea's `disabled`/placeholder reflect `connected` state. The Send button is disabled when `!input.trim() || loading || !connected`.
@@ -91,14 +91,14 @@ Define the observable behavior of the frontend chat surface: `ChatPanel` (React 
 
 ### Inbound event handling
 
-- **R23**: On `chunk`: if the last streaming block is `text`, append to its text; otherwise push a new `text` block. Does not affect `loading`.
-- **R24**: On `tool_call`: push a new `tool_use` streaming block with `status: 'pending'` and the given id+name.
-- **R25**: On `tool_progress`: find the matching `tool_use` block by id and replace its `progress` field. No status change.
-- **R26**: On `tool_result`: find the matching `tool_use` block by id, set `status` to `'error'` if `isError`, else `'success'`, and clear `progress`. If not `isError`, invoke `onMutation?.()`.
-- **R27**: On `elicitation`: push a new `elicitation` streaming block with `resolution: 'pending'`.
-- **R28**: On `message` (finalized persisted message): if the incoming message is a user string message equal to the last optimistic user message, REPLACE the optimistic one (dedup). Otherwise append. Then clear `streamingBlocks` to `[]`.
-- **R29**: On `complete`: clear `streamingBlocks` to `[]` and set `loading=false`.
-- **R30**: On `error`: clear `streamingBlocks`, set `loading=false`, and append a system message `{role:'system', content:\`Error: ${msg.error}\`}`.
+- **R23**: On `core__chat__chunk`: if the last streaming block is `text`, append to its text; otherwise push a new `text` block. Does not affect `loading`.
+- **R24**: On `core__chat__tool_call`: push a new `tool_use` streaming block with `status: 'pending'` and the given id+name.
+- **R25**: On `core__chat__tool_progress`: find the matching `tool_use` block by id and replace its `progress` field. No status change.
+- **R26**: On `core__chat__tool_result`: find the matching `tool_use` block by id, set `status` to `'error'` if `isError`, else `'success'`, and clear `progress`. If not `isError`, invoke `onMutation?.()`.
+- **R27**: On `core__chat__elicitation`: push a new `elicitation` streaming block with `resolution: 'pending'`.
+- **R28**: On `core__chat__message` (finalized persisted message): if the incoming message is a user string message equal to the last optimistic user message, REPLACE the optimistic one (dedup). Otherwise append. Then clear `streamingBlocks` to `[]`.
+- **R29**: On `core__chat__complete`: clear `streamingBlocks` to `[]` and set `loading=false`.
+- **R30**: On `core__chat__error`: clear `streamingBlocks`, set `loading=false`, and append a system message `{role:'system', content:\`Error: ${msg.error}\`}`.
 - **R31**: On `status`: no state change (log-only).
 - **R32**: On `mix_render_request`: call `handleMixRenderRequest(msg, {projectName})`; do not await; catch and log errors. No ChatPanel state change.
 - **R33**: On `bounce_audio_request`: call `handleBounceAudioRequest({msg, projectName})`; do not await; catch and log. No ChatPanel state change.
@@ -134,6 +134,17 @@ Define the observable behavior of the frontend chat surface: `ChatPanel` (React 
 - **R51**: On `JobStateProvider` unmount, the WS `subscribeAll` unsubscribe runs AND all pending auto-expire timers are cleared.
 - **R52**: `getSnapshot` returns a monotonically increasing number; every mutation calls `notify()` which increments the counter and invokes all listeners. `useSyncExternalStore` wires this into React re-renders.
 
+### INV-4 / INV-6 additions
+
+- **R53**: All chat events use the `core__chat__*` namespace and all job events use the `core__job__*` namespace per INV-4. No separate `/ws/chat/:project` or `/ws/jobs` sockets exist; both flow through the unified `/ws` socket (plus the binary preview-stream exception).
+- **R54**: On WS reconnect, ChatPanel collects the ids of all currently-pending elicitation blocks and emits `core__chat__session_resume_check` with `{pendingElicitationIds: [...]}`. Backend responds with `{known: [...], unknown: [...]}`. For every id in `unknown`, ChatPanel replaces the pending elicitation card with an error card "Connection lost — re-run the action".
+- **R55**: `handleSend` is a no-op when WS is disconnected (`!connected`). The Send button is disabled in this state, and any programmatic send attempt (not via the button) silently drops. Chat sends require an open WS; no client-side queuing or flush-on-reconnect.
+- **R56**: Persisted assistant message with zero content blocks renders as an empty `space-y-2` div. Accepted rendering; not filtered at `message` time.
+- **R57**: `core__job__completed` / `core__job__progress` / `core__job__failed` events for an entityKey that has no registered entry are silently ignored (only `core__job__started` auto-registers per R44). Treats unmatched events as backend noise.
+- **R58**: Receipt of `core__chat__tool_loop_exceeded` event clears `streamingBlocks`, sets `loading=false`, and appends a system message "Tool loop exceeded 10 iterations — Claude stopped mid-thought. Continue?" (renderable with a Continue button that re-sends the last user message).
+- **R59**: Receipt of `core__chat__elicitation_timeout` event replaces the matching pending elicitation card with an error card "Timed out — re-run the action"; distinct from user-declined state.
+- **R60** (INV-6 singleton): ChatPanel is contributed with `singleton: true` in its panel manifest. By construction, at most one ChatPanel instance can exist across all panels/windows in a session; adding ChatPanel to a new location moves the existing instance rather than spawning a duplicate.
+
 ---
 
 ## Interfaces / Data Shapes
@@ -149,19 +160,33 @@ type ClientMessage =
 ### `ServerMessage` (backend → frontend via WS)
 
 ```ts
+// All discriminators use the INV-4 namespaced form `core__chat__<event>` on the wire.
 type ServerMessage =
-  | { type: 'chunk'; content: string }
-  | { type: 'tool_call'; toolCall: { id: string; name: string; input: Record<string, unknown> } }
-  | { type: 'tool_result'; toolResult: { id: string; output: unknown; isError?: boolean }; durationMs?: number }
-  | { type: 'tool_progress'; toolProgress: { id: string; phase: string; pct: number; message: string } }
-  | { type: 'message'; message: PersistedMessage }
-  | { type: 'status'; statusMessage?: string }
-  | { type: 'elicitation'; elicitation: ElicitationRequest }
-  | { type: 'complete' }
-  | { type: 'error'; error: string }
+  | { type: 'core__chat__chunk'; content: string }
+  | { type: 'core__chat__tool_call'; toolCall: { id: string; name: string; input: Record<string, unknown> } }
+  | { type: 'core__chat__tool_result'; toolResult: { id: string; output: unknown; isError?: boolean }; durationMs?: number }
+  | { type: 'core__chat__tool_progress'; toolProgress: { id: string; phase: string; pct: number; message: string } }
+  | { type: 'core__chat__message'; message: PersistedMessage }
+  | { type: 'core__chat__status'; statusMessage?: string }
+  | { type: 'core__chat__elicitation'; elicitation: ElicitationRequest }
+  | { type: 'core__chat__elicitation_timeout'; id: string }
+  | { type: 'core__chat__tool_loop_exceeded' }
+  | { type: 'core__chat__complete' }
+  | { type: 'core__chat__error'; error: string }
+  | { type: 'core__chat__halted' }
+  | { type: 'core__chat__interrupted' }
+  | { type: 'core__chat__session_resume_ack'; known: string[]; unknown: string[] }
   | MixRenderRequest
   | BounceAudioRequest
   | MasterBusEffectsChanged
+
+// Job events multiplex over the same unified WS:
+type JobMessage =
+  | { type: 'core__job__started'; jobId: string; total?: number; meta?: Record<string, unknown> }
+  | { type: 'core__job__progress'; jobId: string; completed?: number; total?: number; detail?: string }
+  | { type: 'core__job__completed'; jobId: string; result?: unknown }
+  | { type: 'core__job__failed'; jobId: string; error?: string }
+  | { type: 'core__job__evicted'; jobId: string }
 ```
 
 ### `PersistedMessage`, `ContentBlock`, `StreamingBlock` — see `chat-client.ts:115-143`.
@@ -200,8 +225,9 @@ type JobStateContextValue = {
 
 ### WS endpoint
 
-- `ws://host/ws/chat/:name` — chat channel
-- (Job events flow on a separate socket managed by `useScenecraftSocket`; ChatPanel itself does not open a second WS.)
+- `ws://host/ws` — unified socket (INV-4). Chat and job events share this connection via the `core__chat__*` and `core__job__*` namespaces. The binary preview-stream transport (`/ws/preview-stream/*`) remains separate.
+- Legacy `/ws/chat/:project` and `/ws/jobs` paths are deprecated and removed.
+- ChatPanel reuses the single unified WS managed by `useScenecraftSocket`; it does not open its own socket.
 
 ---
 
@@ -215,20 +241,20 @@ type JobStateContextValue = {
 | 4 | Plain `Enter` in textarea | Newline inserted; no send | `enter-inserts-newline` |
 | 5 | Empty / whitespace-only send attempt | No-op; no WS frame sent; Send button disabled | `empty-send-noop`, `send-button-disabled-empty` |
 | 6 | Send while `loading=true` | No-op; no WS frame | `send-noop-while-loading` |
-| 7 | Inbound `chunk` with no prior streaming block | New `text` block pushed | `chunk-creates-text-block` |
-| 8 | Inbound `chunk` after another `chunk` | Text appended to last text block | `chunk-appends-text` |
-| 9 | Inbound `tool_call` | `tool_use` block pushed with `status:'pending'` | `tool-call-badge-pending` |
-| 10 | Inbound `tool_progress` for known id | Badge updates with pct+message; status remains pending | `tool-progress-updates-badge` |
-| 11 | Inbound `tool_result` success | Badge turns green; `onMutation` fires once | `tool-result-success-fires-mutation` |
-| 12 | Inbound `tool_result` error | Badge turns red; `onMutation` does NOT fire | `tool-result-error-no-mutation` |
-| 13 | Inbound `elicitation` | `ElicitationCard` rendered with Confirm/Cancel buttons, blinking cursor hidden | `elicitation-card-pending` |
+| 7 | Inbound `core__chat__chunk` with no prior streaming block | New `text` block pushed | `chunk-creates-text-block` |
+| 8 | Inbound `core__chat__chunk` after another chunk | Text appended to last text block | `chunk-appends-text` |
+| 9 | Inbound `core__chat__tool_call` | `tool_use` block pushed with `status:'pending'` | `tool-call-badge-pending` |
+| 10 | Inbound `core__chat__tool_progress` for known id | Badge updates with pct+message; status remains pending | `tool-progress-updates-badge` |
+| 11 | Inbound `core__chat__tool_result` success | Badge turns green; `onMutation` fires once | `tool-result-success-fires-mutation` |
+| 12 | Inbound `core__chat__tool_result` error | Badge turns red; `onMutation` does NOT fire | `tool-result-error-no-mutation` |
+| 13 | Inbound `core__chat__elicitation` | `ElicitationCard` rendered with Confirm/Cancel buttons, blinking cursor hidden | `elicitation-card-pending` |
 | 14 | User clicks Confirm on elicitation | WS `elicitation_response accept` sent; card shows "✓ Confirmed", dims | `elicitation-accept` |
 | 15 | User clicks Cancel on elicitation | WS `elicitation_response decline` sent; card shows "Cancelled", dims | `elicitation-decline` |
-| 16 | Inbound `message` (finalized assistant) | Message appended; streaming blocks cleared | `message-finalizes` |
-| 17 | Inbound `message` (user echo dupe of optimistic) | Last optimistic user message replaced, not duplicated | `message-user-dedup` |
-| 18 | Inbound `complete` | Streaming cleared; `loading=false` | `complete-clears-loading` |
-| 19 | Inbound `error` | Streaming cleared; `loading=false`; red system message appended | `error-adds-system-message` |
-| 20 | Inbound `status` | No state change | `status-noop` |
+| 16 | Inbound `core__chat__message` (finalized assistant) | Message appended; streaming blocks cleared | `message-finalizes` |
+| 17 | Inbound `core__chat__message` (user echo dupe of optimistic) | Last optimistic user message replaced, not duplicated | `message-user-dedup` |
+| 18 | Inbound `core__chat__complete` | Streaming cleared; `loading=false` | `complete-clears-loading` |
+| 19 | Inbound `core__chat__error` | Streaming cleared; `loading=false`; red system message appended | `error-adds-system-message` |
+| 20 | Inbound `core__chat__status` | No state change | `status-noop` |
 | 21 | Inbound `mix_render_request` | `handleMixRenderRequest` called; ChatPanel state unchanged | `mix-render-request-dispatch` |
 | 22 | Inbound `bounce_audio_request` | `handleBounceAudioRequest` called; state unchanged | `bounce-audio-request-dispatch` |
 | 23 | Inbound `master_bus_effects_changed` | Window `CustomEvent(MASTER_BUS_EFFECTS_CHANGED_EVENT)` dispatched | `master-bus-effects-event` |
@@ -238,14 +264,14 @@ type JobStateContextValue = {
 | 27 | User scrolled up, new chunk arrives | No auto-scroll; `atBottom=false` blocks followOutput and the streaming-growth effect | `scroll-up-blocks-autoscroll` |
 | 28 | User at bottom, new chunk arrives | Viewport scrolls to end (auto behavior) | `at-bottom-autoscrolls` |
 | 29 | `fetchChatHistory` returns 500 | Empty list; empty-state placeholder shown; no user-facing error | `history-fetch-failure-silent` |
-| 30 | JobStateContext receives `job_started` with known jobId | Entry transitions to in_progress, detail `0/N` | `job-started-update` |
-| 31 | JobStateContext receives `job_progress` | Entry progress/detail updated | `job-progress-update` |
-| 32 | JobStateContext receives `job_completed` | Entry marked complete; 30s timer scheduled | `job-completed-schedules-expire` |
-| 33 | 30s after `job_completed` elapses | Entry removed; listeners notified | `job-completed-expires` |
-| 34 | JobStateContext receives `job_failed` | Entry marked failed; 10s timer scheduled | `job-failed-schedules-expire` |
-| 35 | `job_started` for unknown jobId with `meta.keyframeId` | Auto-register entityKey = keyframeId | `job-auto-register-keyframe` |
-| 36 | `job_started` for unknown jobId with `meta.transitionId` | Auto-register entityKey = transitionId | `job-auto-register-transition` |
-| 37 | `job_started` for unknown jobId without meta | Auto-register entityKey = jobId | `job-auto-register-fallback` |
+| 30 | JobStateContext receives `core__job__started` with known jobId | Entry transitions to in_progress, detail `0/N` | `job-started-update` |
+| 31 | JobStateContext receives `core__job__progress` | Entry progress/detail updated | `job-progress-update` |
+| 32 | JobStateContext receives `core__job__completed` | Entry marked complete; 30s timer scheduled | `job-completed-schedules-expire` |
+| 33 | 30s after `core__job__completed` elapses | Entry removed; listeners notified | `job-completed-expires` |
+| 34 | JobStateContext receives `core__job__failed` | Entry marked failed; 10s timer scheduled | `job-failed-schedules-expire` |
+| 35 | `core__job__started` for unknown jobId with `meta.keyframeId` | Auto-register entityKey = keyframeId | `job-auto-register-keyframe` |
+| 36 | `core__job__started` for unknown jobId with `meta.transitionId` | Auto-register entityKey = transitionId | `job-auto-register-transition` |
+| 37 | `core__job__started` for unknown jobId without meta | Auto-register entityKey = jobId | `job-auto-register-fallback` |
 | 38 | JobMessage without `jobId` field | Ignored | `job-msg-no-jobid-ignored` |
 | 39 | Stale jobId (entityKey reassigned to newer jobId) | Stale message ignored | `job-stale-jobid-ignored` |
 | 40 | `startJob` called again for same entityKey | Previous entry replaced; old expire timer cleared | `startjob-replaces-entry` |
@@ -253,15 +279,17 @@ type JobStateContextValue = {
 | 42 | `consumeResult(unknownKey)` | Returns null | `consume-result-unknown` |
 | 43 | `useJobState` outside provider | Throws | `usejobstate-no-provider` |
 | 44 | Provider unmounts with live timers | All timers cleared; WS subscription removed | `provider-unmount-cleanup` |
-| 45 | WS drops mid-tool-elicitation | `undefined` | → [OQ-1](#open-questions) |
-| 46 | Send message before WS connected | `undefined` — Send button is disabled, but programmatic sends through the ref silently drop | → [OQ-2](#open-questions) |
-| 47 | Clear chat during streaming (no UI action exists) | `undefined` | → [OQ-3](#open-questions) |
-| 48 | Assistant message with zero content blocks | `undefined` | → [OQ-4](#open-questions) |
-| 49 | `job_completed` for unknown entityKey | `undefined` — only `job_started` auto-registers | → [OQ-5](#open-questions) |
-| 50 | Two ChatPanel instances mounted concurrently (same project) | `undefined` | → [OQ-6](#open-questions) |
+| 45 | WS drops mid-tool-elicitation | On reconnect, client sends `core__chat__session_resume_check` with pending elicitation ids. Backend responds `{known, unknown}`. Unknown ids → client converts each pending card to a "Connection lost — re-run the action" error card. Known ids → card stays live and Confirm/Cancel work on the new socket | `reconnect-resume-known-elicitation`, `reconnect-unknown-elicitation-becomes-error` |
+| 46 | Send message before WS connected | Send button disabled when `!connected`; programmatic sends outside the button silently drop. No client-side queue, no flush-on-reconnect | `send-before-connect-silently-drops` |
+| 47 | Clear chat during streaming (no UI action exists) | Out of scope — no clear-chat feature planned; interrupt path handles cancel | (removed) |
+| 48 | Assistant persisted message with zero content blocks | Renderer emits empty `space-y-2` div. Accepted; not filtered | `empty-content-blocks-renders-empty-div` |
+| 49 | `core__job__completed` for unknown entityKey | Silently ignored — only `core__job__started` auto-registers. `progress`/`completed`/`failed` for unknown entities are treated as backend noise | `job-completed-unknown-entitykey-ignored` |
+| 50 | Two ChatPanel instances attempted (same project or different windows) | Unreachable by construction — ChatPanel is `singleton: true` (INV-6). Adding ChatPanel elsewhere moves the existing instance rather than spawning a duplicate | `chatpanel-singleton-move-not-duplicate` |
 | 51 | `handleMixRenderRequest` fails (render / upload) | Error logged; no ChatPanel state change; backend times out | `mix-render-handler-swallows-errors` |
 | 52 | Assistant persisted message with `ContentBlock[]` containing `tool_use` | Renders text + ToolCallBadge; status derived from `tool_calls[id].is_error` | `persisted-tool-use-renders-badge` |
 | 53 | Streaming bubble while elicitation pending | Blinking cursor hidden | `cursor-hidden-during-elicitation` |
+| 54 | Inbound `core__chat__tool_loop_exceeded` | Streaming cleared; `loading=false`; system message "Tool loop exceeded 10 iterations — Claude stopped mid-thought. Continue?" appended | `tool-loop-exceeded-surfaces-error` |
+| 55 | Inbound `core__chat__elicitation_timeout` | Matching pending elicitation card replaced with error card "Timed out — re-run the action"; distinct from user-declined state | `elicitation-timeout-distinct-from-decline` |
 
 ---
 
@@ -741,6 +769,91 @@ type JobStateContextValue = {
 - **console-warn-called**: `console.warn('[ChatPanel] mix_render_request failed:', err)`.
 - **no-chat-error-message**: No system message appended; no loading change.
 
+#### Test: reconnect-resume-known-elicitation (covers R54, OQ-1 resolution)
+
+**Given**: ChatPanel has a pending elicitation block with id `e-1`; WS drops and reconnects.
+
+**When**: On reconnect, backend responds to `core__chat__session_resume_check` with `{known: ['e-1'], unknown: []}`.
+
+**Then**:
+- **resume-check-sent**: Outbound `core__chat__session_resume_check` frame contained `pendingElicitationIds: ['e-1']`.
+- **card-still-pending**: The `e-1` elicitation card still renders Confirm/Cancel buttons; `resolution === 'pending'`.
+- **confirm-works**: Clicking Confirm sends `elicitation_response accept` on the new socket and the backend acknowledges.
+
+#### Test: reconnect-unknown-elicitation-becomes-error (covers R54, OQ-1 resolution)
+
+**Given**: Pending elicitation `e-2`; WS drops and reconnects.
+
+**When**: Backend responds `{known: [], unknown: ['e-2']}`.
+
+**Then**:
+- **card-replaced-with-error**: Card at id `e-2` renders "Connection lost — re-run the action"; Confirm/Cancel buttons are gone.
+- **no-elicitation-response-sent**: Any subsequent Confirm click (if still present) is inert.
+
+#### Test: send-before-connect-silently-drops (covers R55, OQ-2 resolution)
+
+**Given**: `connected === false` (WS not open).
+
+**When**: A programmatic caller invokes `wsRef.current?.send({type:'message', content:'hi'})`.
+
+**Then**:
+- **no-frame-sent**: No WS frame observed on the socket mock.
+- **no-queue**: No internal queue state holds the message.
+- **send-button-disabled**: Send button is also disabled in the UI (assertion on DOM).
+
+#### Test: empty-content-blocks-renders-empty-div (covers R56, OQ-4 resolution)
+
+**Given**: A persisted assistant message with `content: []`.
+
+**When**: Rendered.
+
+**Then**:
+- **empty-space-y-2**: A `div.space-y-2` is present with no children.
+- **no-throw**: Render does not throw.
+
+#### Test: job-completed-unknown-entitykey-ignored (covers R57, OQ-5 resolution)
+
+**Given**: Empty `jobs` map; empty `jobIdToEntity`.
+
+**When**: Inbound `{type:'core__job__completed', jobId:'j-ghost'}` arrives.
+
+**Then**:
+- **store-unchanged**: `jobs.size === 0` still.
+- **no-notify**: Listeners receive no notification.
+- **debug-log-only**: Optional `console.debug` may appear; no user-facing effect.
+
+#### Test: chatpanel-singleton-move-not-duplicate (covers R60, OQ-6 resolution)
+
+**Given**: ChatPanel is mounted in window A. Panel manifest declares `singleton: true`.
+
+**When**: User adds ChatPanel to window B via menu / drag.
+
+**Then**:
+- **panel-moved**: Window A's ChatPanel is unmounted; window B has exactly one ChatPanel.
+- **global-count-one**: Across the session, `document.querySelectorAll('[data-panel-id="chat"]').length === 1`.
+- **no-second-ws**: No second unified WS is opened; the session still uses one WS.
+
+#### Test: tool-loop-exceeded-surfaces-error (covers R58, INV-4 + OQ-4 chat-tool-dispatch)
+
+**Given**: Streaming turn in progress; `loading=true`; streamingBlocks contains a few tool_use blocks.
+
+**When**: Inbound `{type:'core__chat__tool_loop_exceeded'}`.
+
+**Then**:
+- **streaming-cleared**: `streamingBlocks.length === 0`.
+- **loading-false**: `loading === false`.
+- **system-message-appended**: Last message has `role:'system'` and content contains "Tool loop exceeded 10 iterations".
+
+#### Test: elicitation-timeout-distinct-from-decline (covers R59)
+
+**Given**: Pending elicitation `e-3`.
+
+**When**: Inbound `{type:'core__chat__elicitation_timeout', id:'e-3'}`.
+
+**Then**:
+- **card-replaced-with-timeout-error**: Card at `e-3` now shows "Timed out — re-run the action".
+- **distinct-from-declined**: Card does NOT render "Cancelled" text (that's the user-decline path).
+
 ---
 
 ## Non-Goals
@@ -757,12 +870,25 @@ type JobStateContextValue = {
 
 ## Open Questions
 
-- **OQ-1 — WS drops mid-tool-elicitation**: If the socket drops while an elicitation card is pending, the reconnect establishes a new socket but the backend's elicitation future is still blocked on the *old* socket. Does the backend re-send the elicitation on the new socket? Is the card preserved client-side? Today the card lives in `streamingBlocks` — which survives a reconnect since `ChatPanel` itself doesn't unmount — BUT clicking Confirm sends on the NEW socket, whose backend session has no record of the in-flight elicitation. Likely result: user clicks Confirm, nothing happens, tool eventually times out at 300s. Needs backend-side resync OR a client-side "re-identify session" handshake.
-- **OQ-2 — Send before WS connected**: The Send button is disabled while `!connected`, but `wsRef.current?.send(...)` uses `if readyState === OPEN`. Programmatic sends outside the button (e.g., if a future feature triggers sends from elsewhere) silently drop. Is silent drop the intended behavior, or should `send()` queue and flush on reconnect?
-- **OQ-3 — Clear chat during streaming**: There is no UI to clear chat today. If one is added, does it need to cancel the in-flight stream server-side? Today `complete` / `error` are the only natural terminators; a hard clear would leave the backend happily streaming into nothing.
-- **OQ-4 — Assistant message with zero content blocks**: The `MessageContent` renderer would emit an empty `space-y-2` div. Is that acceptable, or should such messages be filtered out at `message` time?
-- **OQ-5 — `job_completed` for unknown entityKey**: The `job_started` branch auto-registers unknown jobs; `job_completed` / `job_failed` / `job_progress` do NOT. Is this intentional (completed-but-never-started is a backend bug) or should it also auto-register? Today such messages are silently ignored.
-- **OQ-6 — Concurrent ChatPanel instances for the same project**: Two panels would each open their own WS and each call `fetchChatHistory`. On the backend side, which session wins for elicitation responses? Currently panels are rendered inside `EditorPanelLayout` which instantiates at most one ChatPanel per project, but no code-level invariant enforces that.
+*(all resolved — see `### Resolved` below)*
+
+### Resolved
+
+- **OQ-1 (row 45) — WS drops mid-tool-elicitation**: Resolved as **fix** — client tracks pending elicitation ids; on reconnect, sends `core__chat__session_resume_check` with pending ids. Backend responds known/unknown. Unknown ids → client converts card to "Connection lost — re-run the action" error. R54 added; tests `reconnect-resume-known-elicitation`, `reconnect-unknown-elicitation-becomes-error`.
+- **OQ-2 (row 46) — Send before WS connected**: Resolved as **codify** — button is disabled when disconnected; programmatic sends outside the button silently drop. Contract: "chat sends require an open WS; no queuing." R55 added; test `send-before-connect-silently-drops`.
+- **OQ-3 (row 47) — Clear chat during streaming**: Resolved as **out of scope** — no clear-chat feature planned. Interrupt path already handles cancel. Behavior Table row 47 marked (removed).
+- **OQ-4 (row 48) — Assistant message with zero content blocks**: Resolved as **codify** — renderer emits empty `space-y-2` div. Acceptable. R56 added; test `empty-content-blocks-renders-empty-div`.
+- **OQ-5 (row 49) — `job_completed` for unknown entityKey**: Resolved as **codify silent-ignore** — only `core__job__started` auto-registers. Unknown-entity `progress`/`completed`/`failed` events silently ignored as backend noise. R57 added; test `job-completed-unknown-entitykey-ignored`.
+- **OQ-6 (row 50) — Concurrent ChatPanel instances**: Resolved via **INV-6 singleton panels** — ChatPanel is `singleton: true`; cannot have two instances by construction. R60 added; test `chatpanel-singleton-move-not-duplicate`.
+
+### INV-4 consolidation (unified WebSocket)
+
+All chat events on the wire use the `core__chat__<event>` namespace; all job events use `core__job__<event>`. The legacy `/ws/chat/:project` and `/ws/jobs` sockets are removed; both multiplex over `/ws`. See R14, R53, and the ServerMessage / JobMessage interface definitions.
+
+New core-chat event shapes introduced by related spec decisions:
+- `core__chat__tool_loop_exceeded` — emitted when the 10-iteration tool loop cap trips (see R58; chat-tool-dispatch OQ-4).
+- `core__chat__elicitation_timeout` — emitted when the 300s elicitation future times out without a client response (see R59; chat-tool-dispatch OQ-1).
+- `core__chat__session_resume_ack` — backend response to client's reconnect-time `core__chat__session_resume_check`.
 
 ---
 

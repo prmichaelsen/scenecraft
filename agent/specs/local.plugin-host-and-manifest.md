@@ -77,6 +77,12 @@ Define the observable behavior of the scenecraft plugin host (Python backend + T
 28. **R28**: The plugin host MUST be process-singleton state (class-level dicts in Python; module-level singleton `PluginHost` instance in TypeScript).
 29. **R29**: The system MUST be single-threaded / synchronous at registration time (no mutex or lock is taken around registry mutations); concurrent registration is not supported.
 30. **R30**: `register_declared` MUST be a no-op when `context.manifest is None` (imperative-only plugin).
+31. **R31 (atomic activation)**: `register_declared` MUST be atomic: if any contribution fails to register, every previously-registered contribution in that call MUST be disposed LIFO, and a `PluginActivationError` MUST be raised naming the failed contribution. Partial-activation state MUST NOT be possible.
+32. **R32 (empty handler ref)**: `resolve_handler(plugin_module, ref)` MUST raise `PluginManifestError("handler ref must not be empty")` when `ref` is empty or whitespace.
+33. **R33 (activationEvents reserved)**: `parse_manifest` MUST reject any `activationEvents` entry other than `onStartup` with `PluginManifestError("activationEvents other than onStartup are reserved for future use")`.
+34. **R34 (contextMenus wired)**: `register_declared` MUST wire each `contextMenus` entry by calling the frontend `PluginHost.registerContextMenu` for each entry, matching the operations / mcpTools / restEndpoints pattern. Disposables MUST be appended to `context.subscriptions`.
+35. **R35 (singleton panel flag)**: Panel manifest entries MUST accept a `singleton: boolean` field (default `false`). `PluginHost.registerPanel` MUST honor the flag: adding a `singleton: true` panel to a new location moves the existing instance rather than spawning a duplicate. Core panels Timeline, Preview, ChatPanel, and DMX-connect are `singleton: true`.
+36. **R36 (concurrent register — single-threaded contract)**: Per INV-1, concurrent `PluginHost.register` calls from the same user/project are explicitly undefined. The host takes no internal lock across API calls. Contract: single-threaded registration only.
 
 ---
 
@@ -293,16 +299,21 @@ export const PluginHost: PluginHostImpl // module singleton
 | 40 | Plugin declares REST endpoint with named group in suffix | Group captured; passed to handler via `path_groups` at dispatch | `rest-endpoint-with-named-group-param` |
 | 41 | Plugin uses bare dotted handler ref that hits a module attribute raising on access | Wrapped in `PluginManifestError`; contribution skipped; other contributions continue | `handler-getattr-raises-wrapped-as-manifest-error` |
 | 42 | Manifest file exists but YAML is empty (`None`) | `parse_manifest({})` path: raises `PluginManifestError` on missing `name` | `empty-yaml-file-missing-required` |
-| 43 | `register_declared` registers contributions from a module that has no manifest loaded, but context.manifest was set externally | Uses that manifest; behaves as normal | `undefined` |
+| 43 | `register_declared` registers contributions from a module that has no manifest loaded, but context.manifest was set externally | Uses that manifest; behaves as normal | `register-declared-uses-externally-set-manifest` |
 | 44 | Two plugins independently register the same REST path regex under different methods | Both registered; dispatch routes by method | `same-path-different-method-coexist` |
 | 45 | Two plugins register the same REST path regex under the SAME method | Second overwrites first (dict `[key] = value`); no dup check | `same-path-same-method-second-wins` |
-| 46 | Plugin's `activate` raises before pushing subscriptions | Exception propagates from `register`; plugin NOT stored in `_contexts`; manifest still cached | `undefined` |
-| 47 | Concurrent `register` calls for two different plugins | `undefined` (no locking; last-writer-wins on class dicts) | → [OQ-1](#open-questions) |
-| 48 | Plugin deactivated while a REST dispatch is in flight for one of its routes | `undefined` (no coordination; handler may run after disposal) | → [OQ-2](#open-questions) |
-| 49 | Manifest carries `activationEvents: [onStartup]` | Parsed and stored; host does NOT currently act on activation events | `activation-events-parsed-not-enforced` |
+| 46 | Plugin's `activate` raises before pushing subscriptions | Exception propagates from `register`; plugin NOT stored in `_contexts`; manifest still cached | `activate-raises-before-subscriptions-propagates` |
+| 47 | Concurrent `register` calls for two different plugins | Accepted-undefined per INV-1: no lock; caller must be single-threaded | `no-internal-lock-on-register` (covers R36, INV-1) |
+| 48 | Plugin deactivated while a REST dispatch is in flight for one of its routes | Accepted-undefined per INV-1: no coordination; caller responsibility | `no-internal-lock-on-register` (covers R36, INV-1) |
+| 49 | Manifest carries `activationEvents: [onStartup]` | Parsed and stored; accepted; non-onStartup rejected at parse | `activation-events-parsed-not-enforced`, `non-onStartup-activation-event-rejected` |
 | 50 | Plugin declares operation with `panel: "frontend:..."` | `panel_ref` stored as string on `OperationManifest`; NOT resolved on backend | `operation-panel-ref-stored-not-resolved` |
-| 51 | `resolve_handler` on ref with empty string | `undefined` (walks empty parts list → returns module itself, which is callable-check then fails as non-callable) | → [OQ-3](#open-questions) |
+| 51 | `resolve_handler` on ref with empty string | Raises `PluginManifestError("handler ref must not be empty")` | `empty-handler-ref-rejects-with-clear-error` (covers R32, OQ-3) |
 | 52 | `register_declared` encounters an unknown plugin.yaml contribution key (e.g. `contributes.widgets`) | Silently ignored (only known keys are read) | `unknown-contributes-key-ignored` |
+| 53 | `register_declared` partially succeeds then one contribution fails | All previously-registered contributions disposed LIFO; `PluginActivationError` raised naming the failure | `atomic-activation-disposes-partial-state` (covers R31, OQ-4) |
+| 54 | Plugin manifest declares `contextMenus` | Each entry wired via frontend `PluginHost.registerContextMenu`; disposables added to `context.subscriptions` | `context-menus-registered-via-declared` (covers R34, OQ-7) |
+| 55 | Plugin manifest declares `singleton: true` panel added to a second location | Existing instance MOVES to the new location; no duplicate | `singleton-panel-moves-not-duplicates` (covers R35, INV-6) |
+| 56 | Plugin manifest declares `singleton: false` panel (default) | Duplicate allowed; second registration spawns a new instance | `non-singleton-panel-duplicates` (covers R35, INV-6) |
+| 57 | Manifest declares `activationEvents: [onFoo]` | `PluginManifestError` at parse time | `non-onStartup-activation-event-rejected` (covers R33, OQ-6) |
 
 ---
 
@@ -776,6 +787,67 @@ Structurally identical to Python, with these differences:
 - **console-error-logged**: `console.error` is invoked with a message starting with `[plugin-host] activate(p) failed:` and the error.
 - **plugin-still-registered**: `registeredCount` increased by 1.
 
+#### Test: empty-handler-ref-rejects-with-clear-error (covers R32, OQ-3)
+
+**Given**: a handler ref that is the empty string or whitespace only.
+**When**: `resolve_handler(module, "")` or `resolve_handler(module, "   ")` is called.
+**Then**:
+- **raises-manifest-error**: `PluginManifestError` is raised.
+- **message-mentions-empty**: error message equals or contains `"handler ref must not be empty"`.
+
+#### Test: atomic-activation-disposes-partial-state (covers R31, OQ-4)
+
+**Given**: a manifest declaring three contributions A, B, C (in that order); A and B register successfully but C raises `AssertionError` (e.g. duplicate REST path).
+**When**: `register_declared(module, context)` runs.
+**Then**:
+- **raises-activation-error**: `PluginActivationError` is raised naming C.
+- **B-disposed-first**: B's `dispose()` was called before A's (LIFO).
+- **A-disposed**: A's `dispose()` was called.
+- **context-subscriptions-empty**: `context.subscriptions` is empty after the raise.
+- **registry-unchanged**: operation/mcp-tool/REST registries contain no entries from this plugin.
+
+#### Test: non-onStartup-activation-event-rejected (covers R33, OQ-6)
+
+**Given**: YAML `{name: "p", version: "1.0", activationEvents: ["onFoo"]}`.
+**When**: `parse_manifest(data)` runs.
+**Then**:
+- **raises-manifest-error**: `PluginManifestError` is raised.
+- **message-mentions-reserved**: message contains `"reserved for future use"`.
+
+#### Test: context-menus-registered-via-declared (covers R34, OQ-7)
+
+**Given**: a manifest with `contextMenus: [{entityType: "audio_clip", items: [{operation: "foo.bar", label: "Do X"}]}]` and operation `foo.bar` already declared.
+**When**: `register_declared(module, context)` runs.
+**Then**:
+- **frontend-registered**: frontend `PluginHost.registerContextMenu` was called once with the entry.
+- **disposable-appended**: `context.subscriptions` includes a Disposable for the context menu.
+- **getContextMenuItems-returns**: `PluginHost.getContextMenuItems("audio_clip")` includes the item.
+- **dispose-on-deactivate**: after `deactivate(name)`, `getContextMenuItems("audio_clip")` no longer includes the item.
+
+#### Test: singleton-panel-moves-not-duplicates (covers R35, INV-6)
+
+**Given**: panel contribution with `{id: "chat", singleton: true}` already mounted in location A.
+**When**: the same panel is added to location B (menu click, drag, or another `registerPanel` call).
+**Then**:
+- **one-instance**: exactly one panel instance exists across all locations.
+- **moved-to-B**: the panel now lives in location B.
+- **removed-from-A**: location A no longer contains the panel.
+
+#### Test: non-singleton-panel-duplicates (covers R35, INV-6)
+
+**Given**: panel contribution with `{id: "properties", singleton: false}` already mounted in location A.
+**When**: the panel is added to location B.
+**Then**:
+- **two-instances**: two independent panel instances coexist, one per location.
+
+#### Test: no-internal-lock-on-register (covers R36, INV-1)
+
+**Given**: source inspection of `PluginHost.register`, `deactivate`, `register_operation`, `register_mcp_tool`, `register_rest_endpoint`.
+**When**: static analysis of the implementations.
+**Then**:
+- **no-lock-acquired**: no `threading.Lock`, `asyncio.Lock`, or equivalent mutex is acquired across registration or dispatch.
+- **single-writer-contract**: this is the codified INV-1 contract — concurrent same-project callers are undefined.
+
 #### Test: reset-for-tests-deactivates-all (covers R27)
 
 **Given**: three plugins registered, each with subscriptions.
@@ -802,13 +874,21 @@ Structurally identical to Python, with these differences:
 
 ## Open Questions
 
-- **OQ-1**: What happens if two threads concurrently call `PluginHost.register(A)` and `PluginHost.register(B)`? The class-level dicts are not guarded by a lock; CPython's GIL provides dict-operation atomicity but not compound-operation atomicity. Is this intended to be a single-threaded API, and should it assert that?
-- **OQ-2**: If a plugin is deactivated while an inbound HTTP request is mid-dispatch to one of its REST routes, does the handler run to completion, get aborted, or see the already-cleared disposal state? Current code has no coordination.
-- **OQ-3**: `resolve_handler(module, "")` walks an empty parts list and then checks `callable(module)`. Since Python modules are not callable, this raises `PluginManifestError("resolved to non-callable: module")`. Is this intentional, or should empty refs be rejected with a clearer error?
-- **OQ-4**: The `register_declared` REST-endpoint error handler catches exceptions from `resolve_handler` only; exceptions raised inside `plugin_api.register_rest_endpoint` itself would propagate and abort the remaining contributions. Is that intended?
-- **OQ-5**: The example `generate_foley/plugin.yaml` uses a non-canonical schema shape (`contributes.rest_endpoints` with `path` + `method`, not `suffix`) and a comment declares it "documentation-only". Is that plugin's manifest actually loaded at runtime, or does the plugin register contributions purely imperatively from `activate()`? (This affects whether the example is a valid test input.)
-- **OQ-6**: `activationEvents` is parsed but never consulted. Should the host honor `onStartup` semantically, or is the field reserved for future use and currently a no-op?
-- **OQ-7**: `contextMenus` is part of the parsed manifest but `register_declared` does not wire it up to `PluginHost` (only operations, mcpTools, restEndpoints are registered). Who reads `manifest.context_menus` — and when?
+### Resolved
+
+**OQ-1 (resolved)**: What happens if two threads concurrently call `PluginHost.register(A)` and `PluginHost.register(B)`? The class-level dicts are not guarded by a lock. **Decision**: Accepted-undefined per INV-1 (single-writer per user/project). No internal lock is taken; caller is expected to be single-threaded. **Tests**: `no-internal-lock-on-register`.
+
+**OQ-2 (resolved)**: If a plugin is deactivated while an inbound HTTP request is mid-dispatch to one of its REST routes, does the handler run to completion? **Decision**: Accepted-undefined per INV-1. No coordination, no mutex. **Tests**: `no-internal-lock-on-register`.
+
+**OQ-3 (resolved)**: `resolve_handler(module, "")` walks an empty parts list. **Decision**: Fix — add a guard clause at top of `resolve_handler` that raises `PluginManifestError("handler ref must not be empty")` for empty or whitespace ref. **Tests**: `empty-handler-ref-rejects-with-clear-error`.
+
+**OQ-4 (resolved)**: The `register_declared` REST-endpoint error handler catches `resolve_handler` exceptions only. **Decision**: Fix — activation is atomic. Any contribution error during `register_declared` aborts activation, LIFO-disposes already-registered contributions, and logs a clear error naming the failed contribution. Partial state is impossible. **Tests**: `atomic-activation-disposes-partial-state`.
+
+**OQ-5 (resolved)**: The example `generate_foley/plugin.yaml` uses a non-canonical schema shape. **Decision**: Fix — `generate_foley/plugin.yaml` updated to canonical shape (`method` + `suffix` + `handler` backend-ref). Plugin switched to declarative `register_declared`. The spec body uses `transcribe` as the reference example of a correct manifest. **Tests**: covered by existing `register-declared-wires-rest-endpoints`.
+
+**OQ-6 (resolved)**: `activationEvents` is parsed but never consulted. **Decision**: Reserve + validate — field remains in schema as reserved for future lazy activation. Only `onStartup` accepted today; any other value raises `PluginManifestError` at parse. **Tests**: `non-onStartup-activation-event-rejected`.
+
+**OQ-7 (resolved)**: `contextMenus` is part of the parsed manifest but `register_declared` does not wire it up. **Decision**: Fix — `register_declared` wires `contextMenus` by calling the frontend `PluginHost.registerContextMenu` for each entry. Matches operations/mcpTools/restEndpoints pattern. **Tests**: `context-menus-registered-via-declared`.
 
 ---
 

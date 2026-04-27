@@ -124,6 +124,7 @@ type PanelContribution = {
   id: string
   title: string
   Component: React.ComponentType<unknown>
+  singleton?: boolean  // default false; see R49
 }
 
 PluginHost.registerPanel(panel: PanelContribution, ctx?: PluginContext): Disposable
@@ -140,7 +141,7 @@ PluginHost.listPanels(): PanelContribution[]
 - `MIN_PX = 100`
 - Split drop edge zone: `25%` from each side of the content area.
 - Autosave debounce: `500 ms`.
-- Autosave key: `_autosave_v3`.
+- Autosave key: `_autosave_v3:<windowId>` (per-window, per INV-5 / R54).
 
 ### Drag data
 
@@ -221,6 +222,32 @@ PluginHost.listPanels(): PanelContribution[]
 ### Reset
 - **R48** `EditorPanelLayoutHandle.resetLayout()` sets the initial layout to a fresh `defaultLayout` object, forces the inner `<PanelLayout>` to remount (via the `JSON.stringify(initialLayout)` key), and immediately persists `defaultLayout` to `_autosave_v3`.
 
+### Singleton panels (INV-6)
+- **R49** The plugin panel manifest gains a `singleton: boolean` field (defaults to `false`). `PanelContribution` shape is extended:
+  ```ts
+  type PanelContribution = {
+    id: string
+    title: string
+    Component: React.ComponentType<unknown>
+    singleton?: boolean  // default false
+  }
+  ```
+- **R50** Core built-in panels marked `singleton: true`: `Timeline`, `Preview` (program monitor), `ChatPanel`, `DMXConnect`. Default (multi-instance): `Properties`, `Bin`, `Source Monitor`, `Log`.
+- **R51** When a `singleton: true` panel is added from the ⋮ "Add Panel" menu or dropped in a new location, PanelLayout **moves** the existing instance (removes it from its current group, inserts it at the target) rather than spawning a second instance. Cross-window moves are brokered via the unified WS (INV-4).
+- **R52** The ⋮ "Add Panel" menu disables the entry for any singleton panel that already exists in the current window.
+- **R53** Registering a non-manifested panel defaults `singleton` to `false`; existing plugins that do not declare the field behave identically to today.
+
+### Multi-window workspaces (INV-5)
+- **R54** Panel layouts are persisted **per window**. The autosave key becomes `_autosave_v3:<windowId>` where `<windowId>` is a stable per-window identifier (e.g., `sessionStorage`-backed uuid). A window opened fresh seeds with `defaultLayout` persisted under its own key.
+- **R55** Multiple browser windows / tabs of the same project are coexisting peers. All DB-backed state stays synchronized across windows via the unified WS (INV-4); edits in window A reflect in window B without manual refresh.
+- **R56** **Exclusive browser resources** are owned by exactly one window at a time:
+  - WebSerial / DMX handle
+  - WebAudio playback graph / active `HTMLAudioElement`
+  - Chat WS session (singleton `ChatPanel`)
+- **R57** Take-over modals transfer ownership: clicking the action in a non-owning window prompts "Take over DMX / playback / chat control from window X?" On confirm, the owning window releases its handle gracefully and the requesting window acquires it.
+- **R58** Closing the owning window transparently releases exclusive resources; the next interaction in any remaining window claims them (no explicit hand-off required).
+- **R59** The detailed coordination mechanism (BroadcastChannel, shared worker, `navigator.locks`, playhead sync precision) is tracked in a follow-up design doc `agent/design/local.multi-window-workspaces.md` — not blocking for spec close.
+
 ---
 
 ## Behavior Table
@@ -258,16 +285,22 @@ PluginHost.listPanels(): PanelContribution[]
 | 29 | activatePanel called for an unknown panel id | No-op | `activate-unknown-panel-noop` |
 | 30 | activatePanel called when owning group + ancestors collapsed | All collapsed ancestors expand (savedRatios restored); tab activates | `activate-expands-collapsed-ancestors` |
 | 31 | Drag tab into a single-tab group and drop on its own edge | Split is refused (would leave empty source) | `self-split-refused-when-single-tab` |
-| 32 | localStorage / server returns corrupted JSON for saved layout | `undefined` | → [OQ-1](#open-questions) |
+| 32 | localStorage / server returns corrupted JSON for saved layout | Codified: `validateLayout` returns `null` for any malformed structure; fallback-to-default path fires and persists default back | `corrupted-saved-json-falls-back-to-default` |
 | 33 | Saved layout references an unknown panel id that is ALSO the only tab in its group | Group pruned per R23; if entire tree prunes to null, layout falls back to default | `validate-prunes-to-default-when-empty` |
-| 34 | Sash drag where total container size computes to zero | `undefined` | → [OQ-2](#open-questions) |
-| 35 | User drops a tab into a new group while collapse/expand animation is in flight | `undefined` | → [OQ-3](#open-questions) |
+| 34 | Sash drag where total container size computes to zero | Codified: `totalSize===0` bail is the correct no-op (no code path produces a non-collapsed zero-width pane) | `sash-drag-zero-size-bails`, `no-zero-width-noncollapsed-pane` |
+| 35 | User drops a tab into a new group while collapse/expand animation is in flight | Codified: transitions are CSS-instant today; scenario not reachable. Revisit if animated transitions added | `no-animated-transitions-in-layout` |
 | 36 | Plugin deactivated while its panel is mounted | Next render shows "Plugin panel X not registered."; no crash | `deactivated-plugin-panel-shows-fallback` |
 | 37 | Two plugins attempt to register the same panel id | Second `registerPanel` throws; first remains active | `second-registration-throws-first-wins` |
 | 38 | Collapse on a root-only group (no ancestor split) | Group marks collapsed; no ratio math performed | `collapse-root-group-no-ratio-change` |
 | 39 | Deep nesting (>3 levels) collapse | Ratios propagate up same-axis ancestors only, skipping cross-axis parents | `collapse-propagates-through-same-axis-only` |
 | 40 | Tab drag onto itself (same group, same position) | No structural change | `self-drop-is-noop` |
 | 41 | Plugin panel registry merge when plugin id collides with built-in | Built-in wins; plugin is NOT rendered under that id | `builtin-takes-precedence-over-plugin` |
+| 42 | Second browser window of same project opens | Each window persists layout under its own `_autosave_v3:<windowId>` key; layouts do not share | `multi-window-layouts-per-window` |
+| 43 | User adds a singleton panel (e.g. Chat) in window B while it exists in window A | Panel moves from A to B (A's layout removes it; B gains it); cross-window peer sync via unified WS | `singleton-panel-move-across-windows` |
+| 44 | User adds a singleton panel via menu in the same window where it already exists | Menu entry disabled (already present, per R17); no duplicate spawn | `singleton-panel-menu-disabled-when-present` |
+| 45 | Non-singleton panel (e.g. Properties) added a second time in same window | Duplicate instance is created (default `singleton: false` behavior) | `non-singleton-panel-duplicates-freely` |
+| 46 | DMX-connect panel (singleton + exclusive resource) active in window A; user clicks "Connect" in window B | Take-over modal in window B; on confirm, A releases WebSerial handle; B acquires it | `exclusive-resource-take-over-dmx` |
+| 47 | Closing the window that owns an exclusive resource | Release is transparent; next interaction in any remaining window claims the resource | `exclusive-resource-released-on-window-close` |
 
 ---
 
@@ -636,6 +669,75 @@ PluginHost.listPanels(): PanelContribution[]
 - **builtin-kept**: `registry.chat` is the built-in `ChatPanelComponent`
 - **plugin-shadowed**: Plugin's Component is NOT reachable via the registry
 
+#### Test: corrupted-saved-json-falls-back-to-default (covers R27, R30, OQ-1)
+**Given**: `data.savedLayout` is a non-object (string, number, null after failed JSON.parse upstream, or an object with `type: 'bogus'`)
+**When**: `EditorPanelLayout` mounts
+**Then**:
+- **validator-returns-null**: `validateLayout` returns `null`
+- **fallback-to-default**: Editor renders `defaultLayout`
+- **default-persisted**: `saveWorkspaceView(..., defaultLayout)` called
+
+#### Test: sash-drag-zero-size-bails (covers R9, OQ-2)
+**Given**: A split container whose `containerRef` measures 0 px (e.g., hidden display)
+**When**: `ResizeSash` fires `mousemove`
+**Then**:
+- **no-ratio-change**: The split's ratio is unchanged
+- **no-exception**: No divide-by-zero / NaN ratios introduced
+
+#### Test: no-zero-width-noncollapsed-pane (covers R9, OQ-2)
+**Given**: The panel-layout source
+**When**: inspected for code paths that could produce a 0-px non-collapsed pane
+**Then**:
+- **collapse-only-path**: only the collapse flow produces the 34-px-strip size; all other paths clamp via MIN_RATIO / MIN_PX
+
+#### Test: no-animated-transitions-in-layout (covers OQ-3)
+**Given**: Panel-layout CSS / styles
+**When**: inspected
+**Then**:
+- **no-transition-css**: no `transition`/`animation` rules on ratio-driven sizing; collapse/expand are synchronous
+
+#### Test: multi-window-layouts-per-window (covers R54)
+**Given**: Two windows (`windowId=w1`, `w2`) of the same project
+**When**: User mutates layout in `w1`
+**Then**:
+- **w1-key-updated**: `_autosave_v3:w1` payload matches the `w1` tree
+- **w2-key-untouched**: `_autosave_v3:w2` is unchanged
+
+#### Test: singleton-panel-move-across-windows (covers R49, R51, INV-6)
+**Given**: ChatPanel (singleton) mounted in window A; user opens window B and adds ChatPanel via menu
+**When**: The add action completes
+**Then**:
+- **a-removes-chat**: window A's layout no longer contains `chat`
+- **b-gains-chat**: window B's layout now contains `chat`
+- **no-duplicate**: no window has two ChatPanel instances
+
+#### Test: singleton-panel-menu-disabled-when-present (covers R52)
+**Given**: A singleton panel already present in the current window
+**When**: User opens the ⋮ "Add Panel" menu
+**Then**:
+- **entry-disabled**: The entry for that panel id is disabled (not clickable)
+
+#### Test: non-singleton-panel-duplicates-freely (covers R53)
+**Given**: The `properties` panel (non-singleton) already present
+**When**: User adds `properties` again via menu or drag
+**Then**:
+- **two-instances**: The layout now contains two `properties` tab entries
+
+#### Test: exclusive-resource-take-over-dmx (covers R56, R57)
+**Given**: Window A owns the DMX WebSerial handle. User clicks "Connect" in window B's DMX panel.
+**When**: Take-over modal confirmed.
+**Then**:
+- **modal-shown**: A take-over modal appeared in window B
+- **a-releases-handle**: Window A's WebSerial port is closed
+- **b-acquires-handle**: Window B now owns the port; transmit works from B
+
+#### Test: exclusive-resource-released-on-window-close (covers R58)
+**Given**: Window A owns DMX; window B is open but not claiming.
+**When**: Window A is closed.
+**Then**:
+- **handle-released**: The DMX serial port is freed (no orphaned lock)
+- **b-can-claim**: Window B's next Connect click succeeds without a take-over modal
+
 ### Concurrency / single-threaded note
 
 The panel-layout system runs entirely on the React render loop / main-thread JS. There are **no mutexes, no worker coordination, no pub/sub event queues**. The only async surface is the 500 ms debounced save (a single `setTimeout`) and the `Promise`-returning `saveWorkspaceView` call — neither affects tree state. The `activatePanel` imperative call reads layout via a ref (`layoutRef`) specifically to avoid a stale-closure race between React state updates and imperative reads; that is the only synchronization primitive in the module.
@@ -659,9 +761,13 @@ The panel-layout system runs entirely on the React render loop / main-thread JS.
 
 ## Open Questions
 
-- **OQ-1** (Behavior row 32): What should happen if the loaded `data.savedLayout` is syntactically malformed (e.g., corrupted JSON round-trip from server returns a string or throws during deserialization upstream)? Current code assumes it was already deserialized into an object before reaching `validateLayout`; if upstream deserialization fails or yields a non-object, `validateLayout` returns `null` and the fallback-to-default path fires — but there is no spec guarantee of logging, user notification, or retry semantics. Needs product decision.
-- **OQ-2** (Behavior row 34): When a sash `mousemove` fires after the container has been removed or shrunk to zero width (e.g., a parallel collapse that zeroed out the pane), `handleDrag` reads `totalSize === 0` and bails. But the spec does not define what "zero-width pane" looks like upstream — can the tree reach a state where a non-collapsed pane measures 0 px? Current code never intentionally produces such a state; confirmation needed.
-- **OQ-3** (Behavior row 35): What happens if the user initiates a new group drop WHILE a collapse transition is in flight (if transitions are added)? Today transitions are CSS-instant, so the scenario is not reachable. If animated transitions are introduced later, the behavior becomes undefined and must be specified.
+### Resolved
+
+**OQ-1 (resolved)**: Corrupted saved JSON. **Decision**: codify current validate-or-reset path — malformed input makes `validateLayout` return `null`; default is persisted back. No spec-level requirement for logging / user notification. **Tests**: `corrupted-saved-json-falls-back-to-default`.
+
+**OQ-2 (resolved)**: Sash drag with zero total container size. **Decision**: codify the current `totalSize===0` bail as correct; add a negative-assertion test that no code path produces a non-collapsed zero-width pane. **Tests**: `sash-drag-zero-size-bails`, `no-zero-width-noncollapsed-pane`.
+
+**OQ-3 (resolved)**: Drop during animation. **Decision**: codify — transitions are CSS-instant today; scenario not reachable. Revisit if animated transitions added. **Tests**: `no-animated-transitions-in-layout`.
 
 ---
 

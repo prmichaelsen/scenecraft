@@ -30,11 +30,11 @@ Define the observable contract of the backend `JobManager` singleton and the def
 **In scope**:
 - `JobManager` public methods: `create_job`, `update_progress`, `complete_job`, `fail_job`, `get_job`, `register_connection`, `unregister_connection`, `set_loop`
 - `Job` record shape (`id`, `type`, `status`, `completed`, `total`, `result`, `error`, `meta`)
-- Outbound broadcast events: `job_started`, `job_progress`, `job_completed`, `job_failed`, `folder_import` (non-job fanout, same bus)
-- Inbound client messages on the default handler: `ping` → `pong`, `get_job` → `job_status` (or `error`)
+- Outbound broadcast events: `core__job__started`, `core__job__progress`, `core__job__completed`, `core__job__failed`, `folder_import` (non-job fanout, same bus)
+- Inbound client messages on the default handler: `core__ping` → `core__pong`, `core__job__get` → `core__job__status` (or `error`)
 - Connection lifecycle for the default (non-chat, non-preview) path at `/` (legacy) and `/ws/jobs` (paths not in `/ws/chat/` or `/ws/preview-stream/` fall through to this handler)
 - Disconnect-survival invariant: jobs are server-side state; WS close does not cancel work
-- Frontend `JobStateContext` dedup-by-`entityKey`, auto-expire (30 s on complete / 10 s on fail), polling fallback via `{type:"get_job", jobId}` on reconnect
+- Frontend `JobStateContext` dedup-by-`entityKey`, auto-expire (30 s on complete / 10 s on fail), polling fallback via `{type:"core__job__get", jobId}` on reconnect
 - Reconnect / re-query-active-jobs flow in `useScenecraftSocket`
 
 **Out of scope**:
@@ -48,26 +48,38 @@ Define the observable contract of the backend `JobManager` singleton and the def
 
 ## Requirements
 
-1. **R1 — Create job**. `JobManager.create_job(job_type, total=0, meta=None)` MUST return a string id of the form `job_<8-hex-chars>` (prefix `job_` + `uuid4().hex[:8]`), insert a `Job` into the registry with `status="running"`, `completed=0`, and broadcast `{type:"job_started", jobId, jobType, total, meta}` to every registered connection.
-2. **R2 — Progress**. `update_progress(job_id, completed, detail="")` MUST update the stored `completed` count and broadcast `{type:"job_progress", jobId, completed, total, detail}`. If `job_id` is unknown, the call MUST be a no-op (no raise, no broadcast).
-3. **R3 — Complete**. `complete_job(job_id, result=None)` MUST set `status="completed"` and `result=result`, and broadcast `{type:"job_completed", jobId, result}`. If `job_id` is unknown, no-op.
-4. **R4 — Fail**. `fail_job(job_id, error)` MUST set `status="failed"` and `error=error`, and broadcast `{type:"job_failed", jobId, error}`. If `job_id` is unknown, no-op.
+1. **R1 — Create job**. `JobManager.create_job(job_type, total=0, meta=None)` MUST return a string id of the form `job_<8-hex-chars>` (prefix `job_` + `uuid4().hex[:8]`), insert a `Job` into the registry with `status="running"`, `completed=0`, and broadcast `{type:"core__job__started", jobId, jobType, total, meta}` to every registered connection.
+2. **R2 — Progress**. `update_progress(job_id, completed, detail="")` MUST update the stored `completed` count and broadcast `{type:"core__job__progress", jobId, completed, total, detail}`. If `job_id` is unknown, the call MUST be a no-op (no raise, no broadcast).
+3. **R3 — Complete**. `complete_job(job_id, result=None)` MUST set `status="completed"` and `result=result`, and broadcast `{type:"core__job__completed", jobId, result}`. If `job_id` is unknown, no-op.
+4. **R4 — Fail**. `fail_job(job_id, error)` MUST set `status="failed"` and `error=error`, and broadcast `{type:"core__job__failed", jobId, error}`. If `job_id` is unknown, no-op.
 5. **R5 — Get**. `get_job(job_id)` MUST return the `Job` dataclass for a known id or `None`.
 6. **R6 — Thread safety**. All mutations of the job map MUST be protected by a single process-wide lock; readers outside of `get_job`/updates observe either the pre- or post-update state (no torn reads of individual fields).
 7. **R7 — Connection registry**. `register_connection(ws)` and `unregister_connection(ws)` MUST add/remove a WebSocket from the broadcast set. The set MUST be tolerant of entries that have already closed (broadcasts to closed sockets MUST NOT crash the manager).
 8. **R8 — Broadcast is cross-thread**. Generation work runs in worker threads (`threading.Thread` in `chat_generation.py`); `_broadcast` MUST schedule the `ws.send` coroutine onto the asyncio event loop previously stored via `set_loop(...)`. If no loop has been set OR no connections are registered, `_broadcast` MUST silently no-op.
-9. **R9 — Default handler: ping**. On receiving `{"type":"ping"}` on the default handler, the server MUST reply with `{"type":"pong"}` on the same socket.
-10. **R10 — Default handler: get_job**. On receiving `{"type":"get_job","jobId":"<id>"}`, the server MUST reply with `{"type":"job_status", "jobId", "status", "completed", "total", "result", "error"}` if the job exists, else `{"type":"error","message":"Job <id> not found"}`.
-11. **R11 — Invalid JSON**. On inbound non-JSON frames, the server MUST reply `{"type":"error","message":"Invalid JSON"}` and keep the connection open.
+9. **R9 — Default handler: ping**. On receiving `{"type":"core__ping"}` on the default handler, the server MUST reply with `{"type":"core__pong"}` on the same socket.
+10. **R10 — Default handler: get_job**. On receiving `{"type":"core__job__get","jobId":"<id>"}`, the server MUST reply with `{"type":"core__job__status", "jobId", "status", "completed", "total", "result", "error"}` if the job exists, else `{"type":"core__error","message":"Job <id> not found"}`.
+11. **R11 — Invalid JSON**. On inbound non-JSON frames, the server MUST reply `{"type":"core__error","message":"Invalid JSON"}` and keep the connection open.
 12. **R12 — Disconnect survival**. When a client WS closes, the backend MUST NOT cancel or pause any in-flight job. The worker thread continues; subsequent `update_progress` / `complete_job` / `fail_job` calls continue to mutate the registry and attempt to broadcast to the remaining connections.
-13. **R13 — Path routing**. The WS server MUST route paths starting with `/ws/chat/` to the chat handler and paths starting with `/ws/preview-stream/` to the preview handler; all other paths (including `/`, `/ws/jobs`, unknown paths) fall through to the default job handler.
+13. **R13 — Path routing (INV-4 consolidation)**. Per INV-4, all backend→frontend traffic multiplexes over the unified `/ws` socket. The `/ws/preview-stream/*` path remains separate (binary streaming transport). Legacy paths `/ws/chat/{project}` and `/ws/jobs` are deprecated and MUST consolidate to `/ws`. Clients are expected to dispatch events by splitting on first `__` (top-level = `core` or `<plugin_id>`; second segment for core selects subsystem: `chat`, `job`, `entity`, etc.).
 14. **R14 — Frontend dedup by entityKey**. `JobStateContext.startJob(entityKey, jobId)` MUST overwrite any prior entry keyed by the same `entityKey`, clearing any pending auto-expire timer for that key.
-15. **R15 — Frontend auto-expire**. On `job_completed` the entry MUST be removed from the store 30 s later; on `job_failed`, 10 s later. A subsequent `startJob` for the same `entityKey` before expiry MUST cancel the pending timer.
-16. **R16 — Frontend reconnect**. On WS close the client MUST attempt to reconnect with exponential backoff (start 2 s, cap 30 s). On successful reconnect, the client MUST re-send `{type:"get_job", jobId}` for every `jobId` that has active listeners.
-17. **R17 — Frontend polling fallback**. `job_status` server replies MUST be translated by the client into synthetic `job_completed` / `job_failed` messages for status values `"completed"` / `"failed"`. Running-status replies are passed through to listeners as-is.
-18. **R18 — Frontend "server restarted" detection**. If the server responds to `get_job` with an `error` message matching `/^Job (job_\w+) not found$/`, the client MUST synthesize a `job_failed` event for that `jobId` with `error="Job lost (server restarted)"`.
-19. **R19 — Frontend auto-register unknown jobs**. When `job_started` arrives for a `jobId` that is not in the `jobIdToEntity` map, the client MUST derive `entityKey` from `meta.keyframeId ?? meta.transitionId ?? jobId` and register it as if `startJob` had been called.
-20. **R20 — Ping keepalive**. The client MUST send `{"type":"ping"}` every 30 s while the socket is OPEN.
+15. **R15 — Frontend auto-expire**. On `core__job__completed` the entry MUST be removed from the store 30 s later; on `core__job__failed`, 10 s later. A subsequent `startJob` for the same `entityKey` before expiry MUST cancel the pending timer.
+16. **R16 — Frontend reconnect**. On WS close the client MUST attempt to reconnect with exponential backoff (start 2 s, cap 30 s). On successful reconnect, the client MUST re-send `{type:"core__job__get", jobId}` for every `jobId` that has active listeners.
+17. **R17 — Frontend polling fallback**. `core__job__status` server replies MUST be translated by the client into synthetic `core__job__completed` / `core__job__failed` messages for status values `"completed"` / `"failed"`. Running-status replies are passed through to listeners as-is.
+18. **R18 — Frontend "server restarted" detection**. If the server responds to `core__job__get` with an `error` message matching `/^Job (job_\w+) not found$/`, the client MUST synthesize a `core__job__failed` event for that `jobId` with `error="Job lost (server restarted)"`.
+19. **R19 — Frontend auto-register unknown jobs**. When `core__job__started` arrives for a `jobId` that is not in the `jobIdToEntity` map, the client MUST derive `entityKey` from `meta.keyframeId ?? meta.transitionId ?? jobId` and register it as if `startJob` had been called.
+20. **R20 — Ping keepalive**. The client MUST send `{"type":"core__ping"}` every 30 s while the socket is OPEN.
+
+21. **R21 — LRU cap on _jobs**. Backend MUST cap `_jobs` at 1000 completed/failed records. Running jobs are never evicted. On eviction, backend emits `{type:"core__job__evicted", jobId}` so client can clean up UI state.
+
+22. **R22 — Full-UUID jobIds**. `create_job` MUST use `uuid4().hex` (32 chars) — NOT the first 8. Collision space is 2^128.
+
+23. **R23 — entityKey collision — client refuses overwrite**. Frontend `JobStateContext.startJob` MUST refuse to overwrite an existing entry when triggered by an auto-register from `core__job__started`. If two backend jobs claim the same `entityKey`, the second is logged as a warning; the first entry is not replaced. (Manual `startJob` by the caller still replaces per R14 — this rule only affects the auto-register path.)
+
+24. **R24 — No subscribe-after-complete replay**. Backend MUST NOT maintain a history/ring buffer of completed events for late subscribers. Clients that connect after a completion event miss it; they may reconcile via `core__job__get`.
+
+25. **R25 — Unified WS / auth-gated**. All job events flow over the unified `/ws` socket per INV-4. The legacy `/ws/jobs` path is folded into `/ws`. Auth is gated by the REST middleware; only authenticated connections receive events (resolves OQ-7).
+
+26. **R26 — Single-writer per (user, project) for update_progress**. Per INV-1, concurrent `update_progress` calls from the same user/project are accepted-undefined. No internal lock serialization of broadcasts beyond R6 state-mutation lock.
 
 ## Interfaces / Data Shapes
 
@@ -92,21 +104,22 @@ Note: `create_job` writes `status="running"` immediately; the `"pending"` value 
 
 | Event | Shape |
 |---|---|
-| `job_started`   | `{type, jobId, jobType, total, meta}` |
-| `job_progress`  | `{type, jobId, completed, total, detail}` |
-| `job_completed` | `{type, jobId, result}` |
-| `job_failed`    | `{type, jobId, error}` |
-| `job_status`    | `{type, jobId, status, completed, total, result, error}` (reply to `get_job`) |
-| `error`         | `{type, message}` |
-| `pong`          | `{type}` |
-| `folder_import` | `{type, project, imported:{keyframes:[], transitions:[]}, summary}` (non-job fanout, same bus) |
+| `core__job__started`   | `{type, jobId, jobType, total, meta}` |
+| `core__job__progress`  | `{type, jobId, completed, total, detail}` |
+| `core__job__completed` | `{type, jobId, result}` |
+| `core__job__failed`    | `{type, jobId, error}` |
+| `core__job__status`    | `{type, jobId, status, completed, total, result, error}` (reply to `core__job__get`) |
+| `core__error`         | `{type, message}` |
+| `core__pong`          | `{type}` |
+| `core__folder_import` | `{type, project, imported:{keyframes:[], transitions:[]}, summary}` (non-job fanout, same bus) |
+| `core__job__evicted`  | `{type, jobId}` (emitted when an LRU-evicted job is dropped from the backend registry per R21) |
 
 ### Inbound messages (client → server, default handler)
 
 | Message | Shape | Effect |
 |---|---|---|
-| `ping`     | `{type:"ping"}` | server replies `pong` |
-| `get_job`  | `{type:"get_job", jobId}` | server replies `job_status` or `error` |
+| `core__ping`     | `{type:"core__ping"}` | server replies `core__pong` |
+| `core__job__get`  | `{type:"core__job__get", jobId}` | server replies `core__job__status` or `core__error` |
 
 All other shapes on the default handler are ignored (no error). (Implementation falls through the `if/elif` chain silently.)
 
@@ -135,18 +148,18 @@ type JobEntry = {
 
 | # | Scenario | Expected Behavior | Tests |
 |---|----------|-------------------|-------|
-| 1 | `create_job` called from a worker thread | returns `job_<8hex>` id, stores job with status="running", broadcasts `job_started` to all connections | `create-job-emits-job-started`, `create-job-returns-prefixed-id` |
-| 2 | `update_progress` on known job | stored `completed` updated; `job_progress` broadcast | `update-progress-broadcasts` |
+| 1 | `create_job` called from a worker thread | returns `job_<8hex>` id, stores job with status="running", broadcasts `core__job__started` to all connections | `create-job-emits-job-started`, `create-job-returns-prefixed-id` |
+| 2 | `update_progress` on known job | stored `completed` updated; `core__job__progress` broadcast | `update-progress-broadcasts` |
 | 3 | `update_progress` on unknown job id | no-op (no raise, no broadcast) | `update-progress-unknown-job-noop` |
-| 4 | `complete_job` on known job | status="completed", result stored, `job_completed` broadcast | `complete-job-broadcasts` |
-| 5 | `fail_job` on known job | status="failed", error stored, `job_failed` broadcast | `fail-job-broadcasts` |
-| 6 | `get_job` on known id | returns Job dataclass | `get-job-returns-record` |
-| 7 | `get_job` on unknown id | returns `None` | `get-job-unknown-returns-none` |
+| 4 | `complete_job` on known job | status="completed", result stored, `core__job__completed` broadcast | `complete-job-broadcasts` |
+| 5 | `fail_job` on known job | status="failed", error stored, `core__job__failed` broadcast | `fail-job-broadcasts` |
+| 6 | `core__job__get` on known id | returns Job dataclass | `get-job-returns-record` |
+| 7 | `core__job__get` on unknown id | returns `None` | `get-job-unknown-returns-none` |
 | 8 | Client sends `ping` | server replies `pong` | `ping-pong-roundtrip` |
-| 9 | Client sends `get_job` for running job | server replies `job_status` with status="running" | `get-job-status-running` |
-| 10 | Client sends `get_job` for completed job | server replies `job_status` with status="completed" and result | `get-job-status-completed-replay` |
-| 11 | Client sends `get_job` for unknown id | server replies `{type:"error", message:"Job <id> not found"}` | `get-job-unknown-returns-error` |
-| 12 | Client sends non-JSON frame | server replies `{type:"error", message:"Invalid JSON"}`, keeps socket open | `invalid-json-error-reply` |
+| 9 | Client sends `core__job__get` for running job | server replies `core__job__status` with status="running" | `get-job-status-running` |
+| 10 | Client sends `core__job__get` for completed job | server replies `core__job__status` with status="completed" and result | `get-job-status-completed-replay` |
+| 11 | Client sends `core__job__get` for unknown id | server replies `{type:"core__error", message:"Job <id> not found"}` | `get-job-unknown-returns-error` |
+| 12 | Client sends non-JSON frame | server replies `{type:"core__error", message:"Invalid JSON"}`, keeps socket open | `invalid-json-error-reply` |
 | 13 | Client WS closes mid-job | worker thread continues; job still completes on server; still in registry | `job-survives-client-disconnect` |
 | 14 | Broadcast when no connections registered | `_broadcast` is a no-op, no exception | `broadcast-with-no-connections-noop` |
 | 15 | Broadcast when event loop not set | `_broadcast` is a no-op, no exception | `broadcast-without-loop-noop` |
@@ -155,25 +168,27 @@ type JobEntry = {
 | 18 | Path `/ws/preview-stream/my-project` | routed to preview handler | `preview-path-bypasses-job-handler` |
 | 19 | Path `/ws/jobs` or `/` or unknown path | routed to default job handler | `default-path-uses-job-handler` |
 | 20 | Frontend `startJob("kf_001", "job_a")` then `startJob("kf_001", "job_b")` | second call overwrites first; timer for "kf_001" cleared | `start-job-replaces-prior-entry` |
-| 21 | Frontend receives `job_completed` | entry flips to status="completed", progress=1, timer set for 30 s removal | `frontend-auto-expires-completed-30s` |
-| 22 | Frontend receives `job_failed` | entry flips to status="failed", timer set for 10 s removal | `frontend-auto-expires-failed-10s` |
-| 23 | Frontend receives event for unknown `jobId` that is NOT `job_started` | silently dropped | `frontend-ignores-unknown-job-events` |
-| 24 | Frontend receives `job_started` for unknown `jobId` with `meta.keyframeId` | auto-registers entityKey = meta.keyframeId | `frontend-auto-registers-by-keyframe-id` |
-| 25 | Frontend receives `job_started` for unknown `jobId` with `meta.transitionId` | auto-registers entityKey = meta.transitionId | `frontend-auto-registers-by-transition-id` |
-| 26 | Frontend receives `job_started` for unknown `jobId` with no meta fields | auto-registers entityKey = jobId itself | `frontend-auto-registers-by-job-id-fallback` |
-| 27 | WS disconnects, then reconnects | client re-sends `get_job` for every active listener jobId | `reconnect-requeries-active-jobs` |
-| 28 | Reconnect reply `job_status` with status="completed" | translated into synthetic `job_completed` for listeners | `job-status-completed-synthesized` |
-| 29 | Reconnect reply `job_status` with status="failed" | translated into synthetic `job_failed` with error=msg.error or "Unknown error" | `job-status-failed-synthesized` |
-| 30 | Reconnect reply `error` matching `Job job_xxx not found` | synthesized `job_failed` with error="Job lost (server restarted)" | `server-restart-detected-via-error` |
+| 21 | Frontend receives `core__job__completed` | entry flips to status="completed", progress=1, timer set for 30 s removal | `frontend-auto-expires-completed-30s` |
+| 22 | Frontend receives `core__job__failed` | entry flips to status="failed", timer set for 10 s removal | `frontend-auto-expires-failed-10s` |
+| 23 | Frontend receives event for unknown `jobId` that is NOT `core__job__started` | silently dropped | `frontend-ignores-unknown-job-events` |
+| 24 | Frontend receives `core__job__started` for unknown `jobId` with `meta.keyframeId` | auto-registers entityKey = meta.keyframeId | `frontend-auto-registers-by-keyframe-id` |
+| 25 | Frontend receives `core__job__started` for unknown `jobId` with `meta.transitionId` | auto-registers entityKey = meta.transitionId | `frontend-auto-registers-by-transition-id` |
+| 26 | Frontend receives `core__job__started` for unknown `jobId` with no meta fields | auto-registers entityKey = jobId itself | `frontend-auto-registers-by-job-id-fallback` |
+| 27 | WS disconnects, then reconnects | client re-sends `core__job__get` for every active listener jobId | `reconnect-requeries-active-jobs` |
+| 28 | Reconnect reply `core__job__status` with status="completed" | translated into synthetic `core__job__completed` for listeners | `job-status-completed-synthesized` |
+| 29 | Reconnect reply `core__job__status` with status="failed" | translated into synthetic `core__job__failed` with error=msg.error or "Unknown error" | `job-status-failed-synthesized` |
+| 30 | Reconnect reply `error` matching `Job job_xxx not found` | synthesized `core__job__failed` with error="Job lost (server restarted)" | `server-restart-detected-via-error` |
 | 31 | Ping keepalive | client sends `ping` every 30 s while socket OPEN | `frontend-sends-ping-every-30s` |
 | 32 | Reconnect backoff | delay starts 2 s, doubles, caps 30 s | `reconnect-backoff-exponential-capped` |
 | 33 | `consumeResult` called twice | first call returns the result, second returns `null` | `consume-result-is-one-shot` |
-| 34 | Server restarts between `create_job` and `complete_job` | **undefined** — jobs are in-memory only; workers in the prior process are terminated with the process; survivors in a new process do not exist | → [OQ-1](#open-questions) |
-| 35 | Two jobs created for the same logical entity (same entityKey) at backend | **undefined** — backend has no entityKey concept; frontend `startJob` dedups by entityKey but nothing prevents two backend jobs emitting events interleaved | → [OQ-2](#open-questions) |
-| 36 | Client subscribes AFTER a `job_completed` has already been broadcast | **undefined** — no automatic replay; client must call `get_job` explicitly via `reQueryActiveJobs` which only fires for jobIds it already knows about | → [OQ-3](#open-questions) |
-| 37 | Two threads call `update_progress(job_id, N)` concurrently with different N | **undefined** — the lock serializes the write so the registry is internally consistent, but the *order* of broadcast events is not guaranteed to match the order of `completed` values; the broadcast happens outside the lock | → [OQ-4](#open-questions) |
-| 38 | `create_job` generates a UUID prefix that already exists (birthday collision, ~2^-32) | **undefined** — no collision check; second `create_job` would overwrite the first Job record silently | → [OQ-5](#open-questions) |
-| 39 | Memory growth — jobs live forever in `_jobs` on the backend | **undefined** — no TTL / eviction; long-running server accumulates Job records indefinitely | → [OQ-6](#open-questions) |
+| 34 | Server restarts between `create_job` and `complete_job` | Client synthesizes `core__job__failed` via regex on backend's "Job not found" error per R18 | `server-restart-detected-via-error` (covers OQ-1) |
+| 35 | Two jobs created for the same logical entity (same entityKey) at backend | Client auto-register refuses to overwrite; logs a warning | `auto-register-refuses-overwrite` (covers R23, OQ-2) |
+| 36 | Client subscribes AFTER a `core__job__completed` has already been broadcast | No replay; client must reconcile via `core__job__get` for known ids | `no-subscribe-replay` (covers R24, OQ-3) |
+| 37 | Two threads call `update_progress(job_id, N)` concurrently with different N | Accepted-undefined per INV-1 (single-writer per user/project) | `no-progress-ordering-guarantee` (covers R26, INV-1) |
+| 38 | `create_job` generates two identical 32-bit prefixes (birthday ~2^-32) | Fixed: `create_job` uses full `uuid4().hex` (32 chars, 2^128 space) | `create-job-full-uuid` (covers R22, OQ-5) |
+| 39 | Memory growth — jobs live forever in `_jobs` on the backend | Fixed: LRU cap at 1000 completed/failed; running never evicted; `core__job__evicted` emitted on eviction | `lru-eviction-fires-evicted-event` (covers R21, OQ-6) |
+| 41 | `core__job__evicted` arrives at client | Client cleans up UI state for that jobId (same as synthetic failure path) | `frontend-cleans-up-on-evicted` (covers R21) |
+| 42 | Unauthenticated WS client attempts to subscribe | Connection rejected by REST middleware before reaching job handler | `unauthenticated-ws-rejected` (covers R25, OQ-7) |
 | 40 | Multiple browser tabs open simultaneously | every connected tab receives every broadcast; each tab's `JobStateContext` dedups locally | `multi-client-fanout` |
 
 ## Behavior (step-by-step)
@@ -182,22 +197,22 @@ type JobEntry = {
 
 1. Chat tool handler calls `start_keyframe_generation(...)` in `chat_generation.py`.
 2. Handler calls `job_manager.create_job("chat_keyframe_candidates", total=count, meta={keyframeId, project, source})`.
-3. `JobManager` generates id `job_<hex>`, inserts into `_jobs` under lock, broadcasts `job_started`. Every registered `/ws/jobs` client receives the event via `asyncio.run_coroutine_threadsafe`.
+3. `JobManager` generates id `job_<hex>`, inserts into `_jobs` under lock, broadcasts `core__job__started`. Every registered `/ws/jobs` client receives the event via `asyncio.run_coroutine_threadsafe`.
 4. Handler spawns a daemon `threading.Thread` that runs generation work; main thread returns `{job_id, keyframe_id, count, backend}` to the chat tool synchronously.
-5. As each variant finishes, the worker calls `update_progress(job_id, n, detail)` → `job_progress` broadcast.
-6. When all variants are done, worker calls `complete_job(job_id, result={...})` → `job_completed` broadcast. On exception, `fail_job(job_id, str(e))` → `job_failed`.
+5. As each variant finishes, the worker calls `update_progress(job_id, n, detail)` → `core__job__progress` broadcast.
+6. When all variants are done, worker calls `complete_job(job_id, result={...})` → `core__job__completed` broadcast. On exception, `fail_job(job_id, str(e))` → `core__job__failed`.
 7. Frontend `JobStateContext` receives each event via `useScenecraftSocket.subscribeAll` and updates the `JobEntry` keyed by `entityKey` (e.g. `keyframeId`). After 30 s (complete) or 10 s (fail), the entry is removed from the store.
 
 ### Disconnect survival
 
 - If the WS closes between steps 3 and 5, the backend has no knowledge the client cared. The worker thread keeps running.
 - `_broadcast` iterates `list(self._connections)` (snapshot), and `asyncio.run_coroutine_threadsafe(ws.send(...))` on a closed `ws` may raise — the `except Exception` block discards the stale connection.
-- When the client reconnects, `useScenecraftSocket.onopen` calls `reQueryActiveJobs()`, which sends `{type:"get_job", jobId}` for every jobId still in the local listener map. The server replies `job_status` with current snapshot, which the client translates into synthetic `job_completed` / `job_failed` for terminal states.
+- When the client reconnects, `useScenecraftSocket.onopen` calls `reQueryActiveJobs()`, which sends `{type:"core__job__get", jobId}` for every jobId still in the local listener map. The server replies `core__job__status` with current snapshot, which the client translates into synthetic `core__job__completed` / `core__job__failed` for terminal states.
 
 ### Frontend dedup / auto-expire
 
-- `startJob(entityKey, jobId)` is called by the triggering component (e.g. "generate more candidates for kf_001" button) BEFORE the WS `job_started` event arrives, so the entry is reserved immediately and prior timers cleared.
-- Alternatively, if `job_started` arrives for an unknown `jobId`, the context auto-registers using `meta.keyframeId || meta.transitionId || jobId` (R19).
+- `startJob(entityKey, jobId)` is called by the triggering component (e.g. "generate more candidates for kf_001" button) BEFORE the WS `core__job__started` event arrives, so the entry is reserved immediately and prior timers cleared.
+- Alternatively, if `core__job__started` arrives for an unknown `jobId`, the context auto-registers using `meta.keyframeId || meta.transitionId || jobId` (R19).
 - Timers live in `useRef(new Map<entityKey, Timeout>)`. On unmount of the provider, all timers are cleared in the `useEffect` cleanup.
 
 ## Acceptance Criteria
@@ -208,7 +223,7 @@ type JobEntry = {
 - [ ] `/ws/chat/*` and `/ws/preview-stream/*` paths do NOT register with the job broadcast set
 - [ ] Frontend `JobStateContext` removes entries on the documented 30 s / 10 s schedule and exposes `consumeResult` as a one-shot read
 - [ ] Frontend reconnect backoff respects the 2 s → 30 s cap specified in `useScenecraftSocket.ts`
-- [ ] Frontend re-queries every active listener's `jobId` on reconnect and synthesizes `job_failed` from `error` replies that match the "Job <id> not found" pattern
+- [ ] Frontend re-queries every active listener's `jobId` on reconnect and synthesizes `core__job__failed` from `error` replies that match the "Job <id> not found" pattern
 
 ## Tests
 
@@ -223,7 +238,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **Then**:
 - **id-shape**: returned id matches `^job_[0-9a-f]{8}$`
 - **registry-has-job**: `get_job(id)` returns a `Job` with `type="chat_keyframe_candidates"`, `status="running"`, `total=3`, `completed=0`, `meta={"keyframeId":"kf_001"}`
-- **broadcast-fired**: the registered connection received exactly one JSON frame with fields `{type:"job_started", jobId:<id>, jobType:"chat_keyframe_candidates", total:3, meta:{"keyframeId":"kf_001"}}`
+- **broadcast-fired**: the registered connection received exactly one JSON frame with fields `{type:"core__job__started", jobId:<id>, jobType:"chat_keyframe_candidates", total:3, meta:{"keyframeId":"kf_001"}}`
 
 #### Test: create-job-returns-prefixed-id (covers R1)
 
@@ -239,7 +254,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **When**: `update_progress(job_id, 4, "v4")`.
 **Then**:
 - **state-updated**: `get_job(job_id).completed == 4`
-- **broadcast-shape**: connection received `{type:"job_progress", jobId, completed:4, total:10, detail:"v4"}`
+- **broadcast-shape**: connection received `{type:"core__job__progress", jobId, completed:4, total:10, detail:"v4"}`
 
 #### Test: update-progress-unknown-job-noop (covers R2)
 
@@ -257,7 +272,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **Then**:
 - **status-completed**: `get_job(job_id).status == "completed"`
 - **result-stored**: `get_job(job_id).result == {"keyframeId":"kf_001","candidates":["..."]}`
-- **broadcast-shape**: connection received `{type:"job_completed", jobId, result:{...}}`
+- **broadcast-shape**: connection received `{type:"core__job__completed", jobId, result:{...}}`
 
 #### Test: fail-job-broadcasts (covers R4)
 
@@ -266,7 +281,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **Then**:
 - **status-failed**: `get_job(job_id).status == "failed"`
 - **error-stored**: `get_job(job_id).error == "rate limited"`
-- **broadcast-shape**: connection received `{type:"job_failed", jobId, error:"rate limited"}`
+- **broadcast-shape**: connection received `{type:"core__job__failed", jobId, error:"rate limited"}`
 
 #### Test: get-job-returns-record (covers R5)
 
@@ -286,41 +301,41 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 #### Test: ping-pong-roundtrip (covers R9)
 
 **Given**: default-handler WS client connected.
-**When**: client sends `{"type":"ping"}`.
+**When**: client sends `{"type":"core__ping"}`.
 **Then**:
-- **pong-received**: client receives exactly one frame `{"type":"pong"}`
+- **pong-received**: client receives exactly one frame `{"type":"core__pong"}`
 - **no-side-effects**: server's registered-connections set size unchanged after the exchange
 
 #### Test: get-job-status-running (covers R10, R17)
 
 **Given**: running job + connected client.
-**When**: client sends `{"type":"get_job","jobId":<id>}`.
+**When**: client sends `{"type":"core__job__get","jobId":<id>}`.
 **Then**:
 - **reply-type**: frame has `type:"job_status"`
 - **fields-present**: frame has `jobId, status:"running", completed, total, result:null, error:null`
 
 #### Test: get-job-status-completed-replay (covers R10, R17)
 
-**Given**: a job that was created, completed, and whose `job_completed` broadcast has already fired before the client's `get_job`.
-**When**: client sends `{"type":"get_job","jobId":<id>}` (late subscriber case).
+**Given**: a job that was created, completed, and whose `core__job__completed` broadcast has already fired before the client's `core__job__get`.
+**When**: client sends `{"type":"core__job__get","jobId":<id>}` (late subscriber case).
 **Then**:
 - **reply-status-completed**: frame has `status:"completed"` with the final `result`
-- **frontend-synthesizes-completed**: frontend translation layer emits synthetic `job_completed` with the same `result` to listeners
+- **frontend-synthesizes-completed**: frontend translation layer emits synthetic `core__job__completed` with the same `result` to listeners
 
 #### Test: get-job-unknown-returns-error (covers R10, R18)
 
 **Given**: connected client, no such job.
-**When**: client sends `{"type":"get_job","jobId":"job_deadbeef"}`.
+**When**: client sends `{"type":"core__job__get","jobId":"job_deadbeef"}`.
 **Then**:
-- **error-reply**: frame is `{"type":"error", "message":"Job job_deadbeef not found"}`
-- **frontend-translates**: if frontend is in the "reconnect re-query" code path, it synthesizes `{type:"job_failed", jobId:"job_deadbeef", error:"Job lost (server restarted)"}`
+- **error-reply**: frame is `{"type":"core__error", "message":"Job job_deadbeef not found"}`
+- **frontend-translates**: if frontend is in the "reconnect re-query" code path, it synthesizes `{type:"core__job__failed", jobId:"job_deadbeef", error:"Job lost (server restarted)"}`
 
 #### Test: invalid-json-error-reply (covers R11)
 
 **Given**: connected client.
 **When**: client sends the raw bytes `"not-json"`.
 **Then**:
-- **error-reply**: frame is `{"type":"error","message":"Invalid JSON"}`
+- **error-reply**: frame is `{"type":"core__error","message":"Invalid JSON"}`
 - **socket-open**: socket remains in OPEN state (server did not close)
 
 #### Test: job-survives-client-disconnect (covers R12)
@@ -338,7 +353,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **When**: a client connects to path `/`, then another to `/ws/jobs`, then another to `/anything-else`.
 **Then**:
 - **all-registered**: all three end up in `job_manager._connections`
-- **receive-broadcasts**: a subsequent `create_job` triggers `job_started` on all three
+- **receive-broadcasts**: a subsequent `create_job` triggers `core__job__started` on all three
 
 #### Test: chat-path-bypasses-job-handler (covers R13)
 
@@ -368,7 +383,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 #### Test: frontend-auto-expires-completed-30s (covers R15)
 
 **Given**: `JobStateProvider` mounted, `startJob("kf_001", "job_a")`.
-**When**: fake-timers-advanced — WS delivers `{type:"job_completed", jobId:"job_a", result:{...}}`, then 30 s elapse.
+**When**: fake-timers-advanced — WS delivers `{type:"core__job__completed", jobId:"job_a", result:{...}}`, then 30 s elapse.
 **Then**:
 - **completed-visible**: immediately after the event, `getJob("kf_001").status === "completed"` with `progress === 1`
 - **result-exposed**: `consumeResult("kf_001")` returns the broadcast result; a second call returns `null`
@@ -377,7 +392,7 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 #### Test: frontend-auto-expires-failed-10s (covers R15)
 
 **Given**: `JobStateProvider` mounted, `startJob("kf_001", "job_a")`.
-**When**: WS delivers `{type:"job_failed", jobId:"job_a", error:"rate limited"}`, then 10 s elapse.
+**When**: WS delivers `{type:"core__job__failed", jobId:"job_a", error:"rate limited"}`, then 10 s elapse.
 **Then**:
 - **failed-visible**: `getJob("kf_001").status === "failed"` and `.detail === "rate limited"`
 - **expired-at-10s**: after 10 s, `getJob("kf_001") === null`
@@ -386,15 +401,15 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 #### Test: frontend-ignores-unknown-job-events (covers R19 negative)
 
 **Given**: `JobStateProvider` mounted, nothing registered.
-**When**: WS delivers `{type:"job_progress", jobId:"job_stranger", completed:1, total:1, detail:""}`.
+**When**: WS delivers `{type:"core__job__progress", jobId:"job_stranger", completed:1, total:1, detail:""}`.
 **Then**:
 - **dropped**: `getAllJobs()` returns `[]`
-- **no-auto-register**: only `job_started` triggers auto-registration, not progress/completed/failed
+- **no-auto-register**: only `core__job__started` triggers auto-registration, not progress/completed/failed
 
 #### Test: frontend-auto-registers-by-keyframe-id (covers R19)
 
 **Given**: `JobStateProvider` mounted, no `startJob` called.
-**When**: WS delivers `{type:"job_started", jobId:"job_a", jobType:"chat_keyframe_candidates", total:3, meta:{keyframeId:"kf_001"}}`.
+**When**: WS delivers `{type:"core__job__started", jobId:"job_a", jobType:"chat_keyframe_candidates", total:3, meta:{keyframeId:"kf_001"}}`.
 **Then**:
 - **registered**: `getJob("kf_001")` returns an entry with `jobId:"job_a", status:"in_progress"`
 - **jobid-map**: subsequent progress events for `job_a` route to the `kf_001` entry
@@ -402,14 +417,14 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 #### Test: frontend-auto-registers-by-transition-id (covers R19)
 
 **Given**: provider mounted.
-**When**: WS delivers `{type:"job_started", jobId:"job_b", jobType:"chat_transition_candidates", total:4, meta:{transitionId:"tr_007"}}`.
+**When**: WS delivers `{type:"core__job__started", jobId:"job_b", jobType:"chat_transition_candidates", total:4, meta:{transitionId:"tr_007"}}`.
 **Then**:
 - **registered**: `getJob("tr_007").jobId === "job_b"`
 
 #### Test: frontend-auto-registers-by-job-id-fallback (covers R19)
 
 **Given**: provider mounted.
-**When**: WS delivers `{type:"job_started", jobId:"job_c", jobType:"misc", total:0, meta:{}}`.
+**When**: WS delivers `{type:"core__job__started", jobId:"job_c", jobType:"misc", total:0, meta:{}}`.
 **Then**:
 - **fallback-entity-key**: `getJob("job_c").jobId === "job_c"` (entityKey falls back to jobId)
 
@@ -418,33 +433,33 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **Given**: `useScenecraftSocket` has two listeners registered — `subscribeJob("job_a", ...)` and `subscribeJob("job_b", ...)`. WS is disconnected (`ws.onclose` fired).
 **When**: reconnect succeeds (`socket.onopen` fires).
 **Then**:
-- **get-job-for-a**: the server received `{"type":"get_job","jobId":"job_a"}` on the new socket
-- **get-job-for-b**: server received `{"type":"get_job","jobId":"job_b"}`
-- **no-requery-for-expired**: if a listener was unsubscribed before reconnect, no `get_job` is sent for it
+- **get-job-for-a**: the server received `{"type":"core__job__get","jobId":"job_a"}` on the new socket
+- **get-job-for-b**: server received `{"type":"core__job__get","jobId":"job_b"}`
+- **no-requery-for-expired**: if a listener was unsubscribed before reconnect, no `core__job__get` is sent for it
 
 #### Test: job-status-completed-synthesized (covers R17)
 
 **Given**: active listener on `job_a`.
 **When**: server replies `{type:"job_status", jobId:"job_a", status:"completed", completed:3, total:3, result:{...}, error:null}`.
 **Then**:
-- **synthesized**: listener receives `{type:"job_completed", jobId:"job_a", result:{...}}`
-- **no-passthrough**: listener does NOT separately receive the raw `job_status` message
+- **synthesized**: listener receives `{type:"core__job__completed", jobId:"job_a", result:{...}}`
+- **no-passthrough**: listener does NOT separately receive the raw `core__job__status` message
 
 #### Test: job-status-failed-synthesized (covers R17)
 
 **Given**: active listener on `job_a`.
 **When**: server replies `{type:"job_status", jobId:"job_a", status:"failed", completed:0, total:0, result:null, error:"boom"}`.
 **Then**:
-- **synthesized**: listener receives `{type:"job_failed", jobId:"job_a", error:"boom"}`
+- **synthesized**: listener receives `{type:"core__job__failed", jobId:"job_a", error:"boom"}`
 - **default-error**: if `error` is null/empty, synthesized message has `error:"Unknown error"`
 
 #### Test: server-restart-detected-via-error (covers R18)
 
-**Given**: active listener on `job_a`; reconnect sent `get_job`.
-**When**: server replies `{type:"error", message:"Job job_a not found"}`.
+**Given**: active listener on `job_a`; reconnect sent `core__job__get`.
+**When**: server replies `{type:"core__error", message:"Job job_a not found"}`.
 **Then**:
-- **synthesized-failed**: listener receives `{type:"job_failed", jobId:"job_a", error:"Job lost (server restarted)"}`
-- **other-errors-pass-through**: an `error` reply that does NOT match the `Job <id> not found` pattern is NOT synthesized into `job_failed`
+- **synthesized-failed**: listener receives `{type:"core__job__failed", jobId:"job_a", error:"Job lost (server restarted)"}`
+- **other-errors-pass-through**: an `error` reply that does NOT match the `Job <id> not found` pattern is NOT synthesized into `core__job__failed`
 
 #### Test: consume-result-is-one-shot (covers R15 / `consumeResult`)
 
@@ -460,9 +475,9 @@ The core behavior contract. Happy path, primary bad paths, positive + negative a
 **Given**: three default-handler clients connected.
 **When**: worker calls `create_job` then `update_progress` then `complete_job`.
 **Then**:
-- **all-three-get-started**: each client receives `job_started` once
-- **all-three-get-progress**: each client receives `job_progress` once
-- **all-three-get-completed**: each client receives `job_completed` once
+- **all-three-get-started**: each client receives `core__job__started` once
+- **all-three-get-progress**: each client receives `core__job__progress` once
+- **all-three-get-completed**: each client receives `core__job__completed` once
 - **order-per-client**: within each client's stream, ordering is `started → progress → completed`
 
 ### Edge Cases
@@ -499,7 +514,7 @@ Boundaries, concurrency, resource states, unusual inputs.
 **Given**: fresh WS connection, fake timers.
 **When**: 90 s of wall clock advance.
 **Then**:
-- **three-pings**: server received three `{"type":"ping"}` frames
+- **three-pings**: server received three `{"type":"core__ping"}` frames
 - **ping-only-when-open**: if socket transitions to CLOSED, pings stop firing
 
 #### Test: reconnect-backoff-exponential-capped (covers R16)
@@ -517,7 +532,7 @@ Boundaries, concurrency, resource states, unusual inputs.
 **Then**:
 - **no-torn-state**: `get_job(id).completed` is exactly one of {5, 7} (never a partial/torn value)
 - **no-raise**: neither call raises
-- **two-broadcasts**: two `job_progress` frames are emitted, but their ORDER is not guaranteed — see OQ-4 for the open question on progress monotonicity
+- **two-broadcasts**: two `core__job__progress` frames are emitted, but their ORDER is not guaranteed — see OQ-4 for the open question on progress monotonicity
 
 #### Test: create-job-with-zero-total (covers R1)
 
@@ -526,7 +541,7 @@ Boundaries, concurrency, resource states, unusual inputs.
 **Then**:
 - **id-returned**: valid id returned
 - **broadcast-total-0**: broadcast carries `total:0`
-- **frontend-progress-calc**: frontend `progress` on later `job_progress` events divides by 0 guarded — current code `msg.total > 0 ? msg.completed / msg.total : 0`, so progress stays 0
+- **frontend-progress-calc**: frontend `progress` on later `core__job__progress` events divides by 0 guarded — current code `msg.total > 0 ? msg.completed / msg.total : 0`, so progress stays 0
 
 #### Test: create-job-with-empty-meta (covers R1)
 
@@ -546,11 +561,11 @@ Boundaries, concurrency, resource states, unusual inputs.
 
 #### Test: frontend-restart-during-expire-window (covers R15, R16)
 
-**Given**: `job_completed` received, auto-expire timer armed for 30 s.
+**Given**: `core__job__completed` received, auto-expire timer armed for 30 s.
 **When**: 5 s into the wait, a fresh `startJob(sameEntityKey, newJobId)` is called.
 **Then**:
 - **prior-timer-cleared**: the 30 s timer is cancelled; the completed entry is replaced with a new in-progress entry
-- **no-ghost-eviction**: 30 s from the original `job_completed` event, the new entry is NOT evicted
+- **no-ghost-eviction**: 30 s from the original `core__job__completed` event, the new entry is NOT evicted
 
 #### Test: synchronous-single-threaded-assumption (negative, covers R6)
 
@@ -563,10 +578,69 @@ Boundaries, concurrency, resource states, unusual inputs.
 #### Test: folder-import-event-passes-through (covers R8 — same bus)
 
 **Given**: `FolderWatcher` imports new files.
-**When**: `job_manager._broadcast({type:"folder_import", ...})` fires.
+**When**: `job_manager._broadcast({type:"core__folder_import", ...})` fires.
 **Then**:
 - **clients-receive**: all registered default-handler clients receive the frame
 - **frontend-ignores-for-job-state**: `JobStateContext` ignores it (no `jobId` field); other consumers handle it
+
+#### Test: auto-register-refuses-overwrite (covers R23, OQ-2)
+
+**Given**: `JobStateProvider` mounted; `core__job__started` with `meta.keyframeId="kf_001"` has already auto-registered `job_a` under entityKey `kf_001`.
+**When**: a second `core__job__started` arrives for `job_b` with the same `meta.keyframeId="kf_001"`.
+**Then**:
+- **no-overwrite**: `getJob("kf_001").jobId` remains `"job_a"`.
+- **warning-logged**: client `console.warn` fires with a message noting the collision.
+- **second-job-ignored**: subsequent events for `job_b` are not routed to the `kf_001` entry.
+
+#### Test: no-subscribe-replay (covers R24, OQ-3)
+
+**Given**: backend emitted `core__job__completed` for `job_a` while no client was connected.
+**When**: a new client connects and does NOT have `job_a` in its listener map.
+**Then**:
+- **no-automatic-event**: no `core__job__completed` is sent to the new client.
+- **reconcile-via-get**: if the client later sends `{type:"core__job__get", jobId:"job_a"}`, the server replies with `core__job__status`.
+
+#### Test: no-progress-ordering-guarantee (covers R26, INV-1)
+
+**Given**: source inspection of `update_progress` and `_broadcast`.
+**When**: static analysis.
+**Then**:
+- **broadcast-outside-lock**: `_broadcast` runs after the state-mutation lock is released.
+- **single-writer-contract**: concurrent `update_progress` callers from the same user/project are explicitly undefined per INV-1; monotonic progress ordering is NOT a contract.
+
+#### Test: create-job-full-uuid (covers R22, OQ-5)
+
+**Given**: fresh `JobManager`.
+**When**: `create_job("t")` called.
+**Then**:
+- **id-length**: returned id matches `^job_[0-9a-f]{32}$` (32 hex chars, full uuid4).
+- **not-8-hex**: id does NOT match the old `^job_[0-9a-f]{8}$` shape.
+
+#### Test: lru-eviction-fires-evicted-event (covers R21, OQ-6)
+
+**Given**: `JobManager` with 1000 completed/failed jobs already in `_jobs`; a new job is created and completed.
+**When**: the 1001st completed job is stored.
+**Then**:
+- **oldest-evicted**: the oldest completed/failed job is removed from `_jobs`.
+- **evicted-event-broadcast**: backend emits `{type:"core__job__evicted", jobId:<evicted_id>}` to all connections.
+- **running-jobs-safe**: any currently-running jobs are never evicted regardless of count.
+
+#### Test: frontend-cleans-up-on-evicted (covers R21)
+
+**Given**: `JobStateProvider` has an entry for `kf_001` → `job_a` in terminal state (completed, awaiting 30s timer).
+**When**: WS delivers `{type:"core__job__evicted", jobId:"job_a"}`.
+**Then**:
+- **entry-removed**: `getJob("kf_001")` returns `null` immediately (timer cancelled, entry cleared).
+- **no-error-surfaced**: no error card shown to user (eviction is a silent cleanup).
+
+#### Test: unauthenticated-ws-rejected (covers R25, OQ-7)
+
+**Given**: a WS client connects to `/ws` without valid auth (no cookie, no bearer, no API key).
+**When**: the connection attempt is processed by the REST middleware.
+**Then**:
+- **rejected-at-middleware**: connection closed with 401 before reaching the job handler.
+- **no-registration**: `job_manager._connections` is not incremented.
+- **no-events**: client receives no job events.
 
 #### Test: plugin-namespaced-events-coexist (covers R8)
 
@@ -588,8 +662,26 @@ Boundaries, concurrency, resource states, unusual inputs.
 
 ## Open Questions
 
+### Resolved
+
+**OQ-1 (resolved)**: Server restart during in-flight job. **Decision**: Codify current — in-memory JobManager loses state on restart; client synthesizes `core__job__failed` via regex on backend's "Job not found" error. Accepted UX. **Tests**: `server-restart-detected-via-error`.
+
+**OQ-2 (resolved)**: entityKey collision. **Decision**: Fix — client's auto-register on `core__job__started` refuses to overwrite an existing entry; logs a warning if two backend jobs claim the same entityKey. Backend bug if that happens. **Tests**: `auto-register-refuses-overwrite`.
+
+**OQ-3 (resolved)**: Subscribe-after-complete replay. **Decision**: Codify — no replay. Client that connects late misses completion events; polling fallback via `core__job__get` message reconciles on demand. **Tests**: `no-subscribe-replay`.
+
+**OQ-4 (resolved)**: Concurrent `update_progress` ordering. **Decision**: Close per INV-1 (single-writer per user/project). No lock across broadcast; ordering not guaranteed and not required. **Tests**: `no-progress-ordering-guarantee`.
+
+**OQ-5 (resolved)**: UUID 32-bit collision. **Decision**: Fix — use full `uuid4().hex` (32 chars). Collision space moves from 2^32 to 2^128. No compat concern (jobIds are opaque). **Tests**: `create-job-full-uuid`.
+
+**OQ-6 (resolved)**: `_jobs` unbounded growth. **Decision**: Fix — LRU cap at 1000 completed/failed jobs; running jobs never evicted. On eviction, backend emits `core__job__evicted`. **Tests**: `lru-eviction-fires-evicted-event`, `frontend-cleans-up-on-evicted`.
+
+**OQ-7 (resolved)**: No auth on `/ws/jobs`. **Decision**: Close via INV-4 — unified `/ws` is auth-gated per the REST middleware. Job events only flow on authenticated connections. Legacy `/ws/jobs` path is folded into `/ws`. **Tests**: `unauthenticated-ws-rejected`.
+
+### Legacy context (retained for historical cross-reference)
+
 **OQ-1 — Server restart during in-flight job**.
-The backend stores jobs only in a process-local `dict[str, Job]`. If the server restarts, the prior worker threads are terminated with the process and the registry is empty. Clients that had a `job_<id>` in flight will, on reconnect, send `get_job` and receive `{"type":"error","message":"Job <id> not found"}`; the frontend translates this to a synthesized `job_failed` with error `"Job lost (server restarted)"` (R18). What is undefined:
+The backend stores jobs only in a process-local `dict[str, Job]`. If the server restarts, the prior worker threads are terminated with the process and the registry is empty. Clients that had a `job_<id>` in flight will, on reconnect, send `core__job__get` and receive `{"type":"core__error","message":"Job <id> not found"}`; the frontend translates this to a synthesized `core__job__failed` with error `"Job lost (server restarted)"` (R18). What is undefined:
 - Whether partial work (e.g. half the keyframe variants rendered) that landed in the pool/DB before shutdown is reconciled.
 - Whether clients should surface a recovery UI ("some of your keyframes may still be in the pool — refresh to see").
 - Whether a persistence layer for Jobs (disk / sqlite) should exist.
@@ -602,7 +694,7 @@ The backend stores jobs only in a process-local `dict[str, Job]`. If the server 
 Undefined: is double-invoking the chat tool for the same entity a user error we want to warn about, a legitimate "add more variants" path, or something we want to deduplicate at the backend (reject a second `create_job` for the same entity)?
 
 **OQ-3 — Subscribe-after-complete replay**.
-If a client connects AFTER a `job_completed` broadcast has already fired, there is no automatic replay. The client will see only events from that point forward. The frontend's `reQueryActiveJobs` only re-queries `jobId`s it already has a listener for — a never-seen-before `jobId` is invisible. Should:
+If a client connects AFTER a `core__job__completed` broadcast has already fired, there is no automatic replay. The client will see only events from that point forward. The frontend's `reQueryActiveJobs` only re-queries `jobId`s it already has a listener for — a never-seen-before `jobId` is invisible. Should:
 - `/ws/jobs` support a `{type:"subscribe", since:<ts>}` replay window?
 - The server keep a small ring buffer of recent completed jobs for late subscribers?
 
@@ -612,7 +704,7 @@ Currently: no replay; late subscribers are expected to drive UI state from HTTP 
 `update_progress` acquires the lock for the state mutation, but `_broadcast` runs outside the lock. If thread A and thread B both call `update_progress(id, A_val)` and `update_progress(id, B_val)` in quick succession:
 - The final stored `completed` value is deterministic (last writer wins, serialized).
 - The BROADCAST ORDER is NOT guaranteed to match the write order — thread B could finish the state update before thread A but release the lock and enter `_broadcast` after A did.
-- Consequence: the frontend can observe `job_progress` events with a `completed` field that is NOT monotonically increasing.
+- Consequence: the frontend can observe `core__job__progress` events with a `completed` field that is NOT monotonically increasing.
 
 Undefined: is monotonic progress a contract we want? If yes, the fix is to move `_broadcast` inside the lock (or snapshot the state + use a send queue). Current behavior is "best-effort".
 
@@ -623,7 +715,7 @@ Undefined: is monotonic progress a contract we want? If yes, the fix is to move 
 No TTL, no LRU, no eviction. Long-running server processes accumulate `Job` dataclasses indefinitely (~small per-job but not zero). Should there be a sweep to drop jobs in terminal state older than N minutes? Today no.
 
 **OQ-7 — Auth on `/ws/jobs`**.
-There is no auth gate in `_handle_connection`'s default branch. Any network-reachable client can subscribe to every project's job events (and can call `get_job` for any known id). In a single-user local deployment this is fine; once scenecraft runs multi-tenant or on a public host, this is an open gap.
+There is no auth gate in `_handle_connection`'s default branch. Any network-reachable client can subscribe to every project's job events (and can call `core__job__get` for any known id). In a single-user local deployment this is fine; once scenecraft runs multi-tenant or on a public host, this is an open gap.
 
 ---
 

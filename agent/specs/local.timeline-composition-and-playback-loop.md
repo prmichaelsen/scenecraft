@@ -72,6 +72,12 @@ This spec does **not** redefine sub-track internals. It defines the contract bet
 16. **R16** — Timeline's `onScroll` handler updates `scrollLeft` and `scrollTop` state and passes `scrollTop` into `Playhead` (for sticky vertical positioning).
 17. **R17** — Timeline creates one AudioMixer via `useAudioMixer(projectName, localAudioTracks, isPlaying, currentTime)` that is independent of the `data.audioFile` HTMLAudioElement; when `isPlaying` is true, both the HTMLAudioElement (via AudioTrack) and the mixer run in parallel, with the HTMLAudioElement acting as the master clock (`onTimeUpdate` → `setCurrentTime`) and the mixer following `currentTime` passively.
 18. **R18** — The split of `CurrentTimeContext` vs `PlaybackStateContext` is load-bearing: any refactor that collapses them into one context is forbidden by this spec because it causes the ~20Hz `currentTime` tick to re-render every `isPlaying` consumer.
+19. **R19** — All seek paths (Timeline's `handleTrackClick`, `Playhead.onSeek`, and any direct `seekRef.current(time)` call entry points Timeline controls) clamp `time = max(0, min(time, effectiveDuration))` before dispatch. Out-of-range inputs become boundary seeks, not drops (this generalizes R5 — Timeline's own click handler still drops purely-out-of-range clicks to preserve click-vs-seek semantics, but programmatic seeks via refs clamp).
+20. **R20** — `pxPerSec` is clamped to `≥ 1e-6` on every read-path that divides by it (not only on wheel-zoom). External setters cannot drive it to 0 in a way that produces `Infinity` seeks.
+21. **R21** — Each sub-track (`VideoTrack`, `TransitionTrack`, `AudioTrack`, `AudioLane`, `RulesTrack`, `Playhead`, `MarkerTrack`, `SectionBands`) is wrapped in a per-track `ErrorBoundary`; a render exception in one track renders a "Track failed — reload?" tile and does not unmount the rest of Timeline.
+22. **R22** — When a drag-select gesture is active, Timeline listens for scroll events on the scroll container and recomputes the drag rectangle in scroll-adjusted coordinate space so the selection stays correct through intermediate scrolls.
+23. **R23** — When `isPlaying` transitions to `true` from any source (context sync, local toggle) and `seekFnRef.current === null`, Timeline starts the fallback rAF timer (same path as `handlePlayPause` takes when no AudioTrack is mounted). Context-driven play without audio advances `currentTime`.
+24. **R24** — Only one Timeline per `PlaybackStateContext` is supported. A dev-build `console.error` fires on the second mount. Observable "last mounter wins" behavior is not promoted to a contract; two-Timeline coexistence is out of scope.
 
 ---
 
@@ -148,14 +154,14 @@ type PlaybackStateContextValue = {
 | 24 | Active track selection changes | `SectionBands` re-parents to new active `VideoTrack`; only one SectionBands in the tree | `section-bands-follow-active-track` |
 | 25 | `onTimeUpdate` from AudioTrack | Calls `setCurrentTime` with the HTMLAudio's currentTime | `audio-timeupdate-drives-currenttime` |
 | 26 | `audioElRef.current.playbackRate` is mutated via Settings CustomEvent | Timeline updates `playbackRate` state and writes rate to the element | `playback-speed-event-applies-rate` |
-| 27 | Timeline remounts while `isPlaying === true` | **undefined** | → [OQ-1](#open-questions) |
-| 28 | Seek to `time < 0` via `seekRef.current(-1)` | **undefined** (Timeline's `handleTrackClick` clamps, but a direct `seekRef.current(-1)` call bypasses Timeline) | → [OQ-2](#open-questions) |
-| 29 | Seek to `time > effectiveDuration` via ref | **undefined** | → [OQ-3](#open-questions) |
-| 30 | `pxPerSec` forced to exactly 0 (dev tools) | **undefined** — epsilon prevents wheel-zoom reaching 0, but external setter bypass not defined | → [OQ-4](#open-questions) |
-| 31 | A sub-track component throws during render | **undefined** — Timeline has no internal error boundary; EditorPanelLayout has per-panel boundaries at a higher level | → [OQ-5](#open-questions) |
-| 32 | User holds mouse, then scrolls (via arrow-keys / trackpad) before drag-select activates | **undefined** — drag-select coords are captured in `scrollLeft + clientX` space at mouse-down and at move; scrolling between events will skew the rectangle | → [OQ-6](#open-questions) |
-| 33 | `isPlaying = true` is set but no AudioTrack is mounted (seekFnRef null) | **undefined** — `handlePlayPause` starts rAF, but if `isPlaying` becomes true by some other path (e.g., context sync from another component), rAF is not started here | → [OQ-7](#open-questions) |
-| 34 | Two Timelines mount simultaneously (split panel) sharing one `PlaybackStateContext` | **undefined** — both would write to the same `seekRef`; last mount wins | → [OQ-8](#open-questions) |
+| 27 | Timeline remounts while `isPlaying === true` | Playback stalls silently on remount; `seekRef`/`playPauseRef` re-bind to the new AudioTrack but do not auto-resume. User presses Play again to resume. Explicit design consequence of Timeline↔AudioTrack coupling | `remount-mid-play-stalls-silently` |
+| 28 | Seek to `time < 0` via `seekRef.current(-1)` | Timeline clamps `time = max(0, min(time, duration))` before invoking `seekRef`; direct ref callers receive clamped value | `seek-negative-clamped-to-zero` |
+| 29 | Seek to `time > effectiveDuration` via ref | Clamped to `effectiveDuration` (same mechanism as OQ-2) | `seek-past-end-clamped-to-duration` |
+| 30 | `pxPerSec` forced to exactly 0 (dev tools) | Guard at Timeline: `pxPerSec < 1e-6` clamped to `1e-6` on any read path; prevents `Infinity` seek | `pxpersec-zero-clamped-to-epsilon` |
+| 31 | A sub-track component throws during render | Per-track `ErrorBoundary` isolates the failure; other tracks render; failed track shows "Track failed — reload?" tile | `subtrack-throw-isolated-by-boundary` |
+| 32 | User holds mouse, then scrolls before drag-select activates | Scroll listener during active drag recomputes the rectangle in scroll-adjusted space | `drag-select-scroll-recomputes-rect` |
+| 33 | `isPlaying = true` is set but no AudioTrack is mounted (seekFnRef null) | Falls back to rAF timer (same path as no-audio case); `currentTime` advances | `no-seek-ref-falls-back-to-raf` |
+| 34 | Two Timelines mount simultaneously (split panel) sharing one `PlaybackStateContext` | Only one Timeline per PlaybackStateContext is supported. Second mount logs `console.error` in dev; last mounter still wins observably | `two-timelines-dev-error` |
 
 ---
 
@@ -485,29 +491,86 @@ type PlaybackStateContextValue = {
 **Then**:
 - **no-scroll-into-view-call**: `scrollIntoView` / `scrollLeft` assignment is never issued by Timeline during playback
 
+#### Test: remount-mid-play-stalls-silently (covers OQ-1 resolution)
+**Given**: Timeline mounted with `data.audioFile`, `isPlaying=true`, playback advancing
+**When**: Timeline unmounts and remounts (panel remount)
+**Then**:
+- **playback-stops**: `isPlaying` is `false` after remount; underlying `<audio>` is paused
+- **no-auto-resume**: Timeline does not attempt to resume play on mount
+- **user-press-play-resumes**: After user presses Play, playback resumes from the persisted `currentTime`
+
+#### Test: seek-negative-clamped-to-zero (covers R19)
+**Given**: Timeline mounted, `effectiveDuration=60`
+**When**: `seekRef.current(-5)` invoked via Timeline-controlled path (e.g., Playhead onSeek)
+**Then**:
+- **clamped-to-zero**: `seekRef` receives `0` after clamp; underlying audio `currentTime === 0`
+
+#### Test: seek-past-end-clamped-to-duration (covers R19)
+**Given**: `effectiveDuration=60`
+**When**: Playhead seeks to `time = 120`
+**Then**:
+- **clamped-to-duration**: post-clamp seek value is `60`
+
+#### Test: pxpersec-zero-clamped-to-epsilon (covers R20)
+**Given**: Timeline's `pxPerSec` forcibly set to `0` via external state write
+**When**: `handleTrackClick` runs with any clientX
+**Then**:
+- **no-infinity-seek**: computed time is finite (division uses clamped `1e-6`)
+- **seek-bounded**: seek value is within `[0, effectiveDuration]`
+
+#### Test: subtrack-throw-isolated-by-boundary (covers R21)
+**Given**: a `VideoTrack` that throws in its render
+**When**: Timeline mounts
+**Then**:
+- **error-tile-rendered**: The failed track's slot shows "Track failed — reload?"
+- **other-tracks-render**: `AudioTrack`, `Playhead`, `TimeRuler` all render normally
+- **no-timeline-unmount**: Timeline root still in DOM
+
+#### Test: drag-select-scroll-recomputes-rect (covers R22)
+**Given**: drag-select is active; rectangle spans from x=100 to x=300 (scroll-adjusted)
+**When**: user scrolls the container by +500 px while still dragging
+**Then**:
+- **rect-recomputed**: selection set updates to reflect the new scroll-adjusted span
+- **scroll-listener-wired**: scroll event during active drag triggers recomputation (scroll event before/after drag does not)
+
+#### Test: no-seek-ref-falls-back-to-raf (covers R23)
+**Given**: Timeline mounted without `data.audioFile` (seekFnRef null); `isPlaying` transitions to `true` via `PlaybackStateContext` setter (not via handlePlayPause)
+**When**: 100ms of wall-clock elapse
+**Then**:
+- **raf-scheduled**: `requestAnimationFrame` called
+- **current-time-advanced**: `currentTime > 0`
+
+#### Test: two-timelines-dev-error (covers R24)
+**Given**: one `PlaybackStateContext` wrapping two Timelines
+**When**: both Timelines mount
+**Then**:
+- **dev-error-logged**: `console.error` called once with a message mentioning duplicate Timeline / PlaybackStateContext
+- **no-throw**: neither Timeline crashes
+
 ---
 
 ## Non-Goals
 
 - Automatic viewport follow-on-play (explicit design choice per R13)
-- Recovering from a sub-track render exception (no Timeline-level error boundary; EditorPanelLayout handles panel-level boundaries)
-- Multi-Timeline coordination within a single `PlaybackStateContext` (undefined — see OQ-8)
-- Bounds-checking seeks that arrive via `seekRef.current` from non-Timeline callers (AudioTrack, seek ref holders outside Timeline) — Timeline only clamps its own `handleTrackClick` path
-- Preventing `pxPerSec = 0` via external setters; only the wheel handler enforces the epsilon floor
+- Multi-Timeline coordination within a single `PlaybackStateContext` (dev-warn only; see R24)
 - Replacing the split-context design with a single context (forbidden per R18)
 
 ---
 
 ## Open Questions
 
-- **OQ-1** *(maps to Behavior Table row 27)*: What happens if Timeline remounts while `isPlaying === true`? The `<audio>` element is inside AudioTrack, which also remounts — does playback actually stop and restart, or does `audioElRef` re-bind to a new element mid-stream? Audit-2 §3 leak #3 flags this as "Panel remount can stall playback" but the exact failure mode (silence vs. restart-from-zero vs. resume) is not specified.
-- **OQ-2** *(row 28)*: If `seekRef.current(-1)` is called directly (not through Timeline's click handler), does AudioTrack clamp, or does it propagate into `HTMLMediaElement.currentTime = -1` which the browser then clamps to 0? Is there a round-trip `timeupdate` that pushes `currentTime` back to 0?
-- **OQ-3** *(row 29)*: Same question for `seekRef.current(time > duration)`. Does the browser silently clamp to `duration`? Does Timeline observe an `ended` event?
-- **OQ-4** *(row 30)*: If `pxPerSec` is forced to 0 externally (React devtools), `currentTime * 0 = 0` so playhead pins to left, and `time = clickX / 0 = Infinity` so every click seeks to `Infinity`. Spec does not define Timeline's guarantees here.
-- **OQ-5** *(row 31)*: If `VideoTrack`, `TransitionTrack`, `AudioTrack`, `RulesTrack`, or `Playhead` throws during render, does the rest of Timeline survive? There is no internal `ErrorBoundary`; EditorPanelLayout wraps Timeline as a whole.
-- **OQ-6** *(row 32)*: If the scroll container is scrolled (keyboard, trackpad) during a pending/active drag-select, is the rectangle still correct? Coordinates are captured at `mouse-down` and `mouse-move` as `clientX + scrollLeft` — intermediate scroll between events is not compensated.
-- **OQ-7** *(row 33)*: If `isPlaying` is set to `true` from an external source (e.g., another Timeline instance sharing context, or chat tool toggling context) while this Timeline has `seekFnRef.current === null`, the fallback rAF is NOT started (that only runs from `handlePlayPause`). Is `currentTime` expected to advance?
-- **OQ-8** *(row 34)*: Are two Timelines mounted under the same `PlaybackStateContext` supported? Both would overwrite `seekRef.current` on mount — "last mounter wins" is the observed behavior but isn't stated as a contract.
+*(all resolved — see `### Resolved` below)*
+
+### Resolved
+
+- **OQ-1 (row 27) — Timeline remount mid-play**: Resolved as **codify**. Playback stalls silently on remount; user presses Play again. Timeline↔AudioTrack coupling is an explicit design consequence (mirror of audio-lane OQ-5). New test `remount-mid-play-stalls-silently`.
+- **OQ-2 (row 28) — Negative seek via ref**: Resolved as **fix** — Timeline clamps `time = max(0, min(time, duration))` at the Timeline-controlled seek entry points before calling `seekRef`. New R19; test `seek-negative-clamped-to-zero`.
+- **OQ-3 (row 29) — Past-end seek via ref**: Resolved as **fix** — same clamp as OQ-2. Test `seek-past-end-clamped-to-duration`.
+- **OQ-4 (row 30) — `pxPerSec=0` via external setter**: Resolved as **fix** — guard at every division site `pxPerSec >= 1e-6`; clamp if violated. New R20; test `pxpersec-zero-clamped-to-epsilon`.
+- **OQ-5 (row 31) — Sub-track render exception**: Resolved as **fix** — add per-track `ErrorBoundary`; failure shows "Track failed — reload?" tile and does not bring down Timeline. New R21; test `subtrack-throw-isolated-by-boundary`.
+- **OQ-6 (row 32) — Scroll during drag-select**: Resolved as **fix** — scroll listener during active drag recomputes the rectangle. New R22; test `drag-select-scroll-recomputes-rect`.
+- **OQ-7 (row 33) — `isPlaying=true` without seekRef**: Resolved as **fix** — fall back to rAF timer whenever `seekFnRef.current === null` on a play transition, regardless of how the transition originated. New R23; test `no-seek-ref-falls-back-to-raf`.
+- **OQ-8 (row 34) — Two Timelines sharing one PlaybackStateContext**: Resolved as **codify** — one Timeline per context; dev-only `console.error` on second mount. New R24; test `two-timelines-dev-error`.
 
 ---
 

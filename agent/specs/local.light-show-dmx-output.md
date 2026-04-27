@@ -12,7 +12,7 @@
 
 ## Purpose
 
-Specify the exact observable behavior of the browser-side DMX output bridge: the WebSerial connection flow, the cross-panel `dmx-ref` singleton that owns it, the 512-channel universe model, the `autoPatch` / `fixturesToDMX` mapping layer, the decoupled ~30 Hz transmit loop that coalesces 60 fps frame writes onto USB, and the disconnect/error teardown. This is the **hardware bridge only** — scene authoring, evaluator precedence, and per-fixture override semantics are covered by `local.light-show-scene-editor.md` and only appear here at the seam where rendered `FixtureState[]` crosses into DMX bytes.
+Specify the exact observable behavior of the browser-side DMX output bridge: the WebSerial connection flow, the cross-panel `dmx-ref` singleton that owns it, the 512-channel universe model, the `autoPatch` / `fixturesToDMX` mapping layer, the decoupled 40 Hz transmit loop that coalesces 60 fps frame writes onto USB, and the disconnect/error teardown. This is the **hardware bridge only** — scene authoring, evaluator precedence, and per-fixture override semantics are covered by `local.light-show-scene-editor.md` and only appear here at the seam where rendered `FixtureState[]` crosses into DMX bytes.
 
 The layer exists because the browser is the audio/visual source of truth (see project memory): the same `FixtureState[]` that drives the 3D preview is what must reach real movers and pars on stage, and the ENTTEC DMX USB Pro is the cheapest widely-supported USB-DMX dongle that speaks a documented widget protocol over WebSerial.
 
@@ -32,7 +32,7 @@ Related: [local.light-show-scene-editor.md](local.light-show-scene-editor.md) (s
 
 - WebSerial connection flow: user-initiated picker, FTDI VID/PID filter `0x0403:0x6001`, port open at 115200 baud
 - ENTTEC DMX USB Pro widget frame format: `0x7E [label] [LSB] [MSB] [start_code=0x00] [512 channels] 0xE7`
-- 60 fps → ~30 Hz transmit coalescing via a dedicated `transmitLoop()` reading the latest-frame buffer
+- 60 fps → 40 Hz (25 ms) transmit coalescing via a dedicated `transmitLoop()` reading the latest-frame buffer (raised from 30 Hz per OQ-3 fix)
 - 512-channel single-universe model (`DMX_CHANNELS = 512`)
 - Per-fixture DMX patch: `{fixtureId, role, universe, startAddress, channelCount}` with explicit pin + auto-fill
 - `autoPatch()` two-pass algorithm: pinned fixtures first, then greedy auto-fill from address 1
@@ -72,7 +72,7 @@ Related: [local.light-show-scene-editor.md](local.light-show-scene-editor.md) (s
 
 - **R6.** The DMX frame layout built by `buildDMXFrame(channels)` MUST be exactly 518 bytes: `[0x7E] [0x06] [LSB of 513] [MSB of 513] [0x00] [ch1..ch512] [0xE7]`.
 - **R7.** `EnttecPro.send(channels)` MUST be O(1) non-blocking: it MUST copy at most `DMX_CHANNELS` bytes of the caller's buffer into the internal `lastFrame` and return synchronously without issuing any USB write.
-- **R8.** The `transmitLoop()` MUST, while `transmitting && writer`, repeatedly: (a) build a frame from the current `lastFrame`, (b) `await writer.write(frame)`, (c) `await setTimeout(33ms)`. Any 60 fps `send()` calls that land between two loop iterations are coalesced — only the most recent `lastFrame` is transmitted on the next iteration (intermediate frames are silently dropped).
+- **R8.** The `transmitLoop()` MUST, while `transmitting && writer`, repeatedly: (a) build a frame from the current `lastFrame`, (b) `await writer.write(frame)`, (c) `await setTimeout(25ms)` (40 Hz transmit cadence, raised from 30 Hz per OQ-3 resolution). Any higher-rate `send()` calls that land between two loop iterations are coalesced — latest-frame-wins; intermediate frames are silently dropped.
 - **R9.** If `writer.write` throws, the loop MUST set state to `error`, call `onError("Write failed: <msg>")`, run `cleanup()`, and return. No further frames are transmitted and no auto-reconnect is attempted.
 
 ### 512-channel universe model
@@ -103,7 +103,7 @@ Related: [local.light-show-scene-editor.md](local.light-show-scene-editor.md) (s
 - **R24.** `getActiveDmx()` MUST return the currently-stored `EnttecPro | null`. `setActiveDmx(pro)` MUST replace it and notify all subscribers synchronously.
 - **R25.** `getDmxState()` MUST return the last cached `DMXOutputState`. `setDmxState(s)` MUST update the cache and notify subscribers.
 - **R26.** `subscribeDmx(cb)` MUST register `cb` and return an unsubscribe function that removes it. Multiple subscribers MUST all be notified on every `setActiveDmx` or `setDmxState` call.
-- **R27.** Panel unmount (`LightShow3DPanel` removed from the dock) MUST NOT disconnect the active `EnttecPro`. The singleton MUST keep holding the instance, `transmitLoop` MUST continue running, and the dongle MUST continue receiving the last-written frame at ~30 Hz.
+- **R27.** Panel unmount (`LightShow3DPanel` removed from the dock) MUST NOT disconnect the active `EnttecPro`. The singleton MUST keep holding the instance, `transmitLoop` MUST continue running, and the dongle MUST continue receiving the last-written frame at 40 Hz.
 - **R28.** Panel remount MUST read the existing singleton via `getActiveDmx()` and attach its `SceneRunner` to it without touching the connection state. (The singleton decouples connection lifetime from component lifecycle — identical pattern to `audio-mixer-ref`.)
 
 ### Disconnect handling
@@ -123,7 +123,25 @@ Related: [local.light-show-scene-editor.md](local.light-show-scene-editor.md) (s
 
 ### Per-fixture live overrides (seam)
 
-- **R35.** Per-fixture pinned overrides (`light_show__overrides` rows; frontend `overridesRef`) MUST apply as a **fallback layer**, below live/timeline scenes — NOT as a top-winning layer. Precedence is `live override > timeline placement > pinned overrides > fallback scene`. (This matches shipped code in `LightShow3DPanel.tsx` and contradicts the brief's assumption that pins win; the pins-win case is flagged as OQ-1 below.)
+- **R35.** Per-fixture pinned overrides (`light_show__overrides` rows; frontend `overridesRef`) apply as a **fallback layer**, below live/timeline scenes — NOT as a top-winning layer. The authoritative precedence (confirmed per OQ-1 resolution 2026-04-27) is:
+
+  `live > timeline > pins > fallback`
+
+  Pins are consulted only when no live override and no timeline placement drives the fixture on the current frame. This matches shipped code in `LightShow3DPanel.tsx`.
+
+### Device identification + reconnect
+
+- **R36.** `navigator.serial.requestPort` allowlists known-good ENTTEC VID/PID pairs (starting with `0x0403:0x6001`). If a user selects a device whose VID/PID is not in the allowlist, a warning modal surfaces: "Unknown serial device — Try anyway / Report device" where Report opens a prefilled GitHub issue URL. "Try anyway" proceeds with the open; "Report device" or Cancel aborts without opening.
+- **R37.** When `writer.write` fails with a disconnect-like error (cable unplug), the layer does NOT tear down silently. Instead: a `@prmichaelsen/pretty-toasts` toast "DMX cable unplugged — watching for reconnect" is shown; a background watcher polls `navigator.serial.getPorts()` every 2 s for a port whose VID/PID matches the original device; on match, the layer auto-reconnects and the toast updates to "DMX reconnected". Explicit user **Disconnect** cancels the watcher. A user-initiated "Connect" to a different device also cancels the watcher.
+- **R38.** The transmit loop measures per-write latency. When the rolling-window average exceeds 30 ms, a pretty-toast "DMX output is falling behind — check USB connection" is shown. The loop does NOT block on slow writes; the next iteration proceeds normally once the current write resolves. Recovery (latency back under 30 ms) dismisses the toast silently.
+
+### Multi-window exclusive ownership (INV-5)
+
+- **R39.** DMX output is a browser-exclusive resource. Only one window/tab owns the `EnttecPro` instance at a time. A second window that attempts Connect receives a "Take DMX control" modal. On confirm, the owning window's `disconnect()` runs gracefully (releases writer, closes port) and the requesting window proceeds through `connect()`. Closing the owning window transparently releases the device; the next interaction in any remaining window can claim it.
+
+### Unified WebSocket (INV-4)
+
+- **R40.** Any DMX-output telemetry emitted server-to-client (e.g., output-state changes propagated for multi-window sync) flows over the unified `/ws` socket as `light_show__dmx__*` events (e.g., `light_show__dmx__state_changed`, `light_show__dmx__owner_changed`). The plugin MUST NOT open its own WS endpoint.
 
 ---
 
@@ -200,7 +218,7 @@ error         --disconnect()→ disconnected  (idempotent cleanup)
 | 1  | User clicks Connect on a Chrome/Edge browser with an ENTTEC Pro attached           | Picker shows, user selects port; state goes `connecting → connected`; transmit loop starts       | `connect-happy-path` |
 | 2  | Browser lacks WebSerial (Safari/Firefox)                                           | State goes to `error`; `onError("WebSerial not supported…")` fires; no exception thrown          | `connect-rejects-no-webserial` |
 | 3  | User cancels the port picker                                                       | State goes to `error`; `onError(msg)` fires; cleanup runs; caller's promise resolves             | `connect-user-cancels-picker` |
-| 4  | App calls `send()` at 60 fps                                                       | Each call is O(1) memcpy; only the latest frame reaches the dongle at ~30 Hz (33 ms interval)    | `send-is-nonblocking`, `transmit-loop-coalesces-60fps-to-30hz` |
+| 4  | App calls `send()` at 60 fps                                                       | Each call is O(1) memcpy; only the latest frame reaches the dongle at 40 Hz (25 ms interval)     | `send-is-nonblocking`, `transmit-loop-coalesces-latest-wins-at-40hz` |
 | 5  | Transmit loop is mid-`await writer.write` when `disconnect()` is called            | `disconnect()` awaits `transmitTask` before releasing the writer; no mid-write teardown race     | `disconnect-awaits-transmit-task` |
 | 6  | `writer.write` throws mid-loop (cable unplugged)                                   | Loop sets state `error`, calls `onError("Write failed: …")`, runs cleanup, exits                 | `write-failure-tears-down` |
 | 7  | Fixture with `dmxAddress=1, channelCount=6` is patched                             | Patch: `{startAddress: 1, channelCount: 6, universe: 1}`; bytes 0..5 reflect fixture state       | `autopatch-honors-explicit-pin`, `fixtures-to-dmx-par-layout` |
@@ -221,16 +239,18 @@ error         --disconnect()→ disconnected  (idempotent cleanup)
 | 22 | Rig identity changes (new fixture added)                                           | `autoPatch(rig)` reruns; `dmxPatchesRef.current` replaced with new list                          | `patches-rebuilt-on-rig-change` |
 | 23 | `autoPatch` input has 100 pinned fixtures filling the universe                     | Remaining unpinned fixtures silently dropped from auto-fill                                      | `autopatch-drops-when-universe-full` |
 | 24 | Send buffer received from caller is shorter than 512 bytes                         | `send()` copies up to `min(len, 512)` into `lastFrame`; remaining bytes retain prior value       | `send-handles-short-buffer` (undefined — see OQ-2) |
-| 25 | User clicks Connect and picks a non-ENTTEC serial device (e.g., Arduino)           | `undefined`                                                                                      | → [OQ-3](#open-questions) |
-| 26 | Cable unplugged mid-scene                                                          | Loop detects write failure; state → `error`; no auto-reconnect; scene keeps rendering in 3D     | `write-failure-tears-down` + undefined reconnect policy (OQ-4) |
-| 27 | Caller invokes `send()` faster than the loop can `await writer.write`              | Frames coalesced: latest wins; intermediate frames dropped; no queue buildup                    | `transmit-loop-coalesces-60fps-to-30hz` (undefined if dongle itself exerts backpressure — OQ-5) |
-| 28 | Two browser tabs both call `navigator.serial.requestPort` for the same device      | `undefined`                                                                                      | → [OQ-6](#open-questions) |
+| 25 | User clicks Connect and picks a non-allowlisted serial device                     | Warning modal "Unknown serial device — Try anyway / Report device"; Report opens prefilled GitHub issue URL; Cancel aborts | `non-enttec-device-warning-modal` |
+| 26 | Cable unplugged mid-scene                                                          | Toast "DMX cable unplugged — watching for reconnect"; background 2 s VID/PID watcher polls `getPorts()`; on match auto-reconnects, toast "DMX reconnected" | `cable-unplug-autoreconnect`, `explicit-disconnect-cancels-watcher` |
+| 27 | Caller invokes `send()` faster than the transmit cadence                           | Latest-frame-wins coalescing; transmit at 40 Hz (25 ms interval) per OQ-3 fix                    | `transmit-loop-coalesces-latest-wins-at-40hz` |
+| 28 | Two browser tabs attempt to own the same DMX device                                | Exclusive resource per INV-5; second tab sees "Take DMX control" modal; on confirm, first tab's `disconnect()` runs and second tab proceeds through `connect()` | `take-dmx-control-modal-transfers-ownership` |
 | 29 | Fixture patched with role `'par'` and `channelCount = 12` (larger than default)    | Dimmer/RGB written to base+0..3; base+4..5 held at 0; base+6..11 stay `0x00`                     | `fixtures-to-dmx-oversized-channel-count` |
-| 30 | Fixture with unknown role string (forward-compat; not `'par'` or `'moving_head'`)  | `undefined`                                                                                      | → [OQ-7](#open-questions) |
-| 31 | Pinned override sets `fixture.intensity = 0.5` while a timeline scene is rendering | Timeline scene wins; pin does NOT apply (contradicts brief's "pins win" assumption)              | `pins-apply-only-when-no-scene-driving` (+ OQ-1) |
+| 30 | Fixture with unknown role string (forward-compat; not `'par'` or `'moving_head'`)  | Silent-skip at DMX output (no bytes emitted for the patch); warning badge shown in fixture inspector | `unknown-role-silent-skip-with-inspector-badge` |
+| 31 | Pinned override sets `fixture.intensity = 0.5` while a timeline scene is rendering | Timeline scene wins; pin does NOT apply (precedence: live > timeline > pins > fallback)          | `pins-apply-only-when-no-scene-driving` |
 | 32 | Live override row persists across engine restart                                   | On reboot, scene_live.status returns active=true; evaluator resumes; DMX output resumes if attached | `persistence-invariant-live-override-survives-restart` |
-| 33 | Dongle applies hardware backpressure (USB write blocks > 33 ms)                    | `undefined`                                                                                      | → [OQ-5](#open-questions) |
+| 33 | Dongle applies hardware backpressure (USB write blocks > 30 ms avg)                | Transmit loop does NOT block; pretty-toast warning surfaces when rolling-window avg > 30 ms; dismissed silently on recovery | `hardware-backpressure-warns-but-loop-unblocked` |
 | 34 | Caller references channel > 512 via an oversized `channelCount` that escapes 512   | Patch is skipped in `fixturesToDMX` (`base + channelCount > 512` guard)                          | `fixtures-to-dmx-skips-out-of-bounds-patch` |
+| 35 | Two fixtures patched to overlapping channel ranges (not via autoPatch — manual)    | Overlap allowed; persistent warning badge in fixture inspector ("channels overlap with fixture X — outputs will conflict"); user can dismiss for intentional ganged setups | `channel-overlap-allowed-with-inspector-warning` |
+| 36 | Scene references a fixture id that was subsequently deleted from the rig          | Silent-skip at evaluator; scene inspector shows badge "references 1 missing fixture — edit to fix"; live show keeps running | `scene-missing-fixture-silent-skip-with-badge` |
 
 ---
 
@@ -251,7 +271,7 @@ error         --disconnect()→ disconnected  (idempotent cleanup)
 3. Pinned-override layer optionally composites (only when `activeLayer ∈ {fallback, none}`).
 4. `dmxRef.current?.connected` check; when true, call `fixturesToDMX(stateRef.current, dmxPatchesRef.current)` → 512-byte buffer → `dmx.send(buf)`.
 5. `send()` does one `Uint8Array.set(...)` copy into `lastFrame` and returns.
-6. The dedicated `transmitLoop()` (independent of React) wakes every 33 ms, builds the 518-byte widget frame from the current `lastFrame`, `await writer.write(frame)`, then `await setTimeout(33)`.
+6. The dedicated `transmitLoop()` (independent of React) wakes every 25 ms (40 Hz), builds the 518-byte widget frame from the current `lastFrame`, `await writer.write(frame)`, then `await setTimeout(25)`.
 
 ### Disconnect
 
@@ -276,7 +296,7 @@ error         --disconnect()→ disconnected  (idempotent cleanup)
 - [ ] `connect()` opens at 115200 baud, transitions `connecting → connected`, starts transmit loop
 - [ ] Widget frame is exactly 518 bytes with `0x7E`/`0x06`/`LSB(513)=0x01`/`MSB(513)=0x02`/`0x00`/…/`0xE7`
 - [ ] `send()` is O(1) and does not issue USB writes
-- [ ] Transmit loop coalesces bursts of `send()` calls; only the latest `lastFrame` reaches the dongle each ~33 ms
+- [ ] Transmit loop coalesces bursts of `send()` calls; only the latest `lastFrame` reaches the dongle each 25 ms (40 Hz)
 - [ ] `autoPatch` honors pins first, then auto-fills from address 1
 - [ ] `autoPatch` drops overlapping pins, out-of-range pins, and auto-fill overflow — all silently
 - [ ] `fixturesToDMX` returns exactly 512 bytes
@@ -345,15 +365,15 @@ All tests are vitest-style where frontend-resident; no frontend tests exist in t
 - **total-time-under-5ms**: 1000 calls complete in < 5 ms on a commodity laptop.
 - **no-usb-writes-during-burst**: the fake writer received ≤ 1 `write` during the 1000-call burst (coalescing proof).
 
-#### Test: transmit-loop-coalesces-60fps-to-30hz (covers R8)
+#### Test: transmit-loop-coalesces-latest-wins-at-40hz (covers R8)
 
 **Given**: A connected `EnttecPro`; test clock drives `setTimeout` deterministically; caller calls `send(frameN)` every 16 ms.
 
 **When**: 1000 ms of simulated time elapses with 62 `send` calls.
 
 **Then** (assertions):
-- **write-rate-30hz**: fake writer observed ~30 `write` calls (±1) over 1000 ms.
-- **latest-frame-wins**: the payload of the final observed `write` contains the channel bytes corresponding to `frame61` or `frame62` (latest seen before the iteration).
+- **write-rate-40hz**: fake writer observed ~40 `write` calls (±1) over 1000 ms (25 ms cadence).
+- **latest-frame-wins**: the payload of each `write` reflects the most-recent `send(frameN)` that landed before that iteration.
 - **no-queue-buildup**: fake writer's pending-write backlog never exceeds 1.
 
 #### Test: frame-layout-518-bytes (covers R6)
@@ -523,7 +543,7 @@ All tests are vitest-style where frontend-resident; no frontend tests exist in t
 **Then** (assertions):
 - **singleton-still-holds**: `getActiveDmx()` returns the same instance.
 - **state-still-connected**: `pro.connected === true`.
-- **transmit-loop-still-alive**: fake writer continues receiving writes at ~30 Hz for 200 ms after unmount.
+- **transmit-loop-still-alive**: fake writer continues receiving writes at 40 Hz for 200 ms after unmount.
 
 #### Test: panel-remount-picks-up-singleton (covers R28)
 
@@ -630,16 +650,17 @@ All tests are vitest-style where frontend-resident; no frontend tests exist in t
 - **only-pinned-kept**: `patches.length === 100` (pins only).
 - **unpinned-dropped**: no patch for either unpinned fixture.
 
-#### Test: negative-no-auto-reconnect-after-write-failure (covers R9)
+#### Test: non-unplug-write-error-no-reconnect (covers R9)
 
-**Given**: Write failure tears down the connection; state is `'error'`.
+**Given**: Write failure that is NOT a disconnect-style error (e.g., protocol fault); state is `'error'`.
 
 **When**: 2 seconds elapse with no user interaction.
 
 **Then** (assertions):
-- **no-reconnect-attempt**: `requestPort` was NOT called again.
+- **no-reconnect-attempt**: the VID/PID watcher is NOT armed for non-unplug failures; `requestPort` is NOT called.
 - **state-stays-error**: `pro.state === 'error'`.
 - **user-must-click-connect**: only explicit `connect()` on a fresh `EnttecPro` re-establishes output.
+- **note**: cable-unplug specifically triggers the R37 auto-reconnect watcher; see `cable-unplug-autoreconnect`.
 
 #### Test: negative-no-backend-dmx-calls (covers scope boundary)
 
@@ -671,41 +692,94 @@ All tests are vitest-style where frontend-resident; no frontend tests exist in t
 - **sequential-writes-only**: no two `writer.write` calls are ever concurrent (each awaits the previous before the next begins).
 - **single-writer-instance**: exactly one writer holds the lock at any time.
 
-#### Test: live-connect-non-enttec-device (covers R3 — undefined)
+#### Test: non-enttec-device-warning-modal (covers R36, OQ-1 — previously "live-connect-non-enttec-device")
 
-**Given**: User somehow selects a non-ENTTEC device (e.g., by overriding filter, or the filter is permissive in a forked browser).
+**Given**: User selects a serial device whose VID/PID is not in the ENTTEC allowlist.
 
-**When**: `connect()` proceeds with the bogus port.
-
-**Then** (assertions):
-- **undefined**: see OQ-3. Today the code has no post-open identification check — it will open the port, grab a writer, and start transmitting widget frames at a device that won't understand them. Writes may silently succeed on USB serial (non-fatal), may throw (→ R9 path), or may put the device into an undefined state.
-
-#### Test: two-tabs-same-device (covers undefined)
-
-**Given**: Two Chrome tabs both call `navigator.serial.requestPort` and select the same physical device.
-
-**When**: Both call `open()` concurrently.
+**When**: `connect()` proceeds to evaluate the selected port's descriptor.
 
 **Then** (assertions):
-- **undefined**: see OQ-6. WebSerial behavior here is browser-dependent; some browsers grant one tab and reject the other, some serialize. Spec intentionally leaves this to the browser.
+- **modal-shown**: a warning modal renders with title "Unknown serial device" and two buttons: "Try anyway" and "Report device".
+- **report-has-github-url**: the Report button href targets a prefilled GitHub issue URL including the VID/PID.
+- **try-anyway-proceeds**: clicking "Try anyway" continues with `port.open` as today's R4 flow.
+- **cancel-aborts**: clicking Cancel / dismissing the modal leaves state `disconnected`; no `open` call made.
 
-#### Test: dongle-backpressure (covers undefined)
+#### Test: take-dmx-control-modal-transfers-ownership (covers R39, OQ-4)
 
-**Given**: Dongle stalls USB writes beyond the 33 ms transmit interval (e.g., bus saturation).
+**Given**: Window A owns a connected `EnttecPro`; window B (same project, different tab) attempts Connect.
 
-**When**: `writer.write` takes 100 ms to resolve.
-
-**Then** (assertions):
-- **undefined**: see OQ-5. Current loop will just serialize — 10 Hz effective rate instead of 30 Hz. No explicit timeout, no error, no degradation signal. Acceptable? Unknown.
-
-#### Test: unknown-role-fixture (covers undefined)
-
-**Given**: Fixture with `role: 'laser'` (not in today's `FixtureRole` union; forward-compat).
-
-**When**: `autoPatch` and `fixturesToDMX` run.
+**When**: User clicks Connect in window B.
 
 **Then** (assertions):
-- **undefined**: see OQ-7. TypeScript compile blocks this today, but a JS caller or runtime-loaded rig could inject it. Default channel count comes out as `6` (current `defaultChannelCount` ignores role); `fixturesToDMX` hits the `else` branch of the `role !== 'moving_head'` test and treats it as a par — writing 0 to slots 4-5. Almost certainly wrong for a real laser but won't crash.
+- **b-sees-modal**: window B shows "Take DMX control" modal ("DMX is connected in another window — take over?").
+- **confirm-disconnects-a**: on confirm, window A's `disconnect()` runs (writer released, port closed) via the unified-WS coordination channel.
+- **b-connects**: window B's `connect()` proceeds to `connected`.
+- **a-state-disconnected**: window A's UI reflects disconnected state via `light_show__dmx__state_changed`.
+
+#### Test: hardware-backpressure-warns-but-loop-unblocked (covers R38, OQ-8)
+
+**Given**: Dongle stalls USB writes; rolling-window average of `writer.write` duration rises above 30 ms.
+
+**When**: The transmit loop continues to iterate.
+
+**Then** (assertions):
+- **toast-shown**: a pretty-toast "DMX output is falling behind — check USB connection" is emitted exactly once while the condition persists.
+- **loop-does-not-block**: the loop proceeds to subsequent iterations as each write resolves; no unbounded queue builds.
+- **toast-dismissed-on-recovery**: when latency drops under 30 ms on the rolling window, the toast is dismissed silently (no "recovered" toast spam).
+
+#### Test: cable-unplug-autoreconnect (covers R37, OQ-2)
+
+**Given**: Connected `EnttecPro`; cable is physically unplugged; `writer.write` rejects with disconnect error.
+
+**When**: The loop observes the write failure.
+
+**Then** (assertions):
+- **toast-shown**: pretty-toast "DMX cable unplugged — watching for reconnect" appears.
+- **watcher-polls-getports**: `navigator.serial.getPorts` is polled every 2 s for a port whose VID/PID matches the original device.
+- **auto-reconnects-on-match**: when a matching port appears, the layer opens it and flips state back to `connected`; toast updates to "DMX reconnected".
+
+#### Test: explicit-disconnect-cancels-watcher (covers R37)
+
+**Given**: Reconnect watcher is active after a cable-unplug event.
+
+**When**: User clicks explicit Disconnect (or attempts to connect a different device).
+
+**Then** (assertions):
+- **watcher-cancelled**: the 2 s polling interval is cleared.
+- **no-future-reconnect**: re-plugging the original device does NOT auto-reconnect.
+
+#### Test: unknown-role-silent-skip-with-inspector-badge (covers OQ-7)
+
+**Given**: Fixture with `role: 'laser'` (not in today's union).
+
+**When**: `fixturesToDMX` runs for this patch.
+
+**Then** (assertions):
+- **no-dmx-bytes**: the patch's channel range receives no writes (remains `0x00`).
+- **no-exception**: no runtime error.
+- **inspector-badge**: the fixture inspector shows a warning badge: "unknown fixture role — no DMX output".
+
+#### Test: channel-overlap-allowed-with-inspector-warning (covers OQ-5)
+
+**Given**: Two manually-patched `DMXPatch` entries whose channel ranges overlap.
+
+**When**: `fixturesToDMX` runs for both fixtures' states.
+
+**Then** (assertions):
+- **both-patches-write**: both patches produce byte writes; later write wins for any overlapped index (natural result of sequential buffer writes).
+- **inspector-warning**: each involved fixture's inspector shows "channels overlap with fixture X — outputs will conflict".
+- **dismissible**: user can dismiss the warning to signal an intentional ganged setup; dismissal persists for the session.
+
+#### Test: scene-missing-fixture-silent-skip-with-badge (covers OQ-6)
+
+**Given**: A scene references a fixture id that has been deleted from the rig.
+
+**When**: The evaluator runs the frame.
+
+**Then** (assertions):
+- **silent-skip-in-output**: `fixturesToDMX` produces no bytes for the missing fixture id (no matching patch).
+- **live-show-continues**: the remaining fixtures render normally.
+- **scene-inspector-badge**: a badge appears on the scene row: "references 1 missing fixture — edit to fix".
 
 ---
 
@@ -714,7 +788,7 @@ All tests are vitest-style where frontend-resident; no frontend tests exist in t
 - **sACN / Art-Net / OLA.** Planned for multi-universe network output; not this spec.
 - **GDTF fixture profiles.** Per-fixture channel layouts will replace the role-based switch in `fixturesToDMX`; not this spec.
 - **MVR rig import.** Fixtures come from the hardcoded `RIG` plus user edits through chat MCP tools; bulk MVR import is a future path.
-- **Auto-reconnect on write failure.** User must click Connect again after an `error` state.
+- **Auto-reconnect on non-unplug write failure.** The R37 watcher handles cable-unplug specifically (matching VID/PID in `getPorts()`); other error classes (protocol fault, USB stack error) require the user to click Connect again.
 - **Multi-universe transmit.** Universe field is forward-compat; today only universe 1 is sent and there's only one active `EnttecPro` instance on the singleton.
 - **16-bit pan/tilt (fine channels).** Only 8-bit linear maps today.
 - **Backend-side DMX output.** The browser is the audio/visual source of truth — no Python DMX code exists.
@@ -725,56 +799,26 @@ All tests are vitest-style where frontend-resident; no frontend tests exist in t
 
 ## Open Questions
 
-### OQ-1 — Do pinned per-fixture overrides win over live/timeline scenes?
+### Resolved
 
-The brief's framing ("per-fixture live overrides winning over scenes") contradicts the shipped precedence (`live > timeline > pins > fallback`). Either:
-- (a) The current pins-as-fallback behavior is correct and the brief is mistaken, OR
-- (b) The design intent is pins-always-win and the current code is a bug.
+- **OQ-1 — Non-ENTTEC device selected**: **Resolved (fix)**. Allowlist of known-good VID/PID (starting with `0x0403:0x6001`). Non-allowlisted selection surfaces a "Try anyway / Report device" warning modal. Requirement R36. Test `non-enttec-device-warning-modal`.
+- **OQ-2 — Cable-unplug auto-reconnect**: **Resolved (fix)**. Pretty-toast + 2 s VID/PID watcher polling `getPorts()`; auto-reconnects on match; explicit Disconnect cancels watcher. Requirement R37. Tests `cable-unplug-autoreconnect`, `explicit-disconnect-cancels-watcher`.
+- **OQ-3 — Write > 60 fps / transmit cadence**: **Resolved (fix)**. Codify latest-frame-wins coalescing; raise transmit cadence from 30 Hz (33 ms) to 40 Hz (25 ms). Requirement R8 updated. Test `transmit-loop-coalesces-latest-wins-at-40hz`.
+- **OQ-4 — Two tabs, same device**: **Resolved via INV-5**. DMX is an exclusive browser resource; take-over modal pattern transfers ownership. Requirement R39. Test `take-dmx-control-modal-transfers-ownership`.
+- **OQ-5 — Fixture channel overlap (manual patches)**: **Resolved (codify)**. Overlap allowed; persistent warning in fixture inspector; user can dismiss for intentional ganged setups. Test `channel-overlap-allowed-with-inspector-warning`.
+- **OQ-6 — Scene references deleted fixture**: **Resolved (codify)**. Silent-skip at evaluator; scene-inspector warning badge. Test `scene-missing-fixture-silent-skip-with-badge`.
+- **OQ-7 — Unknown fixture role**: **Resolved (codify)**. Silent-skip at DMX output (no bytes); fixture-inspector warning badge. Test `unknown-role-silent-skip-with-inspector-badge`.
+- **OQ-8 — Hardware backpressure**: **Resolved (fix)**. Transmit loop measures write latency; pretty-toast warning when rolling-window avg > 30 ms; loop never blocks on slow writes; recovers silently. Requirement R38. Test `hardware-backpressure-warns-but-loop-unblocked`.
 
-Behavior Table row 31 is filed under (a) as observed; if the answer is (b), R35 needs inverting and `SceneRunner`'s composition order has to move pins into a post-scene pass. Pending Patrick's clarification.
+### Still open (non-blocking)
 
-### OQ-2 — Short-buffer `send()` semantics
+### OQ-short-buffer — Short-buffer `send()` semantics
 
-`send(channels)` today calls `this.lastFrame.set(channels.subarray(0, DMX_CHANNELS))`. If `channels.length < 512`, only the first `channels.length` bytes are overwritten; trailing bytes retain prior values (potentially stale). Should short buffers be:
-- (a) zero-padded to 512 before copy,
-- (b) rejected with a thrown error or silent no-op, OR
-- (c) accepted as-is (current behavior, with prior bytes retained)?
+`send(channels)` today calls `this.lastFrame.set(channels.subarray(0, DMX_CHANNELS))`. If `channels.length < 512`, only the first `channels.length` bytes are overwritten; trailing bytes retain prior values (potentially stale). All callers today produce exactly 512 bytes, so no observed defect. **Deferred**: low-risk; revisit when a caller emits short buffers.
 
-All callers today produce exactly 512 bytes, so no observed defect — but the contract is undefined.
+### OQ-oversized-patch — Oversized `channelCount` on a hand-crafted `DMXPatch`
 
-### OQ-3 — Connect to non-ENTTEC device
-
-The VID/PID filter narrows the picker but does not prevent a user from selecting an arbitrary serial device on a system with loose permissions (or in a forked browser that ignores filters). Today there is no handshake — `connect()` assumes the port speaks the widget protocol. Should there be:
-- (a) a post-open identification probe (send widget label 10 "Get Widget Serial Number" and wait for the response), OR
-- (b) no probe (current), accept that garbage writes to a non-ENTTEC device are the user's problem?
-
-### OQ-4 — Cable disconnect mid-scene: auto-reconnect policy
-
-Today: no auto-reconnect. User must click Connect again. Acceptable for a live-show ops context? Or should the layer attempt backoff-reconnect on transient failures?
-
-### OQ-5 — Hardware backpressure
-
-If `writer.write` takes longer than 33 ms (USB congestion, dongle stall), the transmit rate degrades silently. No timeout, no telemetry, no error. Should there be:
-- (a) an AbortController timeout on each `write`,
-- (b) a health metric on the singleton (reported write-rate),
-- (c) a warning when effective rate drops below some threshold, OR
-- (d) status quo (silent degradation)?
-
-### OQ-6 — Two tabs, same device
-
-`navigator.serial` behavior across concurrent tabs is browser-dependent. Does scenecraft want to actively detect/deny the second tab (e.g., via a BroadcastChannel heartbeat claiming the device), or accept the browser's default behavior?
-
-### OQ-7 — Unknown fixture role in `fixturesToDMX`
-
-A `role` string not in the current `{'par', 'moving_head'}` union falls through to the par branch today (effects=0, speed=0). Is that acceptable default, or should unknown roles be skipped entirely (no channel writes)?
-
-### OQ-8 — Scene references deleted fixture
-
-When a scene or pinned override references a fixture id that has been deleted from the rig: today the `fixturesToDMX` patch list is rebuilt from the current rig, so the stale state entry (if any) is simply not patched. The scene evaluator writes state into `states[i]` but there's no DMX patch for the ghost fixture → no bytes. Should the evaluator warn, or is silent skip correct? (Leaning correct, but not explicitly tested.)
-
-### OQ-9 — Channel > 512 from oversized pinned channelCount
-
-Partially covered by R15 (pin that extends past 512 is dropped by `autoPatch`) and R23 (`fixturesToDMX` guard). But a user could theoretically produce a `DMXPatch` by hand with `startAddress: 1, channelCount: 600` that slips past `autoPatch`. The R23 guard handles it. Confirm that the only ingress to `fixturesToDMX` is via `autoPatch`'s output (yes, in shipped code) → no realistic attack surface — but spec says so explicitly.
+R23 guard handles this in `fixturesToDMX`; only ingress to `fixturesToDMX` in shipped code is `autoPatch`'s output, which already filters. **Codified** — no realistic attack surface, R23 is authoritative.
 
 ---
 
