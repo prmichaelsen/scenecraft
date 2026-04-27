@@ -10,7 +10,7 @@
 
 ## Summary
 
-Scenecraft is a layered system with reasonably clean boundaries at the top (plugin contributions, context providers, content-addressed VCS) and looser boundaries deep in the editor (Timeline reaches across track internals, AudioTrack doubles as playback master). The backend enforces a **R9a invariant** (plugins never touch raw DB) via a `plugin_api` allowlist facade — but enforcement is naming-convention only, not runtime. The frontend uses a **hybrid composition model**: React contexts for selection/data/playback state; module singletons (`audio-mixer-ref`, `playback-sync-ref`) for cross-panel coordination that dockview siblings can't express through a provider tree.
+Scenecraft is a layered system with reasonably clean boundaries at the top (plugin contributions, context providers, content-addressed VCS) and looser boundaries deep in the editor (Timeline reaches across track internals, AudioTrack doubles as playback master). The backend enforces a **R9a invariant** (plugins never touch raw DB) via a `plugin_api` allowlist facade — but enforcement is naming-convention only, not runtime. The frontend uses a **hybrid composition model**: React contexts for selection/data/playback state; module singletons (`audio-mixer-ref`, `playback-sync-ref`) for cross-panel coordination that sibling panels can't express through a provider tree.
 
 **64 conceptual units identified** across 6 subsystems. **~15 boundary leaks** of varying severity. Leaks concentrate in three places: (1) **Timeline ↔ tracks** (tight coupling, 4200 LOC of orchestration), (2) **AudioTrack ↔ Timeline** (HTMLAudioElement is master clock, Timeline seeks via ref), (3) **plugin_api ↔ raw DB** (R9a honored by convention, not enforcement).
 
@@ -94,8 +94,8 @@ Scenecraft is a layered system with reasonably clean boundaries at the top (plug
 
 | # | Unit | Responsibility |
 |---|---|---|
-| 1 | **EditorPanelLayout** | Orchestrate dockview panel tree; persistence; per-panel error boundaries |
-| 2 | **PanelLayout + dockview** | Split/group tree; drag-resize, collapse, tab switching, lock |
+| 1 | **EditorPanelLayout** | Orchestrate custom panel tree (`@/components/panel-layout`); persistence; per-panel error boundaries |
+| 2 | **PanelLayout** (first-party) | Own split/group tree data model + renderer; drag-resize (ResizeSash), collapse, tab switching, lock — no third-party layout lib |
 | 3 | **Timeline** | 4200 LOC orchestrator: composes VideoTrack/TransitionTrack/AudioTrack/RulesTrack/Playhead |
 | 4 | **VideoTrack** | Keyframe clips + drag-select |
 | 5 | **TransitionTrack** | Transition clips; 1800 LOC; mutates rects during drag; reaches into Timeline state |
@@ -109,7 +109,9 @@ Scenecraft is a layered system with reasonably clean boundaries at the top (plug
 | 13 | **PreviewContext** | Hover-preview URL + video scrub state |
 | 14 | **ContextMenuProvider** | Context-menu visibility state |
 
-Plus **2 module singletons**: `audio-mixer-ref`, `playback-sync-ref` — intentional bypass of React tree for cross-panel access (dockview panels are siblings).
+Plus **2 module singletons**: `audio-mixer-ref`, `playback-sync-ref` — intentional bypass of React tree for cross-panel access (panels are DOM siblings in the first-party `PanelLayout` tree, not descendants of a common provider).
+
+**Custom panel-layout module** (`src/components/panel-layout/`): `PanelLayout.tsx`, `PanelGroup.tsx`, `SplitContainer.tsx`, `ResizeSash.tsx`, `types.ts`, `validate.ts`. Migrated off dockview; `dockview-react` lingering in `package.json` is a stale dep to remove.
 
 ### 1E. Audio Subsystem (12 units)
 
@@ -263,7 +265,7 @@ Each row = one feature area to fan out as a `@acp.spec` worktree. Scope is delib
 
 | # | Spec target | Primary sources |
 |---|---|---|
-| 9 | **panel-layout-and-plugin-panel-host** | EditorPanelLayout.tsx, PanelLayout.tsx, plugin-host.ts |
+| 9 | **panel-layout-and-plugin-panel-host** | EditorPanelLayout.tsx, src/components/panel-layout/* (first-party), plugin-host.ts |
 | 10 | **editor-state-selection-mutex** | EditorStateContext.tsx + all Property panels |
 | 11 | **timeline-composition-and-playback-loop** | Timeline.tsx (top-level) + CurrentTimeContext.tsx |
 | 12 | **video-and-transition-tracks** | VideoTrack.tsx, TransitionTrack.tsx |
