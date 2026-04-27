@@ -482,9 +482,7 @@ describe('AudioWaveform', () => {
   })
 
   // R15: error-hides-container
-  // NOTE: requires browser — happy-dom doesn't reliably reflect opacity
-  // after async state updates in useEffect. Verified manually.
-  it.skip('error-hides-container', async () => {
+  it('error-hides-container', async () => {
     fetchSpy.mockResolvedValueOnce(mockErrorResponse(500))
 
     const { container } = render(
@@ -578,9 +576,7 @@ describe('AudioWaveform', () => {
   })
 
   // R9: waveform-mount-fetches-once
-  // NOTE: requires browser — happy-dom async useEffect timing doesn't
-  // reliably trigger the fetch within the act() window. Verified manually.
-  it.skip('waveform-mount-fetches-once', async () => {
+  it('waveform-mount-fetches-once', async () => {
     setupPeaksFetch(Array(20).fill(0x3C00))
 
     render(
