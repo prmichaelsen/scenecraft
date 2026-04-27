@@ -114,6 +114,52 @@ export type PanelContribution = {
   Component: ComponentType<unknown>
 }
 
+/**
+ * A plugin-contributed track lane on the main editor Timeline.
+ *
+ * The frontend Timeline iterates registered track types (after rendering
+ * the built-in video / audio / transition rows) and renders each one's
+ * ``Renderer`` underneath. Plugins use this to surface their own data
+ * on the timeline — e.g., light_show's scene placements rendered as
+ * colored bars.
+ *
+ * MVP scope (lighter than the full task-137 spec): we DO NOT refactor
+ * the existing video/audio rendering paths through this registry. Those
+ * stay hardcoded. Plugin track types render in a separate dispatch loop
+ * after them. Once all built-in types have an extracted contribution,
+ * we can collapse the loops into one — that's a follow-up.
+ *
+ * No backend track-row entry is required. A plugin's track type is a
+ * pure UI contribution; the data backing the lane comes from whatever
+ * REST/WS surface the plugin already exposes (placements, etc.).
+ */
+export type TrackRendererProps = {
+  /** Pixels per second on the timeline ruler. */
+  pxPerSec: number
+  /** Horizontal scroll offset of the timeline viewport. */
+  scrollLeft: number
+  /** Visible viewport width in pixels. */
+  viewportWidth: number
+  /** Current playhead time in seconds. */
+  currentTime: number
+  /** Project name (for the renderer's own data fetches). */
+  projectName: string
+}
+
+export type TrackTypeContribution = {
+  /** Stable id. Convention: snake_case, matches the plugin name. */
+  id: string
+  /** Tab/lane label shown in the timeline gutter. */
+  label: string
+  /** Lane height in pixels. */
+  defaultHeight?: number
+  /** Lower number = higher in the timeline stack (renders earlier). */
+  sortHint?: number
+  /** Renderer for the lane body. */
+  Renderer: ComponentType<TrackRendererProps>
+}
+
+
 export type ContextMenuDescriptor = {
   /** Entity kind this context menu contributes to. */
   entityType: string
@@ -157,6 +203,8 @@ class PluginHostImpl {
   private contextMenus = new Map<string, ContextMenuDescriptor[]>()
   private entries = new Map<string, RegistryEntry>()
   private panels = new Map<string, PanelContribution>()
+  private trackTypes = new Map<string, TrackTypeContribution>()
+  private trackTypeListeners = new Set<() => void>()
 
   /**
    * Activate a plugin module. Creates a PluginContext and calls
@@ -284,6 +332,55 @@ class PluginHostImpl {
     return d
   }
 
+  /**
+   * Register a timeline track-type contribution. Returns a Disposable that
+   * removes it from the registry when disposed. Notifies subscribers
+   * (Timeline.tsx + tests) so the timeline re-renders to include / drop
+   * the lane.
+   */
+  registerTrackType(
+    track: TrackTypeContribution,
+    context?: PluginContext,
+  ): Disposable {
+    if (this.trackTypes.has(track.id)) {
+      throw new Error(`duplicate track type id: ${track.id}`)
+    }
+    this.trackTypes.set(track.id, track)
+    for (const cb of this.trackTypeListeners) cb()
+
+    const d = makeDisposable(() => {
+      if (this.trackTypes.get(track.id) === track) {
+        this.trackTypes.delete(track.id)
+        for (const cb of this.trackTypeListeners) cb()
+      }
+    })
+    if (context) context.subscriptions.push(d)
+    return d
+  }
+
+  /** List all registered track types, sorted ascending by sortHint. */
+  listTrackTypes(): TrackTypeContribution[] {
+    return Array.from(this.trackTypes.values()).sort(
+      (a, b) => (a.sortHint ?? 1000) - (b.sortHint ?? 1000),
+    )
+  }
+
+  /** Look up one track type by id. */
+  getTrackType(id: string): TrackTypeContribution | undefined {
+    return this.trackTypes.get(id)
+  }
+
+  /**
+   * Subscribe to registration / disposal of track types. Returns an
+   * unsubscribe fn. Designed for ``useSyncExternalStore`` consumers
+   * (Timeline.tsx); fires on every register/dispose so the consumer
+   * re-renders.
+   */
+  subscribeTrackTypes(cb: () => void): () => void {
+    this.trackTypeListeners.add(cb)
+    return () => { this.trackTypeListeners.delete(cb) }
+  }
+
   /** List all panel contributions currently registered. */
   listPanels(): PanelContribution[] {
     return Array.from(this.panels.values())
@@ -333,6 +430,8 @@ class PluginHostImpl {
     this.contextMenus.clear()
     this.entries.clear()
     this.panels.clear()
+    this.trackTypes.clear()
+    this.trackTypeListeners.clear()
   }
 }
 
