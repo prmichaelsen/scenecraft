@@ -110,6 +110,126 @@ export function applyStaticColor(
 }
 
 /**
+ * Continuous sinusoidal fade between two colors.
+ * Uses sceneTime to animate between color_a and color_b over period_sec,
+ * with optional phase offset for staggering across fixtures.
+ */
+export function applyColorFade(
+  t: number,
+  states: FixtureState[],
+  params: Record<string, unknown>,
+  _context: SceneContext,
+): void {
+  const filter = _buildFilter(params)
+  const colorA = params.color_a as [number, number, number]
+  const colorB = params.color_b as [number, number, number]
+  const periodSec = params.period_sec as number
+  const phase = params.phase as number
+  const intensity = params.intensity as number
+
+  // Sinusoidal blend: 0.5 + 0.5 * sin gives smooth range [0, 1]
+  // Use continuous time rather than modulo to avoid step artifacts
+  const totalTime = t + phase
+  const normalizedTime = (totalTime / periodSec) * 2 * Math.PI
+  const blend = 0.5 + 0.5 * Math.sin(normalizedTime)
+
+  for (const s of states) {
+    if (filter !== null && !filter(s)) continue
+    s.intensity = intensity
+    // Smooth linear interpolation between colorA and colorB
+    s.color = [
+      colorA[0] + (colorB[0] - colorA[0]) * blend,
+      colorA[1] + (colorB[1] - colorA[1]) * blend,
+      colorA[2] + (colorB[2] - colorA[2]) * blend,
+    ]
+  }
+}
+
+/**
+ * Flash/strobe effect — rapidly flashes on and off with controllable frequency
+ * and duty cycle.
+ */
+export function applyStrobe(
+  t: number,
+  states: FixtureState[],
+  params: Record<string, unknown>,
+  _context: SceneContext,
+): void {
+  const filter = _buildFilter(params)
+  const frequencyHz = params.frequency_hz as number
+  const dutyCycle = params.duty_cycle as number
+  const intensity = params.intensity as number
+  const color = params.color as [number, number, number]
+
+  const periodSec = 1 / frequencyHz
+  const phaseInPeriod = (t % periodSec) / periodSec
+  const isOn = phaseInPeriod < dutyCycle
+
+  for (const s of states) {
+    if (filter !== null && !filter(s)) continue
+    s.color = [color[0], color[1], color[2]]
+    s.intensity = isOn ? intensity : 0
+  }
+}
+
+/**
+ * Discrete color chase — cycles through an array of colors with per-fixture
+ * phase offset to create running/cascading effect. Optional fade_sec smooths
+ * transitions between colors.
+ */
+export function applyColorChase(
+  t: number,
+  states: FixtureState[],
+  params: Record<string, unknown>,
+  _context: SceneContext,
+): void {
+  const filter = _buildFilter(params)
+  const colors = params.colors as [number, number, number][]
+  const periodSec = params.period_sec as number
+  const phase = params.phase as number
+  const fadeSec = (params.fade_sec as number) ?? 0
+  const intensity = params.intensity as number
+
+  if (!Array.isArray(colors) || colors.length === 0) return
+
+  const totalTime = t + phase
+  const colorDurationSec = periodSec / colors.length
+  const cyclePosition = ((totalTime / periodSec) * colors.length) % colors.length
+  const colorIndex = Math.floor(cyclePosition) % colors.length
+  const positionInColor = cyclePosition - colorIndex
+
+  let color: [number, number, number]
+  if (fadeSec <= 0 || fadeSec > colorDurationSec) {
+    // No fade or fade longer than color duration: hard cut
+    color = colors[colorIndex]
+  } else {
+    // Smooth fade during last `fadeSec` of each color duration
+    const fadeStart = colorDurationSec - fadeSec
+    if (positionInColor < fadeStart) {
+      // Before fade zone: hold current color
+      color = colors[colorIndex]
+    } else {
+      // In fade zone: interpolate to next color
+      const nextIndex = (colorIndex + 1) % colors.length
+      const blendProgress = (positionInColor - fadeStart) / fadeSec
+      const c1 = colors[colorIndex]
+      const c2 = colors[nextIndex]
+      color = [
+        c1[0] + (c2[0] - c1[0]) * blendProgress,
+        c1[1] + (c2[1] - c1[1]) * blendProgress,
+        c1[2] + (c2[2] - c1[2]) * blendProgress,
+      ]
+    }
+  }
+
+  for (const s of states) {
+    if (filter !== null && !filter(s)) continue
+    s.intensity = intensity
+    s.color = [color[0], color[1], color[2]]
+  }
+}
+
+/**
  * Run multiple sub-primitives within a single scene.
  *
  * params shape:
@@ -163,6 +283,9 @@ export function applyComposite(
 export const PRIMITIVE_REGISTRY: Record<string, PrimitiveApplyFn> = {
   rotating_head: applyRotatingHead,
   static_color: applyStaticColor,
+  color_fade: applyColorFade,
+  color_chase: applyColorChase,
+  strobe: applyStrobe,
   composite: applyComposite,
 }
 
