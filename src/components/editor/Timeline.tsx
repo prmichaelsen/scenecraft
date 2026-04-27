@@ -350,7 +350,6 @@ export type KeyframeWithTime = Keyframe & { timeSeconds: number }
 const VIDEO_HEIGHT_KEY = 'scenecraft-video-track-height'
 const DEFAULT_VIDEO_HEIGHT = 96
 const MIN_VIDEO_HEIGHT = 48
-const MAX_VIDEO_HEIGHT = 400
 
 const PREVIEW_HEIGHT_KEY = 'scenecraft-preview-height'
 const DEFAULT_PREVIEW_HEIGHT = 180
@@ -533,7 +532,7 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
   // Restore persisted heights from localStorage after mount (SSR-safe)
   useEffect(() => {
     const storedVideo = localStorage.getItem(VIDEO_HEIGHT_KEY)
-    if (storedVideo) setVideoTrackHeight(Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, parseInt(storedVideo, 10))))
+    if (storedVideo) setVideoTrackHeight(Math.max(MIN_VIDEO_HEIGHT, parseInt(storedVideo, 10)))
     const storedPreview = localStorage.getItem(PREVIEW_HEIGHT_KEY)
     if (storedPreview) setPreviewHeight(Math.max(MIN_PREVIEW_HEIGHT, parseInt(storedPreview, 10)))
     const storedAudio = localStorage.getItem(AUDIO_HEIGHT_KEY)
@@ -2003,7 +2002,8 @@ export function Timeline({ data, v2 }: { data: EditorData; v2?: boolean }) {
       }
       if (!trackDragRef.current.dragging) return
       const delta = e.clientY - trackDragRef.current.startY
-      const newHeight = Math.max(MIN_VIDEO_HEIGHT, Math.min(MAX_VIDEO_HEIGHT, trackDragRef.current.startHeight + delta))
+      // No max clamp — lanes grow arbitrarily tall per user intent.
+      const newHeight = Math.max(MIN_VIDEO_HEIGHT, trackDragRef.current.startHeight + delta)
       setVideoTrackHeight(newHeight)
     }
     const handleMouseUp = () => {
@@ -4288,16 +4288,107 @@ const TimeDisplay = memo(function TimeDisplay({ currentTime, duration, onSeek }:
 
 /**
  * Iterates ``PluginHost.listTrackTypes()`` and renders each registered
- * track type as a separate row. Each row is shaped like the existing
- * Rules / Audio rows (relative shrink-0, top border) so visual rhythm
- * is consistent. Plugin renderers receive the timeline geometry plus
- * project context and own everything inside their lane.
+ * track type as a separate row with a resize sash beneath it. Each row
+ * is shaped like the existing Rules / Audio rows (relative shrink-0,
+ * top border) so visual rhythm is consistent. Plugin renderers receive
+ * the timeline geometry plus project context and own everything inside
+ * their lane.
  *
  * Subscribed via ``useSyncExternalStore`` so register / dispose calls
  * (HMR reloads, dynamic plugin add/remove) re-render the timeline
  * immediately. SSR snapshot returns an empty array — plugins register
  * client-side at editor mount, post-hydration.
+ *
+ * Per-lane height: persisted to localStorage keyed by track-type id so
+ * each plugin lane remembers its own size. No max clamp — drag as tall
+ * as the user wants. Min is 24px so the label stays legible.
  */
+const MIN_PLUGIN_LANE_HEIGHT = 24
+const PLUGIN_LANE_HEIGHT_KEY_PREFIX = 'scenecraft-plugin-lane-height:'
+
+function _loadLaneHeight(id: string, fallback: number): number {
+  if (typeof window === 'undefined') return fallback
+  const raw = window.localStorage.getItem(PLUGIN_LANE_HEIGHT_KEY_PREFIX + id)
+  if (!raw) return fallback
+  const n = parseInt(raw, 10)
+  return Number.isFinite(n) ? Math.max(MIN_PLUGIN_LANE_HEIGHT, n) : fallback
+}
+
+function _saveLaneHeight(id: string, height: number): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(PLUGIN_LANE_HEIGHT_KEY_PREFIX + id, String(height))
+}
+
+function PluginLane({
+  trackType,
+  pxPerSec,
+  scrollLeft,
+  viewportWidth,
+  currentTime,
+  projectName,
+}: {
+  trackType: import('@/lib/plugin-host').TrackTypeContribution
+  pxPerSec: number
+  scrollLeft: number
+  viewportWidth: number
+  currentTime: number
+  projectName: string
+}) {
+  const defaultH = trackType.defaultHeight ?? 48
+  const [height, setHeight] = useState(() => _loadLaneHeight(trackType.id, defaultH))
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null)
+
+  const onSashDown = useCallback((e: React.MouseEvent) => {
+    dragRef.current = { startY: e.clientY, startHeight: height }
+    e.preventDefault()
+  }, [height])
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current
+      if (!d) return
+      setHeight(Math.max(MIN_PLUGIN_LANE_HEIGHT, d.startHeight + (e.clientY - d.startY)))
+    }
+    const onUp = () => {
+      if (dragRef.current) {
+        dragRef.current = null
+        // Persist the final value. Reading the latest via setter callback
+        // avoids stale-closure issues without adding a ref mirror.
+        setHeight((h) => { _saveLaneHeight(trackType.id, h); return h })
+      }
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [trackType.id])
+
+  const Renderer = trackType.Renderer
+  return (
+    <>
+      <div className="relative shrink-0 border-t border-gray-800" style={{ height }}>
+        <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
+          {trackType.label}
+        </div>
+        <Renderer
+          pxPerSec={pxPerSec}
+          scrollLeft={scrollLeft}
+          viewportWidth={viewportWidth}
+          currentTime={currentTime}
+          projectName={projectName}
+        />
+      </div>
+      {/* Resize sash — matches the existing audio/video sash styling. */}
+      <div
+        className="h-1.5 cursor-row-resize hover:bg-blue-500/50 active:bg-blue-500 bg-gray-800 transition-colors shrink-0 relative z-20"
+        onMouseDown={onSashDown}
+      />
+    </>
+  )
+}
+
 function PluginTrackLanes({
   pxPerSec,
   scrollLeft,
@@ -4319,27 +4410,17 @@ function PluginTrackLanes({
   if (trackTypes.length === 0) return null
   return (
     <>
-      {trackTypes.map((tt) => {
-        const Renderer = tt.Renderer
-        return (
-          <div
-            key={tt.id}
-            className="relative shrink-0 border-t border-gray-800"
-            style={{ height: tt.defaultHeight ?? 48 }}
-          >
-            <div className="sticky left-0 top-0 px-2 py-0.5 text-[10px] text-gray-600 uppercase tracking-wider z-10 bg-gray-950/80 w-fit pointer-events-none">
-              {tt.label}
-            </div>
-            <Renderer
-              pxPerSec={pxPerSec}
-              scrollLeft={scrollLeft}
-              viewportWidth={viewportWidth}
-              currentTime={currentTime}
-              projectName={projectName}
-            />
-          </div>
-        )
-      })}
+      {trackTypes.map((tt) => (
+        <PluginLane
+          key={tt.id}
+          trackType={tt}
+          pxPerSec={pxPerSec}
+          scrollLeft={scrollLeft}
+          viewportWidth={viewportWidth}
+          currentTime={currentTime}
+          projectName={projectName}
+        />
+      ))}
     </>
   )
 }
