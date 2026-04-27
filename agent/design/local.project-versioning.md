@@ -2,7 +2,26 @@
 
 **Concept**: Git-based version control per `.beatlab_work/` project — save, restore, branch, and diff project states from the synthesizer UI
 **Created**: 2026-03-28
-**Status**: Design Specification
+**Status**: Superseded (2026-04-26) — see [`local.git-version-control.md`](local.git-version-control.md)
+**Last Updated**: 2026-04-26 (marked superseded during doc sync)
+
+---
+
+> **⚠️ This document is superseded.**
+>
+> This was the first draft of version-controlling project state. It predates
+> the pivot from "beatlab-synthesizer with a per-project `.beatlab_work/` git
+> repo" to scenecraft's actual M6 design: a purpose-built content-addressed
+> object store under `.scenecraft/` with SSH auth, JWT sessions, branch refs,
+> and a commit engine that operates on SQLite project state (not YAML).
+>
+> The checkpoint system (shipped predecessor) saves named project snapshots;
+> the full git-style workflow is being built in M6. See
+> [`local.git-version-control.md`](local.git-version-control.md) for the
+> authoritative current design.
+>
+> Retained as a historical record of the earlier approach; do not treat as
+> current architecture.
 
 ---
 

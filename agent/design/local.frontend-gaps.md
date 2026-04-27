@@ -2,7 +2,31 @@
 
 **Concept**: Narrative section editor, transition boundary dragging with remap, multi-slot transition preview, suppression zone editing, and auto-save points
 **Created**: 2026-03-29
-**Status**: Design Specification
+**Status**: Archived (2026-04-26) — largely superseded by M7, M9, M14, M17 shipping
+**Last Updated**: 2026-04-26 (marked archived during doc sync)
+
+---
+
+> **⚠️ This document is archived.**
+>
+> This captured the gaps in the pre-pivot "beatlab-synthesizer" editor
+> (effects tracks + hit markers + beat suppression zones). Most of what
+> this called out has been superseded:
+>
+> - **Transition boundary dragging with remap** → shipped as M7 clip trim
+>   (`local.clip-trim-and-snap.md`) and M1 animated transform curves
+> - **Narrative section editor** → section bands still on timeline; UI for
+>   section editing remains a minor open gap but is not blocking
+> - **Beat suppression zones / effects-track editing** → **removed**. The
+>   effects track and hit markers were deleted from the timeline during
+>   the scenecraft pivot.
+> - **Auto-save points** → checkpoint system (shipped) + M6 version control
+>   (in flight) replace this
+> - **Multi-slot transition preview** → transition filmstrip shipped with
+>   M1; candidate selection UI shipped with M1
+>
+> Retained as a historical record of what was once considered an editor
+> gap. Do not treat the gaps listed below as current open work.
 
 ---
 

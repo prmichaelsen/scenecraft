@@ -2,7 +2,8 @@
 
 **Concept**: Replace static transform sliders with animated remap curves for layer position (X/Y) and scale (Z) on transitions  
 **Created**: 2026-04-09  
-**Status**: Design Specification  
+**Status**: Implemented (M1 task-2, completed 2026-04-10)  
+**Last Updated**: 2026-04-26 (module paths updated from `src/scenecraft/` to `src/scenecraft/` during doc sync)  
 
 ---
 
@@ -67,11 +68,11 @@ A new composite curve editor component replaces the X/Y slider section in Transi
 
 | File | Changes |
 |---|---|
-| `src/beatlab/db.py` | Add 3 columns via migration, update `_row_to_transition`, `add_transition`, `update_transition` serialization, migration of static values to curves |
-| `src/beatlab/api_server.py` | Response serialization (`transformXCurve`, etc.), `update-transition-style` handler, `copy-transition-style` field list, paste style fields |
-| `src/beatlab/render/narrative.py` | Extend `_apply_transform()` to evaluate curves + Z scale |
+| `src/scenecraft/db.py` | Add 3 columns via migration, update `_row_to_transition`, `add_transition`, `update_transition` serialization, migration of static values to curves |
+| `src/scenecraft/api_server.py` | Response serialization (`transformXCurve`, etc.), `update-transition-style` handler, `copy-transition-style` field list, paste style fields |
+| `src/scenecraft/render/narrative.py` | Extend `_apply_transform()` to evaluate curves + Z scale |
 
-**Frontend (`beatlab-synthesizer`)**:
+**Frontend (`scenecraft`)**:
 
 | File | Changes |
 |---|---|

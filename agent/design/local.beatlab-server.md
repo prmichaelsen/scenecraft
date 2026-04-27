@@ -1,8 +1,17 @@
-# Beatlab Server
+# Scenecraft Engine (née Beatlab Server)
 
-**Concept**: REST server command for davinci-beat-lab exposing narrative pipeline operations to the beatlab-synthesizer frontend
+**Concept**: REST server command exposing project + pipeline operations to the scenecraft frontend
 **Created**: 2026-03-26
-**Status**: Design Specification
+**Status**: Implemented (as `scenecraft-engine`); shape has evolved considerably beyond this initial design
+**Last Updated**: 2026-04-26 (renamed during doc sync — this doc predates the pivot from beatlab-synthesizer to scenecraft)
+
+> **Note**: This was the first cut of the backend's REST shape. Since then
+> the engine has added WebSocket (`/ws/jobs`), a plugin contribution
+> system, chat-tool dispatch (40+ tools), a spend ledger, SSH/JWT auth,
+> and the typed `plugin_api.providers.replicate` surface. Treat this
+> document as an origin-story rather than a current API contract.
+> For current routes, see `src/scenecraft/api_server.py` and the
+> `contributes.rest_endpoints` blocks in each plugin's `plugin.yaml`.
 
 ---
 

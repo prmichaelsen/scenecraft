@@ -2,7 +2,21 @@
 
 **Concept**: Separate musical analysis (narrative) from visual timeline (keyframes + transitions) into independent YAML files so timelines can be replaced without losing musical notes
 **Created**: 2026-03-28
-**Status**: Design Specification
+**Status**: Superseded (2026-04-26) — project state migrated entirely to SQLite
+**Last Updated**: 2026-04-26 (marked superseded during doc sync)
+
+---
+
+> **⚠️ This document is superseded.**
+>
+> This was the plan for splitting the pre-SQLite per-project YAML into
+> multiple files (narrative.yaml, timeline.yaml, beats.yaml). The project
+> has since migrated entirely to per-project SQLite at
+> `/mnt/storage/.scenecraft/projects/<name>/project.db`. YAML files no
+> longer hold project data records — only plugin manifests
+> (`plugin.yaml`) stay YAML per the session directive.
+>
+> Retained as a historical record. Do not treat as current architecture.
 
 ---
 
