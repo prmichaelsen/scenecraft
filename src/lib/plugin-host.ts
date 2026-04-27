@@ -205,6 +205,11 @@ class PluginHostImpl {
   private panels = new Map<string, PanelContribution>()
   private trackTypes = new Map<string, TrackTypeContribution>()
   private trackTypeListeners = new Set<() => void>()
+  // Cached snapshot for useSyncExternalStore. Array identity MUST be stable
+  // across listTrackTypes() calls or React flags a store-changed-during-render
+  // loop (minified error #185 — "Maximum update depth exceeded"). Invalidated
+  // to null on every register/dispose; rebuilt lazily on next read.
+  private trackTypesSnapshot: readonly TrackTypeContribution[] | null = null
 
   /**
    * Activate a plugin module. Creates a PluginContext and calls
@@ -346,11 +351,13 @@ class PluginHostImpl {
       throw new Error(`duplicate track type id: ${track.id}`)
     }
     this.trackTypes.set(track.id, track)
+    this.trackTypesSnapshot = null  // invalidate cache
     for (const cb of this.trackTypeListeners) cb()
 
     const d = makeDisposable(() => {
       if (this.trackTypes.get(track.id) === track) {
         this.trackTypes.delete(track.id)
+        this.trackTypesSnapshot = null
         for (const cb of this.trackTypeListeners) cb()
       }
     })
@@ -358,11 +365,19 @@ class PluginHostImpl {
     return d
   }
 
-  /** List all registered track types, sorted ascending by sortHint. */
-  listTrackTypes(): TrackTypeContribution[] {
-    return Array.from(this.trackTypes.values()).sort(
-      (a, b) => (a.sortHint ?? 1000) - (b.sortHint ?? 1000),
-    )
+  /**
+   * List all registered track types, sorted ascending by sortHint. Returns
+   * a stable array reference until the registry mutates — required for
+   * useSyncExternalStore consumers (otherwise React sees "snapshot changed
+   * during render" on every read and infinite-loops).
+   */
+  listTrackTypes(): readonly TrackTypeContribution[] {
+    if (this.trackTypesSnapshot === null) {
+      this.trackTypesSnapshot = Array.from(this.trackTypes.values()).sort(
+        (a, b) => (a.sortHint ?? 1000) - (b.sortHint ?? 1000),
+      )
+    }
+    return this.trackTypesSnapshot
   }
 
   /** Look up one track type by id. */
@@ -432,6 +447,7 @@ class PluginHostImpl {
     this.panels.clear()
     this.trackTypes.clear()
     this.trackTypeListeners.clear()
+    this.trackTypesSnapshot = null
   }
 }
 

@@ -4393,6 +4393,23 @@ function PluginLane({
   )
 }
 
+// Stable closures for useSyncExternalStore. Defining these inline in the
+// component body produced a new function identity on every render, which
+// React then interpreted as a store-changed signal → re-render → repeat,
+// triggering the minified React #185 "Maximum update depth exceeded"
+// infinite loop. Hoisting them fixes it. PluginHost.listTrackTypes now
+// returns a cached stable array, so equality checks across reads hold.
+const PluginTrackLanes_EMPTY_SERVER_SNAPSHOT: readonly import('@/lib/plugin-host').TrackTypeContribution[] = []
+function PluginTrackLanes_subscribe(cb: () => void) {
+  return PluginHost.subscribeTrackTypes(cb)
+}
+function PluginTrackLanes_getSnapshot() {
+  return PluginHost.listTrackTypes()
+}
+function PluginTrackLanes_getServerSnapshot() {
+  return PluginTrackLanes_EMPTY_SERVER_SNAPSHOT
+}
+
 function PluginTrackLanes({
   pxPerSec,
   scrollLeft,
@@ -4407,9 +4424,9 @@ function PluginTrackLanes({
   projectName: string
 }) {
   const trackTypes = useSyncExternalStore(
-    (cb) => PluginHost.subscribeTrackTypes(cb),
-    () => PluginHost.listTrackTypes(),
-    () => [],
+    PluginTrackLanes_subscribe,
+    PluginTrackLanes_getSnapshot,
+    PluginTrackLanes_getServerSnapshot,
   )
   if (trackTypes.length === 0) return null
   return (
